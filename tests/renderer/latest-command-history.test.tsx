@@ -5,21 +5,53 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import type { MessageArtifact } from "../../src-shared/session/session-state.js";
-import { useLatestCommandHistory, type LatestCommandHistoryApi } from "../../src/chat/runtime/use-latest-command-history.js";
+import {
+  useLatestCommandHistory,
+  type LatestCommandHistoryApi,
+} from "../../src/chat/runtime/use-latest-command-history.js";
 
+/** 履歴取得を保留し、成功・失敗をテストから任意の順序で確定できるようにする。 */
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
   return { promise, resolve, reject };
 }
 
-function turn(sessionId: string, phase: SessionTurnRecord["phase"] = "completed"): SessionTurnRecord {
-  return { id: 1, sessionId, phase, createdAt: "now", provider: "codex", model: "model", reasoningEffort: "medium", approvalMode: "never", threadId: "thread", errorMessage: "", assistantMessageSeq: 3 };
+/** 指定会話の実行を作り、既定ではアシスタント応答 3 に紐付く完了済みの結果を返す。 */
+function turn(
+  sessionId: string,
+  phase: SessionTurnRecord["phase"] = "completed",
+): SessionTurnRecord {
+  return {
+    id: 1,
+    sessionId,
+    phase,
+    createdAt: "now",
+    provider: "codex",
+    model: "model",
+    reasoningEffort: "medium",
+    approvalMode: "never",
+    threadId: "thread",
+    errorMessage: "",
+    assistantMessageSeq: 3,
+  };
 }
 
+/** 指定した概要を持つ失敗コマンドを、最新応答のアーティファクトとして用意する。 */
 function artifact(summary: string): MessageArtifact {
-  return { title: "Response", runChecks: [], activitySummary: [], changedFiles: [], operationTimeline: [{ type: "command_execution", summary, status: "failed", exitCode: 2 }] };
+  return {
+    title: "Response",
+    runChecks: [],
+    activitySummary: [],
+    changedFiles: [],
+    operationTimeline: [
+      { type: "command_execution", summary, status: "failed", exitCode: 2 },
+    ],
+  };
 }
 
 // @test-value v2
@@ -34,23 +66,43 @@ function artifact(summary: string): MessageArtifact {
 // impact = "別会話・別turnの実行結果を最新として誤認し、取得障害を未記録と取り違える"
 // distinction = "型checkや同期projection testでは検出できない非同期owner切替、通知更新、incarnation境界をhook実行で観測する"
 // @end-test-value
+/** 最新実行の履歴だけを採用し、会話・インカネーション切替後の遅着を捨てる。保存なし、空履歴、取得失敗を個別に観測する。 */
 test("Latest Command history isolates turn, owner, incarnation, and read states", async () => {
   const dom = new JSDOM("<div id='root'></div>");
   const previous = { window: globalThis.window, document: globalThis.document };
-  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
   const root = createRoot(dom.window.document.getElementById("root")!);
-  const pending: Array<{ sessionId: string; index: number; result: ReturnType<typeof deferred<MessageArtifact | null>> }> = [];
+  const pending: Array<{
+    sessionId: string;
+    index: number;
+    result: ReturnType<typeof deferred<MessageArtifact | null>>;
+  }> = [];
   let latest: SessionTurnRecord | null = turn("main");
   let loadError: Error | null = null;
-  let nextRead: ReturnType<typeof deferred<SessionTurnRecord | null>> | null = null;
+  let nextRead: ReturnType<typeof deferred<SessionTurnRecord | null>> | null =
+    null;
   const listeners = new Set<(id: string) => void>();
   const api: LatestCommandHistoryApi = {
+    /** 最新実行の取得に通常の値、保留中の応答、取得エラーを注入できるようにする。 */
     getLatestSessionTurn: async () => {
       if (loadError) throw loadError;
-      if (nextRead) { const read = nextRead; nextRead = null; return read.promise; }
+      if (nextRead) {
+        const read = nextRead;
+        nextRead = null;
+        return read.promise;
+      }
       return latest;
     },
-    onSessionTurnUpdated: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+    /** 実行更新の通知先を記録し、解除された通知先には更新を配信しない。 */
+    onSessionTurnUpdated: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    /** アーティファクト照会の会話と応答番号を保存し、解決順をテストに委ねる。 */
     getSessionMessageArtifact: (sessionId, index) => {
       const result = deferred<MessageArtifact | null>();
       pending.push({ sessionId, index, result });
@@ -61,43 +113,80 @@ test("Latest Command history isolates turn, owner, incarnation, and read states"
   let sessionId: string | null = "main";
   let scope = "incarnation-1";
   let hasLiveRun = false;
+  /** 現在の会話とインカネーション、ライブ実行の有無をフックに渡し、結果を捕捉する。 */
   function Harness() {
-    output = useLatestCommandHistory({ api, sessionId, scope, enabled: true, hasLiveRun });
+    output = useLatestCommandHistory({
+      api,
+      sessionId,
+      scope,
+      enabled: true,
+      hasLiveRun,
+    });
     return null;
   }
-  const state = () => { assert.ok(output); return output; };
-  const render = async () => { await act(async () => root.render(<Harness />)); };
-  const update = async () => { await act(async () => { for (const listener of listeners) listener(sessionId!); }); };
+  /** 一度描画したことを保証してから、観測用の履歴状態を取り出す。 */
+  const state = () => {
+    assert.ok(output);
+    return output;
+  };
+  /** 現在のテスト用条件でフックを再評価し、描画に伴う React 更新を処理する。 */
+  const render = async () => {
+    await act(async () => root.render(<Harness />));
+  };
+  /** 現在の会話に実行更新が届いたものとして、購読中のフックを再評価する。 */
+  const update = async () => {
+    await act(async () => {
+      for (const listener of listeners) listener(sessionId!);
+    });
+  };
   try {
     await render();
     assert.equal(state().commandHistoryLoading, true);
-    assert.deepEqual(pending.map(({ sessionId, index }) => [sessionId, index]), [["main", 3]]);
+    assert.deepEqual(
+      pending.map(({ sessionId, index }) => [sessionId, index]),
+      [["main", 3]],
+    );
     latest = turn("auxiliary", "canceled");
     sessionId = "auxiliary";
     await render();
     await act(async () => pending[0].result.resolve(artifact("old command")));
     assert.deepEqual(state().operations, []);
-    await act(async () => pending[1].result.resolve(artifact("auxiliary command")));
+    await act(async () =>
+      pending[1].result.resolve(artifact("auxiliary command")),
+    );
     assert.equal(state().operations[0]?.summary, "auxiliary command");
     assert.equal(state().operations[0]?.status, "failed");
-    latest = { ...turn("auxiliary", "running"), id: 2, assistantMessageSeq: undefined };
+    latest = {
+      ...turn("auxiliary", "running"),
+      id: 2,
+      assistantMessageSeq: undefined,
+    };
     await update();
     assert.deepEqual(state().operations, []);
     assert.equal(state().commandHistoryUnrecorded, false);
     assert.equal(pending.length, 2);
     latest = { ...turn("auxiliary", "failed"), id: 2 };
     await update();
-    await act(async () => pending[2].result.reject(new Error("artifact read failed")));
+    await act(async () =>
+      pending[2].result.reject(new Error("artifact read failed")),
+    );
     assert.equal(state().commandHistoryError, "artifact read failed");
     assert.equal(state().commandHistoryUnrecorded, false);
     await act(async () => state().onRetryCommandHistory());
-    await act(async () => pending[3].result.resolve({ ...artifact("unused"), operationTimeline: [] }));
+    await act(async () =>
+      pending[3].result.resolve({
+        ...artifact("unused"),
+        operationTimeline: [],
+      }),
+    );
     assert.deepEqual(state().operations, []);
     assert.equal(state().commandHistoryUnrecorded, false);
     await update();
     scope = "incarnation-2";
     await render();
-    await act(async () => pending[4].result.resolve(artifact("stale incarnation")));
+    await act(async () =>
+      pending[4].result.resolve(artifact("stale incarnation")),
+    );
     assert.deepEqual(state().operations, []);
     await act(async () => pending[5].result.resolve(null));
     assert.equal(state().commandHistoryUnrecorded, true);
@@ -112,14 +201,18 @@ test("Latest Command history isolates turn, owner, incarnation, and read states"
     assert.match(state().commandHistoryError ?? "", /another conversation/);
     latest = turn("auxiliary");
     await update();
-    await act(async () => pending.at(-1)!.result.resolve(artifact("saved command")));
+    await act(async () =>
+      pending.at(-1)!.result.resolve(artifact("saved command")),
+    );
     hasLiveRun = true;
     await render();
     assert.deepEqual(state().operations, []);
     hasLiveRun = false;
     await render();
     assert.deepEqual(state().operations, []);
-    await act(async () => pending.at(-1)!.result.resolve(artifact("saved command")));
+    await act(async () =>
+      pending.at(-1)!.result.resolve(artifact("saved command")),
+    );
     assert.equal(state().operations[0]?.summary, "saved command");
     sessionId = null;
     await render();
@@ -133,7 +226,9 @@ test("Latest Command history isolates turn, owner, incarnation, and read states"
     sessionId = "auxiliary";
     latest = turn("auxiliary");
     await render();
-    await act(async () => pending.at(-1)!.result.resolve(artifact("current auxiliary command")));
+    await act(async () =>
+      pending.at(-1)!.result.resolve(artifact("current auxiliary command")),
+    );
     await act(async () => delayedTurn.resolve(turn("main")));
     assert.equal(state().operations[0]?.summary, "current auxiliary command");
   } finally {

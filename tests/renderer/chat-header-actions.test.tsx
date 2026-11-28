@@ -13,9 +13,12 @@ import {
   createMessageCollapseHeaderAction,
   createWorkspaceExplorerAction,
 } from "../../src/chat/chat-header-actions.js";
+/** 表示属性だけを検査するケースへ副作用のない操作コールバックを渡す。 */
 const noop = () => {};
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 // @test-value v2
 // kind = "contract"
@@ -29,6 +32,7 @@ const noop = () => {};
 // impact = "session headerの対象と操作を識別し、低頻度操作を一貫したmenuから実行できる"
 // distinction = "action builderのpropsだけでなく、実描画されたmenu semanticsと英語labelを確認する"
 // @end-test-value
+/** Pin、Rename、Deleteを実描画したメニュー項目として識別でき、Pinの押下状態も読み取れることを確認する。 */
 test("SessionHeader は低頻度の管理操作を menu にまとめる", () => {
   const html = renderToStaticMarkup(
     <SessionHeader
@@ -51,7 +55,9 @@ test("SessionHeader は低頻度の管理操作を menu にまとめる", () => 
   assert.match(html, /aria-haspopup="menu"/);
   assert.match(html, /aria-expanded="false"/);
   assert.match(html, /role="menu"/);
-  const pin = new JSDOM(html).window.document.querySelector("button[role='menuitem'][aria-label='Pin']");
+  const pin = new JSDOM(html).window.document.querySelector(
+    "button[role='menuitem'][aria-label='Pin']",
+  );
   assert.equal(pin?.getAttribute("aria-pressed"), "false");
   assert.equal(pin?.textContent, "Pin");
   assert.match(html, /role="menuitem">Rename<\/button>/);
@@ -70,6 +76,7 @@ test("SessionHeader は低頻度の管理操作を menu にまとめる", () => 
 // impact = "menu操作後のfocusと表示状態を予測可能にし、対象session actionを誤実行しない"
 // distinction = "静的markupだけでなく、pointerdown・Escape・clickの実DOMイベントによる閉じ方を確認する"
 // @end-test-value
+/** トリガーの再操作、外側イベント、Escape、項目実行でメニューが閉じる。Escapeは入口へフォーカスを戻し、項目は表示に対応する操作を呼ぶ。 */
 test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再クリックで閉じる", async () => {
   const previousGlobals = {
     window: globalThis.window,
@@ -81,9 +88,12 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
     KeyboardEvent: globalThis.KeyboardEvent,
     PointerEvent: globalThis.PointerEvent,
   };
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div><button id=\"outside\">Outside</button></body></html>", {
-    pretendToBeVisual: true,
-  });
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div><button id="outside">Outside</button></body></html>',
+    {
+      pretendToBeVisual: true,
+    },
+  );
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const root = createRoot(container);
   const actions: string[] = [];
@@ -96,29 +106,38 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
     Event: { configurable: true, value: dom.window.Event },
     MouseEvent: { configurable: true, value: dom.window.MouseEvent },
     KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
-    PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+    PointerEvent: {
+      configurable: true,
+      value: dom.window.PointerEvent ?? dom.window.MouseEvent,
+    },
   });
 
   try {
-    await act(async () => root.render(
-      <SessionHeader
-        taskTitle="Session"
-        isEditingTitle={false}
-        titleDraft="Session"
-        isRunning={false}
-        onOpenTerminal={noop}
-        onTitleDraftChange={noop}
-        onTitleInputKeyDown={noop}
-        onSaveTitle={noop}
-        onCancelTitleEdit={noop}
-        onStartTitleEdit={() => actions.push("rename")}
-        onDeleteSession={() => actions.push("delete")}
-        onTogglePin={() => actions.push("pin")}
-      />,
-    ));
+    await act(async () =>
+      root.render(
+        <SessionHeader
+          taskTitle="Session"
+          isEditingTitle={false}
+          titleDraft="Session"
+          isRunning={false}
+          onOpenTerminal={noop}
+          onTitleDraftChange={noop}
+          onTitleInputKeyDown={noop}
+          onSaveTitle={noop}
+          onCancelTitleEdit={noop}
+          onStartTitleEdit={() => actions.push("rename")}
+          onDeleteSession={() => actions.push("delete")}
+          onTogglePin={() => actions.push("pin")}
+        />,
+      ),
+    );
 
-    const details = container.querySelector<HTMLDetailsElement>("details.session-header-more");
-    const trigger = container.querySelector<HTMLElement>("summary[aria-label=\"Session actions\"]");
+    const details = container.querySelector<HTMLDetailsElement>(
+      "details.session-header-more",
+    );
+    const trigger = container.querySelector<HTMLElement>(
+      'summary[aria-label="Session actions"]',
+    );
     assert.ok(details);
     assert.ok(trigger);
 
@@ -129,22 +148,34 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
 
     await act(async () => trigger.click());
     await act(async () => {
-      dom.window.document.getElementById("outside")?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+      dom.window.document
+        .getElementById("outside")
+        ?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
     });
     assert.equal(details.open, false);
 
     await act(async () => trigger.click());
-    container.querySelector<HTMLButtonElement>("[role=\"menuitem\"]")?.focus();
+    container.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
     await act(async () => {
-      details.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      details.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+        }),
+      );
     });
     assert.equal(details.open, false);
     assert.equal(dom.window.document.activeElement, trigger);
 
-    for (const [label, action] of [["Pin", "pin"], ["Rename", "rename"], ["Delete", "delete"]]) {
+    for (const [label, action] of [
+      ["Pin", "pin"],
+      ["Rename", "rename"],
+      ["Delete", "delete"],
+    ]) {
       await act(async () => trigger.click());
-      const item = [...container.querySelectorAll<HTMLButtonElement>("[role=\"menuitem\"]")]
-        .find((button) => button.textContent === label);
+      const item = [
+        ...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+      ].find((button) => button.textContent === label);
       assert.ok(item);
       await act(async () => item.click());
       assert.equal(details.open, false);
@@ -160,7 +191,10 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
       HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
       Event: { configurable: true, value: previousGlobals.Event },
       MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
-      KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
+      KeyboardEvent: {
+        configurable: true,
+        value: previousGlobals.KeyboardEvent,
+      },
       PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
     });
   }
@@ -178,8 +212,11 @@ test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再�
 // impact = "同じfolder図柄のSession操作とWorkspace操作を識別する"
 // distinction = "型検査では保証できないrender後のaccessible属性を小さなcomponent testで確認する"
 // @end-test-value
+/** アイコンだけのWorkspace Explorer操作に対象込みの名前とtitleが付き、装飾SVGがフォーカスを取らないことを確認する。 */
 test("createWorkspaceExplorerAction は共通の workspace Explorer action を描画する", () => {
-  const html = renderToStaticMarkup(createWorkspaceExplorerAction({ onOpenExplorer: noop }));
+  const html = renderToStaticMarkup(
+    createWorkspaceExplorerAction({ onOpenExplorer: noop }),
+  );
 
   assert.match(html, /type="button"/);
   assert.match(html, /aria-label="Open Workspace In Explorer"/);
@@ -188,11 +225,14 @@ test("createWorkspaceExplorerAction は共通の workspace Explorer action を�
   assert.doesNotMatch(html, /disabled/);
 });
 
+/** Workspace Explorer操作に渡した無効状態が、ボタンのdisabled属性へ反映されることを確認する。 */
 test("createWorkspaceExplorerAction は disabled state を反映する", () => {
-  const html = renderToStaticMarkup(createWorkspaceExplorerAction({
-    disabled: true,
-    onOpenExplorer: noop,
-  }));
+  const html = renderToStaticMarkup(
+    createWorkspaceExplorerAction({
+      disabled: true,
+      onOpenExplorer: noop,
+    }),
+  );
 
   assert.match(html, /disabled=""/);
 });
@@ -209,22 +249,33 @@ test("createWorkspaceExplorerAction は disabled state を反映する", () => {
 // impact = "message collapse actionを視覚表示と支援技術の双方で識別できる"
 // distinction = "shortcut registry単体ではなく、header actionとしてrenderされた公開属性を確認する"
 // @end-test-value
+/** 縮小・展開の状態に対応するボタン文言と支援技術向けの操作名を使い、どちらのtitleでもショートカットを案内する。 */
 test("createMessageCollapseHeaderAction は既存header button語彙とshortcut名を使う", () => {
-  const html = renderToStaticMarkup(createMessageCollapseHeaderAction({
-    allMessagesCollapsed: false,
-    onToggle: noop,
-  }));
+  const html = renderToStaticMarkup(
+    createMessageCollapseHeaderAction({
+      allMessagesCollapsed: false,
+      onToggle: noop,
+    }),
+  );
 
   assert.match(html, /aria-label="Collapse all completed messages"/);
-  assert.match(html, /title="Collapse all completed messages \(Ctrl\+Shift\+M\)"/);
+  assert.match(
+    html,
+    /title="Collapse all completed messages \(Ctrl\+Shift\+M\)"/,
+  );
   assert.match(html, />Collapse<\/button>/);
 
-  const expandedHtml = renderToStaticMarkup(createMessageCollapseHeaderAction({
-    allMessagesCollapsed: true,
-    onToggle: noop,
-  }));
+  const expandedHtml = renderToStaticMarkup(
+    createMessageCollapseHeaderAction({
+      allMessagesCollapsed: true,
+      onToggle: noop,
+    }),
+  );
   assert.match(expandedHtml, /aria-label="Expand all completed messages"/);
-  assert.match(expandedHtml, /title="Expand all completed messages \(Ctrl\+Shift\+M\)"/);
+  assert.match(
+    expandedHtml,
+    /title="Expand all completed messages \(Ctrl\+Shift\+M\)"/,
+  );
   assert.match(expandedHtml, />Expand<\/button>/);
 });
 
@@ -238,9 +289,13 @@ test("createMessageCollapseHeaderAction は既存header button語彙とshortcut�
 // scope = "live-header-capabilities"
 // lifecycle = "permanent"
 // @end-test-value
+/** Auxiliaryのliveヘッダーでは親の名前変更と削除を隠し、WorkspaceとSession Folderの操作はラベル付きで描画する。 */
 test("buildLiveSessionHeaderProps は live session header の共通 action を組み立てる", () => {
+  /** Session FolderのExplorer操作を描画するための代替処理で、ファイルは開かない。 */
   const onOpenSessionFilesExplorer = () => {};
+  /** Session FolderのTerminal操作を描画するための代替処理で、外部プロセスは起動しない。 */
   const onOpenSessionFilesTerminal = () => {};
+  /** WorkspaceのExplorer操作を描画するための代替処理で、実際のWorkspaceへはアクセスしない。 */
   const onOpenWorkspaceExplorer = () => {};
   const props = buildLiveSessionHeaderProps({
     taskTitle: "Session",
@@ -267,8 +322,14 @@ test("buildLiveSessionHeaderProps は live session header の共通 action を�
   assert.equal(props.showRenameButton, false);
   assert.equal(props.showDeleteButton, false);
   assert.match(workspaceHtml, /aria-label="Open Workspace In Explorer"/);
-  assert.match(sessionFilesHtml, /aria-label="Open Session Folder In Explorer"/);
-  assert.match(sessionFilesHtml, /aria-label="Open External Terminal In Session Folder"/);
+  assert.match(
+    sessionFilesHtml,
+    /aria-label="Open Session Folder In Explorer"/,
+  );
+  assert.match(
+    sessionFilesHtml,
+    /aria-label="Open External Terminal In Session Folder"/,
+  );
 });
 
 // @test-value v2
@@ -283,27 +344,30 @@ test("buildLiveSessionHeaderProps は live session header の共通 action を�
 // impact = "pin状態を識別し、更新中の重複操作を防ぐ"
 // distinction = "pin callbackだけでなく、stateに応じた操作buttonの公開属性とlabelを確認する"
 // @end-test-value
+/** ピン留め済みの更新中は、押下状態を保ったまま操作を無効化し、spinnerと更新状態を支援技術向けに添える。 */
 test("SessionHeader はpin stateとpending stateを操作ボタンへ投影する", () => {
-  const html = renderToStaticMarkup(<SessionHeader
-    taskTitle="Pinned session"
-    isEditingTitle={false}
-    titleDraft="Pinned session"
-    isRunning={true}
-    isReadOnly={true}
-    isPinned={true}
-    isPinPending={true}
-    showRenameButton={false}
-    showTerminalButton={false}
-    showDeleteButton={false}
-    onTogglePin={noop}
-    onOpenTerminal={noop}
-    onTitleDraftChange={noop}
-    onTitleInputKeyDown={noop}
-    onSaveTitle={noop}
-    onCancelTitleEdit={noop}
-    onStartTitleEdit={noop}
-    onDeleteSession={noop}
-  />);
+  const html = renderToStaticMarkup(
+    <SessionHeader
+      taskTitle="Pinned session"
+      isEditingTitle={false}
+      titleDraft="Pinned session"
+      isRunning={true}
+      isReadOnly={true}
+      isPinned={true}
+      isPinPending={true}
+      showRenameButton={false}
+      showTerminalButton={false}
+      showDeleteButton={false}
+      onTogglePin={noop}
+      onOpenTerminal={noop}
+      onTitleDraftChange={noop}
+      onTitleInputKeyDown={noop}
+      onSaveTitle={noop}
+      onCancelTitleEdit={noop}
+      onStartTitleEdit={noop}
+      onDeleteSession={noop}
+    />,
+  );
 
   assert.match(html, /aria-pressed="true"/);
   assert.match(html, /role="menu"/);
@@ -311,7 +375,11 @@ test("SessionHeader はpin stateとpending stateを操作ボタンへ投影す�
   assert.match(html, /disabled=""/);
   assert.match(html, /aria-busy="true"/);
   assert.match(html, /aria-label="Updating pin"/);
-  assert.ok(new JSDOM(html).window.document.querySelector("button[aria-busy='true'] .button-content-spinner[aria-hidden='true']"));
+  assert.ok(
+    new JSDOM(html).window.document.querySelector(
+      "button[aria-busy='true'] .button-content-spinner[aria-hidden='true']",
+    ),
+  );
   assert.match(html, /<span class="visually-hidden">Updating pin\.<\/span>/);
   assert.doesNotMatch(html, />Updating\.\.\.<\/button>/);
 });

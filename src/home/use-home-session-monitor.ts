@@ -6,11 +6,13 @@ import type { HomeSessionSummary } from "../../src-shared/session/session-state.
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 
+/** Monitor 用に同じ取得で集めた Main の要約と、対応する Auxiliary の要約。 */
 type HomeSessionMonitorSnapshot = {
   entries: HomeSessionSummary[];
   auxiliarySessions: AuxiliarySessionSummary[];
 };
 
+/** 現行の間だけページを進め、同じ ID の要約を統合する。カーソルが進まなければ失敗にする。 */
 export async function fetchHomeSessionMonitorSnapshot(
   api: Pick<WithMateWindowApi, "listSessionMonitorPage">,
   isCurrent: () => boolean,
@@ -22,19 +24,32 @@ export async function fetchHomeSessionMonitorSnapshot(
     const page = await api.listSessionMonitorPage({ cursor, limit: 100 });
     if (!isCurrent()) break;
     for (const entry of page.entries) entries.set(entry.id, entry);
-    for (const entry of page.auxiliarySessions) auxiliarySessions.set(entry.id, entry);
+    for (const entry of page.auxiliarySessions)
+      auxiliarySessions.set(entry.id, entry);
     if (!page.hasMore) break;
     if (!page.nextCursor || (cursor !== null && page.nextCursor <= cursor)) {
       throw new Error("Could not advance the Session Monitor page.");
     }
     cursor = page.nextCursor;
   } while (isCurrent());
-  return { entries: [...entries.values()], auxiliarySessions: [...auxiliarySessions.values()] };
+  return {
+    entries: [...entries.values()],
+    auxiliarySessions: [...auxiliarySessions.values()],
+  };
 }
 
-export function useHomeSessionMonitor(enabled: boolean, openSessionWindowIds: readonly string[]) {
-  const [snapshot, setSnapshot] = useState<HomeSessionMonitorSnapshot>({ entries: [], auxiliarySessions: [] });
-  const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
+/** Monitor を有効にしている間だけ変更を購読し、最新世代の完全な一覧を維持する。 */
+export function useHomeSessionMonitor(
+  enabled: boolean,
+  openSessionWindowIds: readonly string[],
+) {
+  const [snapshot, setSnapshot] = useState<HomeSessionMonitorSnapshot>({
+    entries: [],
+    auxiliarySessions: [],
+  });
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">(
+    "loading",
+  );
   const [feedback, setFeedback] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const refreshRef = useRef<() => void>(() => {});
@@ -53,14 +68,17 @@ export function useHomeSessionMonitor(enabled: boolean, openSessionWindowIds: re
     let generation = 0;
     let inFlight = false;
     let hasLoaded = false;
+    /** 一度に一件だけ取得し、処理中に更新通知が来た場合は結果を置き換えず再取得する。 */
     const load = async () => {
       if (!active) return;
       const requestGeneration = ++generation;
       if (inFlight) return;
       inFlight = true;
       setRefreshing(true);
+      /** 購読が有効で、後から別の取得要求を受けていないことを確かめる。 */
       const isCurrent = () => active && generation === requestGeneration;
-      if (!hasLoaded) setStatus((current) => current === "error" ? current : "loading");
+      if (!hasLoaded)
+        setStatus((current) => (current === "error" ? current : "loading"));
       try {
         const next = await fetchHomeSessionMonitorSnapshot(api, isCurrent);
         if (!isCurrent()) return;
@@ -71,7 +89,11 @@ export function useHomeSessionMonitor(enabled: boolean, openSessionWindowIds: re
       } catch (error) {
         if (!isCurrent()) return;
         setStatus("error");
-        setFeedback(error instanceof Error ? error.message : "Could not load Session Monitor.");
+        setFeedback(
+          error instanceof Error
+            ? error.message
+            : "Could not load Session Monitor.",
+        );
       } finally {
         inFlight = false;
         if (active && generation !== requestGeneration) {
@@ -81,18 +103,32 @@ export function useHomeSessionMonitor(enabled: boolean, openSessionWindowIds: re
         }
       }
     };
-    refreshRef.current = () => { void load(); };
-    retryRef.current = () => { if (!inFlight) void load(); };
+    refreshRef.current = () => {
+      void load();
+    };
+    retryRef.current = () => {
+      if (!inFlight) void load();
+    };
     const liveStates = new Map<string, LiveSessionRunStatus>();
-    const unsubscribeLive = api.subscribeLiveSessionRunStatus((sessionId, state) => {
-      const next = { runState: state?.runState, cancellationState: state?.cancellationState, approvalPending: state?.approvalPending };
-      const previous = liveStates.get(sessionId);
-      if (previous && previous.runState === next.runState
-        && previous.cancellationState === next.cancellationState
-        && previous.approvalPending === next.approvalPending) return;
-      liveStates.set(sessionId, next);
-      refresh();
-    });
+    const unsubscribeLive = api.subscribeLiveSessionRunStatus(
+      (sessionId, state) => {
+        const next = {
+          runState: state?.runState,
+          cancellationState: state?.cancellationState,
+          approvalPending: state?.approvalPending,
+        };
+        const previous = liveStates.get(sessionId);
+        if (
+          previous &&
+          previous.runState === next.runState &&
+          previous.cancellationState === next.cancellationState &&
+          previous.approvalPending === next.approvalPending
+        )
+          return;
+        liveStates.set(sessionId, next);
+        refresh();
+      },
+    );
     const unsubscribeSession = api.subscribeSessionInvalidation(refresh);
     const unsubscribeTurn = api.onSessionTurnUpdated(refresh);
     window.addEventListener("focus", refresh);

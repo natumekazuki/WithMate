@@ -3,13 +3,36 @@ import test, { mock } from "node:test";
 import { once } from "node:events";
 import { Worker } from "node:worker_threads";
 import { CodexProjectionClient } from "../../src-electron/providers/codex/codex-projection-client.js";
-import type { CodexProjectionFinal, CodexProjectionProgress, CodexProjectionStart, CodexProjectionEvent, CodexProjectionRequest, CodexProjectionResponse } from "../../src-electron/providers/codex/codex-projection-protocol.js";
-import { PROVIDER_RAW_ITEM_CLONE_LIMIT, PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider-payload-limits.js";
+import type {
+  CodexProjectionFinal,
+  CodexProjectionProgress,
+  CodexProjectionStart,
+  CodexProjectionEvent,
+  CodexProjectionRequest,
+  CodexProjectionResponse,
+} from "../../src-electron/providers/codex/codex-projection-protocol.js";
+import {
+  PROVIDER_RAW_ITEM_CLONE_LIMIT,
+  PROVIDER_TEXT_PREVIEW_LIMIT,
+} from "../../src-electron/session/provider-payload-limits.js";
 
+/** 会話名ごとに異なる合成の資格情報を持つ Worker 開始要求を作る。 */
 function input(name: string): CodexProjectionStart {
   return {
-    sessionId: name, threadId: "thread", turnId: "turn", apiKey: `api-${name}`, progress: true,
-    binding: { bindingId: name, bindingReference: `binding-${name}`, turnCapability: `cap-${name}`, providerId: "codex", executionGeneration: name, transport: "env", expiresAt: null },
+    sessionId: name,
+    threadId: "thread",
+    turnId: "turn",
+    apiKey: `api-${name}`,
+    progress: true,
+    binding: {
+      bindingId: name,
+      bindingReference: `binding-${name}`,
+      turnCapability: `cap-${name}`,
+      providerId: "codex",
+      executionGeneration: name,
+      transport: "env",
+      expiresAt: null,
+    },
   };
 }
 
@@ -26,15 +49,29 @@ function input(name: string): CodexProjectionStart {
 // distinction = "型検査ではWorker cloneを通る未知payloadとredactionの順序を保証できず、固定合成通知で確認する"
 // risk_tags = ["privacy"]
 // @end-test-value
+/** 同じ turn 内の未知の通知だけを診断にし、秘匿化後も境界内の抜粋と終端処理を保つ。 */
 test("Worker returns bounded redacted diagnostics only for unhandled in-scope notifications", async () => {
   const client = new CodexProjectionClient();
   const run = await client.begin(input("unhandled"));
-  const apply = (method: string, params?: unknown) => client.call<CodexProjectionEvent>(run, { type: "event", event: { method, params } });
+  /** 同一の投影へ、任意の通知名と引数を送る。 */
+  const apply = (method: string, params?: unknown) =>
+    client.call<CodexProjectionEvent>(run, {
+      type: "event",
+      event: { method, params },
+    });
   try {
     const large = "x".repeat(3897) + "api-unhandled" + "x".repeat(128 * 1024);
     const result = await apply("future/api-unhandled", {
-      threadId: "thread", turnId: "turn", category: "display-candidate",
-      nested: { "binding-unhandled": ["cap-unhandled", "api-unhandled", "synthetic conversation"] },
+      threadId: "thread",
+      turnId: "turn",
+      category: "display-candidate",
+      nested: {
+        "binding-unhandled": [
+          "cap-unhandled",
+          "api-unhandled",
+          "synthetic conversation",
+        ],
+      },
       large,
       many: Array.from({ length: 1000 }, () => "y".repeat(500)),
     });
@@ -42,35 +79,83 @@ test("Worker returns bounded redacted diagnostics only for unhandled in-scope no
     const diagnostic = result.unhandledNotification!;
     const serialized = JSON.stringify(diagnostic);
     assert.ok(serialized.length <= 12_000);
-    for (const secret of ["binding-unhandled", "cap-unhandled", "api-unhandled"]) assert.ok(!serialized.includes(secret));
+    for (const secret of [
+      "binding-unhandled",
+      "cap-unhandled",
+      "api-unhandled",
+    ])
+      assert.ok(!serialized.includes(secret));
     assert.match(serialized, /synthetic conversation/);
-    const params = diagnostic.params as { category: string; large: { text: string; truncated: boolean; originalLength: number } };
+    const params = diagnostic.params as {
+      category: string;
+      large: { text: string; truncated: boolean; originalLength: number };
+    };
     assert.equal(params.category, "display-candidate");
     assert.equal(params.large.truncated, true);
     assert.equal(params.large.originalLength, large.length);
     assert.ok(params.large.text.length <= 4000);
     assert.ok(params.large.text.startsWith("x".repeat(3000)));
-    assert.ok(!params.large.text.includes("api"), "no surviving secret prefix at the excerpt boundary");
-    assert.deepEqual([diagnostic.sessionId, diagnostic.threadId, diagnostic.turnId, diagnostic.method], [
-      "unhandled", "thread", "turn", "future/[WITHMATE_BINDING_REFERENCE_REDACTED]",
-    ]);
-    const escaped = await apply("future/escaped", { text: "diff:" + "\0".repeat(4000) });
+    assert.ok(
+      !params.large.text.includes("api"),
+      "no surviving secret prefix at the excerpt boundary",
+    );
+    assert.deepEqual(
+      [
+        diagnostic.sessionId,
+        diagnostic.threadId,
+        diagnostic.turnId,
+        diagnostic.method,
+      ],
+      [
+        "unhandled",
+        "thread",
+        "turn",
+        "future/[WITHMATE_BINDING_REFERENCE_REDACTED]",
+      ],
+    );
+    const escaped = await apply("future/escaped", {
+      text: "diff:" + "\0".repeat(4000),
+    });
     assert.ok(escaped.unhandledNotification);
     assert.ok(JSON.stringify(escaped.unhandledNotification).length <= 12_000);
-    const escapedField = (escaped.unhandledNotification.params as { text: typeof params.large }).text;
+    const escapedField = (
+      escaped.unhandledNotification.params as { text: typeof params.large }
+    ).text;
     assert.ok(escapedField.text.startsWith("diff:" + "\0".repeat(100)));
     assert.equal(escapedField.truncated, true);
     assert.ok((await apply("future/no-params")).unhandledNotification);
     for (const params of [{ threadId: "foreign" }, { turnId: "foreign" }]) {
-      assert.equal((await apply("future/scoped", params)).unhandledNotification, undefined);
+      assert.equal(
+        (await apply("future/scoped", params)).unhandledNotification,
+        undefined,
+      );
     }
-    assert.equal((await apply("item/agentMessage/delta", { itemId: "missing", delta: "noop" })).unhandledNotification, undefined);
-    await apply("turn/completed", { turn: { id: "turn", status: "completed", items: [{ id: "answer", type: "agentMessage", text: "done" }] } });
-    const final = await client.call<CodexProjectionFinal>(run, { type: "finish", diagnostics: [] });
+    assert.equal(
+      (
+        await apply("item/agentMessage/delta", {
+          itemId: "missing",
+          delta: "noop",
+        })
+      ).unhandledNotification,
+      undefined,
+    );
+    await apply("turn/completed", {
+      turn: {
+        id: "turn",
+        status: "completed",
+        items: [{ id: "answer", type: "agentMessage", text: "done" }],
+      },
+    });
+    const final = await client.call<CodexProjectionFinal>(run, {
+      type: "finish",
+      diagnostics: [],
+    });
     assert.equal(final.terminalStatus, "completed");
     assert.equal(final.assistantText, "done");
     assert.deepEqual(final.providerMetadata, []);
-  } finally { await client.release(run); }
+  } finally {
+    await client.release(run);
+  }
 });
 
 // @test-value v2
@@ -85,6 +170,7 @@ test("Worker returns bounded redacted diagnostics only for unhandled in-scope no
 // impact = "画像確認や待機の進行・履歴を識別できず、診断に偽の未対応警告が累積する"
 // distinction = "型検査や直接変換testではWorkerのclone・同ID更新と終端snapshotによる完了を検証できない。固定4活動で確認する"
 // @end-test-value
+/** 既知のネイティブ活動を開始から終端まで更新し、未知の活動だけ診断に残すことを確かめる。 */
 test("Worker projects native activities through started, completed and terminal snapshots", async () => {
   const client = new CodexProjectionClient();
   const run = await client.begin(input("activities"));
@@ -92,35 +178,114 @@ test("Worker projects native activities through started, completed and terminal 
     { id: "image", type: "imageView", path: "C:\\images\\result.png" },
     { id: "sleep", type: "sleep", durationMs: 1500 },
     { id: "compact", type: "contextCompaction" },
-    { id: "child", type: "subAgentActivity", kind: "started", agentThreadId: "child-thread", agentPath: "/root/check", model: "test-model", reasoningEffort: "low" },
+    {
+      id: "child",
+      type: "subAgentActivity",
+      kind: "started",
+      agentThreadId: "child-thread",
+      agentPath: "/root/check",
+      model: "test-model",
+      reasoningEffort: "low",
+    },
   ];
   try {
     for (const item of items) {
-      await client.call(run, { type: "event", event: { method: "item/started", params: { item } } });
+      await client.call(run, {
+        type: "event",
+        event: { method: "item/started", params: { item } },
+      });
     }
-    const live = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
-    assert.deepEqual(live.changes.steps.upserts.map(({ id, type, summary, status }) => ({ id, type, summary, status })), [
-      { id: "image", type: "image_view", summary: "result.png", status: "in_progress" },
-      { id: "sleep", type: "sleep", summary: "Wait 1.5 s", status: "in_progress" },
-      { id: "compact", type: "context_compaction", summary: "Compact conversation", status: "in_progress" },
-      { id: "child", type: "subagent_activity", summary: "started: /root/check", status: "in_progress" },
-    ]);
+    const live = await client.call<CodexProjectionProgress>(run, {
+      type: "live",
+      inputAvailable: false,
+    });
+    assert.deepEqual(
+      live.changes.steps.upserts.map(({ id, type, summary, status }) => ({
+        id,
+        type,
+        summary,
+        status,
+      })),
+      [
+        {
+          id: "image",
+          type: "image_view",
+          summary: "result.png",
+          status: "in_progress",
+        },
+        {
+          id: "sleep",
+          type: "sleep",
+          summary: "Wait 1.5 s",
+          status: "in_progress",
+        },
+        {
+          id: "compact",
+          type: "context_compaction",
+          summary: "Compact conversation",
+          status: "in_progress",
+        },
+        {
+          id: "child",
+          type: "subagent_activity",
+          summary: "started: /root/check",
+          status: "in_progress",
+        },
+      ],
+    );
     assert.equal(live.changes.steps.upserts[0].details, items[0].path);
     assert.match(live.changes.steps.upserts[3].details!, /child-thread/);
-    await client.call(run, { type: "event", event: { method: "item/completed", params: { item: items[0] } } });
-    const completed = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
-    assert.deepEqual(completed.changes.steps.upserts.map(({ id, status }) => ({ id, status })), [{ id: "image", status: "completed" }]);
-    const unknown = { id: "future", type: "futureItem", note: "keep diagnostic" };
-    await client.call(run, { type: "event", event: { method: "turn/completed", params: { turn: { id: "turn", status: "completed", items: [...items, unknown] } } } });
-    const terminal = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
-    assert.deepEqual(terminal.changes.steps.upserts.map(({ id, status }) => ({ id, status })), [
-      { id: "sleep", status: "completed" }, { id: "compact", status: "completed" }, { id: "child", status: "completed" },
-    ]);
-    const final = await client.call<CodexProjectionFinal>(run, { type: "finish", diagnostics: [] });
+    await client.call(run, {
+      type: "event",
+      event: { method: "item/completed", params: { item: items[0] } },
+    });
+    const completed = await client.call<CodexProjectionProgress>(run, {
+      type: "live",
+      inputAvailable: false,
+    });
+    assert.deepEqual(
+      completed.changes.steps.upserts.map(({ id, status }) => ({ id, status })),
+      [{ id: "image", status: "completed" }],
+    );
+    const unknown = {
+      id: "future",
+      type: "futureItem",
+      note: "keep diagnostic",
+    };
+    await client.call(run, {
+      type: "event",
+      event: {
+        method: "turn/completed",
+        params: {
+          turn: { id: "turn", status: "completed", items: [...items, unknown] },
+        },
+      },
+    });
+    const terminal = await client.call<CodexProjectionProgress>(run, {
+      type: "live",
+      inputAvailable: false,
+    });
+    assert.deepEqual(
+      terminal.changes.steps.upserts.map(({ id, status }) => ({ id, status })),
+      [
+        { id: "sleep", status: "completed" },
+        { id: "compact", status: "completed" },
+        { id: "child", status: "completed" },
+      ],
+    );
+    const final = await client.call<CodexProjectionFinal>(run, {
+      type: "finish",
+      diagnostics: [],
+    });
     assert.deepEqual(final.items, [...items, unknown]);
     assert.equal(final.assistantText, "");
-    assert.deepEqual(final.providerMetadata.map(({ responseType }) => responseType), ["futureItem"]);
-  } finally { await client.release(run); }
+    assert.deepEqual(
+      final.providerMetadata.map(({ responseType }) => responseType),
+      ["futureItem"],
+    );
+  } finally {
+    await client.release(run);
+  }
 });
 
 // @test-value v2
@@ -135,32 +300,79 @@ test("Worker projects native activities through started, completed and terminal 
 // impact = "質問UIが別の文章を上書きするか履歴に質問を重複表示する"
 // distinction = "rendererの固定range fixtureではWorkerの順序・秘匿化・previewとの整合を検証できない"
 // @end-test-value
+/** 同一文面の質問も ID で区別し、秘匿化後の全文に位置を対応付けられることを確かめる。 */
 test("question ranges track redaction, item identity and complete final text", async () => {
   const client = new CodexProjectionClient();
   const run = await client.begin(input("questions"));
-  const apply = async (item: unknown) => client.call(run, { type: "event", event: { method: "item/completed", params: { item } } });
-  const question = (id: string) => ({ id, type: "agentMessage", text: "Same?", delivery: "async", questions: [{ title: "Same?", options: ["A", "B"] }] });
+  /** 個々の項目を完了通知として投影に渡す。 */
+  const apply = async (item: unknown) =>
+    client.call(run, {
+      type: "event",
+      event: { method: "item/completed", params: { item } },
+    });
+  /** 文面や選択肢が同じで、項目 ID だけ異なる非同期質問を作る。 */
+  const question = (id: string) => ({
+    id,
+    type: "agentMessage",
+    text: "Same?",
+    delivery: "async",
+    questions: [{ title: "Same?", options: ["A", "B"] }],
+  });
   try {
-    await apply({ id: "before", type: "agentMessage", text: "api-questions Same?" });
+    await apply({
+      id: "before",
+      type: "agentMessage",
+      text: "api-questions Same?",
+    });
     await apply(question("first"));
     await apply(question("second"));
-    let live = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: true });
+    let live = await client.call<CodexProjectionProgress>(run, {
+      type: "live",
+      inputAvailable: true,
+    });
     assert.ok(!live.state.assistantText.includes("api-questions"));
     const start = live.state.assistantText.indexOf("\n\n") + 2;
-    assert.deepEqual(live.state.assistantQuestionRanges, [{ itemId: "first", start, end: start + 5 }, { itemId: "second", start: start + 7, end: start + 12 }]);
-    assert.equal(await client.call(run, { type: "question-position" }), live.state.assistantText.length);
+    assert.deepEqual(live.state.assistantQuestionRanges, [
+      { itemId: "first", start, end: start + 5 },
+      { itemId: "second", start: start + 7, end: start + 12 },
+    ]);
+    assert.equal(
+      await client.call(run, { type: "question-position" }),
+      live.state.assistantText.length,
+    );
     const longText = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 10);
     await apply({ id: "before", type: "agentMessage", text: longText });
-    live = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: true });
+    live = await client.call<CodexProjectionProgress>(run, {
+      type: "live",
+      inputAvailable: true,
+    });
     assert.deepEqual(live.state.assistantQuestionRanges, []);
-    const final = await client.call<CodexProjectionFinal>(run, { type: "finish", diagnostics: [] });
+    const final = await client.call<CodexProjectionFinal>(run, {
+      type: "finish",
+      diagnostics: [],
+    });
     assert.deepEqual(final.assistantQuestionRanges, [
       { itemId: "first", start: longText.length + 2, end: longText.length + 7 },
-      { itemId: "second", start: longText.length + 9, end: longText.length + 14 },
+      {
+        itemId: "second",
+        start: longText.length + 9,
+        end: longText.length + 14,
+      },
     ]);
-    assert.equal(final.assistantText.slice(final.assistantQuestionRanges![1].start, final.assistantQuestionRanges![1].end), "Same?");
-    assert.equal(await client.call(run, { type: "question-position" }), final.assistantText.length);
-  } finally { await client.release(run); }
+    assert.equal(
+      final.assistantText.slice(
+        final.assistantQuestionRanges![1].start,
+        final.assistantQuestionRanges![1].end,
+      ),
+      "Same?",
+    );
+    assert.equal(
+      await client.call(run, { type: "question-position" }),
+      final.assistantText.length,
+    );
+  } finally {
+    await client.release(run);
+  }
 });
 
 // @test-value v2
@@ -175,32 +387,80 @@ test("question ranges track redaction, item identity and complete final text", a
 // impact = "多数operationでMainへの反復コピーが増幅し、実行中表示または確定Detailsが欠落する"
 // distinction = "map単体や型検査ではWorker clone境界の配送単位とfinalへの全本文保持を検査できない。小さい固定3通知で継続コストを抑える"
 // @end-test-value
+/** 変更されたステップのみを秘匿化して届けても、確定時に全項目と長文が残ることを確かめる。 */
 test("Worker liveは変更operationだけを配送してfinishの完全本文を維持する", async () => {
   const client = new CodexProjectionClient();
   const run = await client.begin(input("delta"));
-  const command = (id: string, output: string) => ({ id, type: "commandExecution", command: id, aggregatedOutput: output, status: "completed", exitCode: 0 });
+  /** 出力だけを書き換える再通知にも使える、成功済みのコマンド項目を作る。 */
+  const command = (id: string, output: string) => ({
+    id,
+    type: "commandExecution",
+    command: id,
+    aggregatedOutput: output,
+    status: "completed",
+    exitCode: 0,
+  });
   try {
-    for (const item of [command("one", "first cap-delta"), command("two", "second"), command("one", "corrected")]) {
-      await client.call(run, { type: "event", event: { method: "item/completed", params: { item } } });
-      const live = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: true });
+    for (const item of [
+      command("one", "first cap-delta"),
+      command("two", "second"),
+      command("one", "corrected"),
+    ]) {
+      await client.call(run, {
+        type: "event",
+        event: { method: "item/completed", params: { item } },
+      });
+      const live = await client.call<CodexProjectionProgress>(run, {
+        type: "live",
+        inputAvailable: true,
+      });
       assert.equal(live.changes.snapshot, false);
       assert.deepEqual(live.state.steps, []);
-      assert.deepEqual(live.changes.steps.upserts.map(step => step.id), [item.id]);
+      assert.deepEqual(
+        live.changes.steps.upserts.map((step) => step.id),
+        [item.id],
+      );
       assert.deepEqual(live.changes.steps.removes, []);
       assert.ok(!JSON.stringify(live).includes("cap-delta"));
-      assert.equal(live.changes.steps.upserts[0].details, item.id === "one" && item.aggregatedOutput.startsWith("first")
-        ? "first [WITHMATE_BINDING_REFERENCE_REDACTED]" : item.aggregatedOutput);
+      assert.equal(
+        live.changes.steps.upserts[0].details,
+        item.id === "one" && item.aggregatedOutput.startsWith("first")
+          ? "first [WITHMATE_BINDING_REFERENCE_REDACTED]"
+          : item.aggregatedOutput,
+      );
     }
-    const unchanged = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false, force: true });
+    const unchanged = await client.call<CodexProjectionProgress>(run, {
+      type: "live",
+      inputAvailable: false,
+      force: true,
+    });
     assert.deepEqual(unchanged.state.steps, []);
     assert.deepEqual(unchanged.changes.steps, { upserts: [], removes: [] });
     const body = "全文".repeat(PROVIDER_TEXT_PREVIEW_LIMIT);
-    await client.call(run, { type: "event", event: { method: "item/completed", params: { item: { id: "answer", type: "agentMessage", text: body } } } });
-    const final = await client.call<CodexProjectionFinal>(run, { type: "finish", diagnostics: [] });
+    await client.call(run, {
+      type: "event",
+      event: {
+        method: "item/completed",
+        params: { item: { id: "answer", type: "agentMessage", text: body } },
+      },
+    });
+    const final = await client.call<CodexProjectionFinal>(run, {
+      type: "finish",
+      diagnostics: [],
+    });
     assert.equal(final.assistantText, body);
-    assert.deepEqual(final.items.filter(item => item.type === "commandExecution").map(item => ({ id: item.id, output: item.aggregatedOutput })),
-      [{ id: "one", output: "corrected" }, { id: "two", output: "second" }]);
-  } finally { await client.release(run); }
+    assert.deepEqual(
+      final.items
+        .filter((item) => item.type === "commandExecution")
+        .map((item) => ({ id: item.id, output: item.aggregatedOutput })),
+      [
+        { id: "one", output: "corrected" },
+        { id: "two", output: "second" },
+      ],
+    );
+  } finally {
+    await client.release(run);
+  }
 });
 
 // @test-value v2
@@ -215,37 +475,99 @@ test("Worker liveは変更operationだけを配送してfinishの完全本文を
 // impact = "確定済みの終了コードとtool errorが実行中表示へ反映されず結果を誤認させる"
 // distinction = "既存初回結果投影testは本文・status不変の補正と変更step配信を検査せず型検査では通知消失を確認できない"
 // @end-test-value
+/** 本文が変わらなくても終了コードとエラーの変化を届け、同じ補正を繰り返さない。 */
 test("Worker liveは結果だけの補正を反映して同値通知を抑止する", async () => {
   const client = new CodexProjectionClient();
   const run = await client.begin(input("correction"));
-  const command = { id: "command", type: "commandExecution", command: "check", aggregatedOutput: "same", status: "completed", exitCode: null };
-  const mcp = { id: "mcp", type: "mcpToolCall", server: "server", tool: "tool", arguments: {}, result: null, status: "failed", error: null };
+  const command = {
+    id: "command",
+    type: "commandExecution",
+    command: "check",
+    aggregatedOutput: "same",
+    status: "completed",
+    exitCode: null,
+  };
+  const mcp = {
+    id: "mcp",
+    type: "mcpToolCall",
+    server: "server",
+    tool: "tool",
+    arguments: {},
+    result: null,
+    status: "failed",
+    error: null,
+  };
+  /** 指定順に完了通知を送り、次の live 照会で結果の差分を比較できるようにする。 */
   const apply = async (items: unknown[]) => {
-    for (const item of items) await client.call(run, { type: "event", event: { method: "item/completed", params: { item } } });
+    for (const item of items)
+      await client.call(run, {
+        type: "event",
+        event: { method: "item/completed", params: { item } },
+      });
   };
   try {
     await apply([command, mcp]);
-    const initial = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
+    const initial = await client.call<CodexProjectionProgress>(run, {
+      type: "live",
+      inputAvailable: false,
+    });
     assert.equal(initial.changes.steps.upserts[0].exitCode, undefined);
     assert.equal(initial.changes.steps.upserts[1].error, undefined);
-    const corrected = [{ ...command, exitCode: 7 }, { ...mcp, error: { message: "{}" } }];
+    const corrected = [
+      { ...command, exitCode: 7 },
+      { ...mcp, error: { message: "{}" } },
+    ];
     await apply(corrected);
-    const live = await client.call<CodexProjectionProgress | null>(run, { type: "live", inputAvailable: false });
+    const live = await client.call<CodexProjectionProgress | null>(run, {
+      type: "live",
+      inputAvailable: false,
+    });
     assert.ok(live);
     assert.equal(live.changes.steps.upserts[0].exitCode, 7);
     assert.deepEqual(live.changes.steps.upserts[1].error, { message: "{}" });
-    assert.deepEqual(live.changes.steps.upserts.map((step) => step.id), ["command", "mcp"]);
-    assert.deepEqual(live.changes.steps.upserts.map(({ summary, details, status }) => ({ summary, details, status })),
-      initial.changes.steps.upserts.map(({ summary, details, status }) => ({ summary, details, status })));
+    assert.deepEqual(
+      live.changes.steps.upserts.map((step) => step.id),
+      ["command", "mcp"],
+    );
+    assert.deepEqual(
+      live.changes.steps.upserts.map(({ summary, details, status }) => ({
+        summary,
+        details,
+        status,
+      })),
+      initial.changes.steps.upserts.map(({ summary, details, status }) => ({
+        summary,
+        details,
+        status,
+      })),
+    );
     await apply(corrected);
-    assert.equal(await client.call(run, { type: "live", inputAvailable: false }), null);
-    await client.call(run, { type: "event", event: { method: "turn/completed",
-      params: { turn: { id: "turn", status: "completed", items: [command, mcp] } } } });
-    const cleared = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
+    assert.equal(
+      await client.call(run, { type: "live", inputAvailable: false }),
+      null,
+    );
+    await client.call(run, {
+      type: "event",
+      event: {
+        method: "turn/completed",
+        params: {
+          turn: { id: "turn", status: "completed", items: [command, mcp] },
+        },
+      },
+    });
+    const cleared = await client.call<CodexProjectionProgress>(run, {
+      type: "live",
+      inputAvailable: false,
+    });
     assert.equal(cleared.changes.steps.upserts[0].exitCode, undefined);
     assert.equal(cleared.changes.steps.upserts[1].error, undefined);
-    assert.deepEqual(cleared.changes.steps.upserts.map((step) => step.id), ["command", "mcp"]);
-  } finally { await client.release(run); }
+    assert.deepEqual(
+      cleared.changes.steps.upserts.map((step) => step.id),
+      ["command", "mcp"],
+    );
+  } finally {
+    await client.release(run);
+  }
 });
 
 // @test-value v2
@@ -260,39 +582,69 @@ test("Worker liveは結果だけの補正を反映して同値通知を抑止す
 // impact = "終了turnの本文とsecretが存続Workerに不要に残り保持が累積することを防ぐ"
 // distinction = "通常releaseはburst中の実Worker owner削除を観測しないため実protocol boundaryで確認する"
 // @end-test-value
-test("release confirms Worker owner deletion while another run handles a burst", { timeout: 10_000 }, async () => {
+/** 別の実行が通知を処理する間も、解放した実行だけが Worker の照会から消えることを確かめる。 */
+test(
+  "release confirms Worker owner deletion while another run handles a burst",
+  { timeout: 10_000 },
+  async () => {
     let worker: Worker | undefined;
     const postMessage = Worker.prototype.postMessage;
-    const spy = mock.method(Worker.prototype, "postMessage", function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
-      if ((args[0] as CodexProjectionRequest).command.type === "start") worker = this;
-      return postMessage.apply(this, args);
-    });
+    const spy = mock.method(
+      Worker.prototype,
+      "postMessage",
+      function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
+        if ((args[0] as CodexProjectionRequest).command.type === "start")
+          worker = this;
+        return postMessage.apply(this, args);
+      },
+    );
     const client = new CodexProjectionClient();
     const retired = await client.begin(input("retired"));
     const survivor = await client.begin(input("survivor"));
     try {
-      for (const [run, text] of [[retired, "retained body"], [survivor, "surviving body"]]) {
-        await client.call(run, { type: "event", event: { method: "item/completed", params: { item: { id: "same", type: "agentMessage", text } } } });
+      for (const [run, text] of [
+        [retired, "retained body"],
+        [survivor, "surviving body"],
+      ]) {
+        await client.call(run, {
+          type: "event",
+          event: {
+            method: "item/completed",
+            params: { item: { id: "same", type: "agentMessage", text } },
+          },
+        });
       }
-      const pending = Array.from({ length: 100 }, () => client.call(survivor, { type: "event", event: { method: "unknown" } }));
+      const pending = Array.from({ length: 100 }, () =>
+        client.call(survivor, { type: "event", event: { method: "unknown" } }),
+      );
       const release = client.release(retired);
       void release.catch(() => undefined);
       await Promise.all([release, ...pending]);
       assert.ok(worker);
       // クライアント側の実行レジストリだけでなく、Worker のプロトコル境界で削除を確認する。
-      const response = once(worker, "message", { signal: AbortSignal.timeout(2_000) });
-      worker.postMessage({ id: -1, runId: retired, command: { type: "live", inputAvailable: true } } satisfies CodexProjectionRequest);
-      const [reply] = await response as [CodexProjectionResponse];
+      const response = once(worker, "message", {
+        signal: AbortSignal.timeout(2_000),
+      });
+      worker.postMessage({
+        id: -1,
+        runId: retired,
+        command: { type: "live", inputAvailable: true },
+      } satisfies CodexProjectionRequest);
+      const [reply] = (await response) as [CodexProjectionResponse];
       assert.equal(reply.id, -1);
       assert.ok(reply.error);
       assert.equal(reply.value, undefined);
-      const live = await client.call<CodexProjectionProgress>(survivor, { type: "live", inputAvailable: true });
+      const live = await client.call<CodexProjectionProgress>(survivor, {
+        type: "live",
+        inputAvailable: true,
+      });
       assert.equal(live.state.assistantText, "surviving body");
     } finally {
       spy.mock.restore();
       await Promise.all([client.release(retired), client.release(survivor)]);
     }
-});
+  },
+);
 
 // @test-value v2
 // kind = "security"
@@ -307,46 +659,106 @@ test("release confirms Worker owner deletion while another run handles a burst",
 // impact = "binding capabilityやAPI keyの漏洩と別会話への本文混入を防ぐ"
 // distinction = "redactor単体とadapter fake transportだけではWorker間のcloneとrun状態分離・次turnの再初期化を確認できない"
 // @end-test-value
+/** 共有 Worker でも同じ項目 ID の会話を混ぜず、記録用の出力も伏字にしつつ確定本文を切らない。 */
 test("shared Worker isolates turns and sanitizes complete final output", async () => {
   const client = new CodexProjectionClient();
-  const first = await client.begin({ ...input("first"), diagnosticTrace: true });
-  const second = await client.begin({ ...input("second"), diagnosticTrace: true });
+  const first = await client.begin({
+    ...input("first"),
+    diagnosticTrace: true,
+  });
+  const second = await client.begin({
+    ...input("second"),
+    diagnosticTrace: true,
+  });
   const runs = [first, second];
   try {
     for (const [index, runId] of runs.entries()) {
       const name = index ? "second" : "first";
       const body = `${name} binding-${name} cap-${name} api-${name} ${"文".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 10)}`;
-      const event = await client.call<CodexProjectionEvent>(runId, { type: "event", event: { method: "item/completed", params: { item: { id: "same", type: "agentMessage", text: body } } } });
+      const event = await client.call<CodexProjectionEvent>(runId, {
+        type: "event",
+        event: {
+          method: "item/completed",
+          params: { item: { id: "same", type: "agentMessage", text: body } },
+        },
+      });
       assert.equal(event.changed, true);
-      await client.call(runId, { type: "event", event: { method: "item/completed", params: { item: { id: "unsupported", type: "futureItem", payload: `cap-${name}` } } } });
-      const live = await client.call<CodexProjectionProgress>(runId, { type: "live", inputAvailable: true });
+      await client.call(runId, {
+        type: "event",
+        event: {
+          method: "item/completed",
+          params: {
+            item: {
+              id: "unsupported",
+              type: "futureItem",
+              payload: `cap-${name}`,
+            },
+          },
+        },
+      });
+      const live = await client.call<CodexProjectionProgress>(runId, {
+        type: "live",
+        inputAvailable: true,
+      });
 
-      assert.equal(await client.call(runId, { type: "live", inputAvailable: true }), null);
-      const final = await client.call<CodexProjectionFinal>(runId, { type: "finish", diagnostics: [{ type: "diagnostic", data: { value: `binding-${name}` } }] });
+      assert.equal(
+        await client.call(runId, { type: "live", inputAvailable: true }),
+        null,
+      );
+      const final = await client.call<CodexProjectionFinal>(runId, {
+        type: "finish",
+        diagnostics: [
+          { type: "diagnostic", data: { value: `binding-${name}` } },
+        ],
+      });
       assert.equal(typeof final.rawItemsJson, "string");
       assert.ok(final.rawItemsJson!.includes("unsupported"));
-      const rawItems = JSON.parse(final.rawItemsJson!) as Array<{ type: string; data?: { value?: string } }>;
-      assert.ok(rawItems.some(item => item.type === "diagnostic" && item.data?.value === "[WITHMATE_BINDING_REFERENCE_REDACTED]"));
+      const rawItems = JSON.parse(final.rawItemsJson!) as Array<{
+        type: string;
+        data?: { value?: string };
+      }>;
+      assert.ok(
+        rawItems.some(
+          (item) =>
+            item.type === "diagnostic" &&
+            item.data?.value === "[WITHMATE_BINDING_REFERENCE_REDACTED]",
+        ),
+      );
       for (const secret of [`binding-${name}`, `cap-${name}`, `api-${name}`]) {
         assert.ok(!final.rawItemsJson!.includes(secret));
       }
       const combined = JSON.stringify({ event, live, final });
-      for (const secret of [`binding-${name}`, `cap-${name}`, `api-${name}`]) assert.ok(!combined.includes(secret));
+      for (const secret of [`binding-${name}`, `cap-${name}`, `api-${name}`])
+        assert.ok(!combined.includes(secret));
       assert.ok(final.assistantText.startsWith(`${name} `));
       assert.ok(!final.assistantText.includes(index ? "first" : "second"));
-      assert.ok(final.assistantText.endsWith("文".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 10)));
+      assert.ok(
+        final.assistantText.endsWith(
+          "文".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 10),
+        ),
+      );
 
       assert.equal(final.providerMetadata.length, 1);
       assert.equal(final.items.length, 2);
     }
-  } finally { await Promise.all(runs.map(runId => client.release(runId))); }
+  } finally {
+    await Promise.all(runs.map((runId) => client.release(runId)));
+  }
   const next = await client.begin(input("next"));
   try {
-    const live = await client.call<CodexProjectionProgress>(next, { type: "live", inputAvailable: true });
+    const live = await client.call<CodexProjectionProgress>(next, {
+      type: "live",
+      inputAvailable: true,
+    });
     assert.equal(live.state.assistantText, "");
     assert.deepEqual(live.state.steps, []);
-    await assert.rejects(client.call(first, { type: "live", inputAvailable: true }), /unavailable/);
-  } finally { await client.release(next); }
+    await assert.rejects(
+      client.call(first, { type: "live", inputAvailable: true }),
+      /unavailable/,
+    );
+  } finally {
+    await client.release(next);
+  }
 });
 
 // @test-value v2
@@ -361,23 +773,64 @@ test("shared Worker isolates turns and sanitizes complete final output", async (
 // impact = "正常な集中出力や長い本文が欠落しturnが失敗することを防ぐ"
 // distinction = "小さい逐次event testでは共有burst・batch順序・大きいWorker入力を通らない;固定100commandと36 MiB入力で確認する"
 // @end-test-value
+/** 連続通知と一括通知を到着順に反映し、大きい確定本文を省略せず返すことを確かめる。 */
 test("projection preserves bursts, batch changes and large valid input", async () => {
   const client = new CodexProjectionClient();
   const run = await client.begin(input("capacity"));
   try {
-    await client.call(run, { type: "event", event: { method: "item/started", params: { item: { id: "answer", type: "agentMessage", text: "" } } } });
+    await client.call(run, {
+      type: "event",
+      event: {
+        method: "item/started",
+        params: { item: { id: "answer", type: "agentMessage", text: "" } },
+      },
+    });
     const deltas = Array.from({ length: 100 }, (_, index) => `${index}:`);
-    const pending = deltas.map(delta => client.call(run, { type: "event", event: { method: "item/agentMessage/delta", params: { itemId: "answer", delta } } }));
-    const live = client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: true });
+    const pending = deltas.map((delta) =>
+      client.call(run, {
+        type: "event",
+        event: {
+          method: "item/agentMessage/delta",
+          params: { itemId: "answer", delta },
+        },
+      }),
+    );
+    const live = client.call<CodexProjectionProgress>(run, {
+      type: "live",
+      inputAvailable: true,
+    });
     await Promise.all(pending);
     assert.equal((await live).state.assistantText, deltas.join(""));
-    const batch = await client.call<CodexProjectionEvent[]>(run, { type: "events", events: ["a", "b", "c"].map(delta => ({ method: "item/agentMessage/delta", params: { itemId: "answer", delta } })) });
-    assert.deepEqual(batch.map(event => event.changed), [true, true, true]);
-    const batchedLive = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: true });
+    const batch = await client.call<CodexProjectionEvent[]>(run, {
+      type: "events",
+      events: ["a", "b", "c"].map((delta) => ({
+        method: "item/agentMessage/delta",
+        params: { itemId: "answer", delta },
+      })),
+    });
+    assert.deepEqual(
+      batch.map((event) => event.changed),
+      [true, true, true],
+    );
+    const batchedLive = await client.call<CodexProjectionProgress>(run, {
+      type: "live",
+      inputAvailable: true,
+    });
     assert.equal(batchedLive.state.assistantText, deltas.join("") + "abc");
     const text = "文".repeat(12 * 1024 * 1024);
-    await client.call(run, { type: "event", event: { method: "item/completed", params: { item: { id: "answer", type: "agentMessage", text } } } });
-    const final = await client.call<CodexProjectionFinal>(run, { type: "finish", diagnostics: [] });
+    await client.call(run, {
+      type: "event",
+      event: {
+        method: "item/completed",
+        params: { item: { id: "answer", type: "agentMessage", text } },
+      },
+    });
+    const final = await client.call<CodexProjectionFinal>(run, {
+      type: "finish",
+      diagnostics: [],
+    });
     assert.equal(final.assistantText, text);
-  } finally { await client.release(run); }
+  } finally {
+    await client.release(run);
+  }
 });

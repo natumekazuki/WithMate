@@ -4,8 +4,12 @@ import { describe, it } from "node:test";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
-import { buildHomeLaunchProjection, inferWorkspaceFromPath } from "../../src/home/home-launch-projection.js";
+import {
+  buildHomeLaunchProjection,
+  inferWorkspaceFromPath,
+} from "../../src/home/home-launch-projection.js";
 
+/** CodexとCopilotで同じモデルを提供する候補一覧を組み立てる。 */
 function createCatalog(): ModelCatalogSnapshot {
   return {
     providers: [
@@ -14,19 +18,24 @@ function createCatalog(): ModelCatalogSnapshot {
         label: "Codex",
         defaultModelId: "gpt-5.4",
         defaultReasoningEffort: "high",
-        models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
+        models: [
+          { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] },
+        ],
       },
       {
         id: "copilot",
         label: "Copilot",
         defaultModelId: "gpt-5.4",
         defaultReasoningEffort: "high",
-        models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
+        models: [
+          { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] },
+        ],
       },
     ],
   };
 }
 
+/** 起動時に選択可能な二人の有効なキャラクターを用意する。 */
 function createCharacters(): CharacterCatalogEntry[] {
   return [
     {
@@ -54,7 +63,9 @@ function createCharacters(): CharacterCatalogEntry[] {
   ];
 }
 
+/** 起動フォームが選択肢と入力から表示内容・開始可否を求める契約を確かめる。 */
 describe("home-launch-projection", () => {
+  /** ディレクトリパスの末尾を表示名に採用し、ブランチは未指定のまま扱う。 */
   it("workspace path から launch workspace を作る", () => {
     assert.deepEqual(inferWorkspaceFromPath("F:/work/demo"), {
       label: "demo",
@@ -73,6 +84,7 @@ describe("home-launch-projection", () => {
   // scope = "Home launch provider availability"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 有効なプロバイダーがない場合、ランダム表示でもプロバイダーとキャラクターが未選択で起動できない。 */
   it("provider と start 可否を返す", () => {
     const settings = createDefaultAppSettings();
     settings.codingProviderSettings.codex = {
@@ -92,7 +104,10 @@ describe("home-launch-projection", () => {
       openSessionWindowIdsLoadStatus: "loaded",
     });
 
-    assert.deepEqual(projection.enabledLaunchProviders.map((provider) => provider.id), []);
+    assert.deepEqual(
+      projection.enabledLaunchProviders.map((provider) => provider.id),
+      [],
+    );
     assert.equal(projection.selectedLaunchProvider, null);
     assert.equal(projection.selectedCharacter, null);
     assert.equal(projection.randomCharacterSelected, true);
@@ -109,6 +124,7 @@ describe("home-launch-projection", () => {
   // scope = "home-launch-positive-projection"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 有効なCodexだけを表示し、指定キャラクター、タイトル、ディレクトリが揃えば起動できる。 */
   it("有効な provider を選択でき、タイトル/ワークスペースで開始可否が変わる", () => {
     const settings = createDefaultAppSettings();
     settings.codingProviderSettings.copilot = {
@@ -130,11 +146,17 @@ describe("home-launch-projection", () => {
       openSessionWindowIdsLoadStatus: "loaded",
     });
 
-    assert.deepEqual(enabledOnlyCodex.enabledLaunchProviders.map((provider) => provider.id), ["codex"]);
+    assert.deepEqual(
+      enabledOnlyCodex.enabledLaunchProviders.map((provider) => provider.id),
+      ["codex"],
+    );
     assert.equal(enabledOnlyCodex.selectedLaunchProvider?.id, "codex");
     assert.equal(enabledOnlyCodex.selectedCharacter?.id, "noa");
     assert.equal(enabledOnlyCodex.randomCharacterSelected, false);
-    assert.deepEqual(enabledOnlyCodex.characterOptions.map((character) => character.id), ["mia", "noa"]);
+    assert.deepEqual(
+      enabledOnlyCodex.characterOptions.map((character) => character.id),
+      ["mia", "noa"],
+    );
     assert.equal(enabledOnlyCodex.launchWorkspacePathLabel, "F:/work/demo");
     assert.equal(enabledOnlyCodex.sessionFolderSelected, false);
     assert.equal(enabledOnlyCodex.canStartSession, true);
@@ -150,6 +172,7 @@ describe("home-launch-projection", () => {
   // scope = "home-launch-session-folder-projection"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 起動前の未確定パスは表示せず、Session Folderの指定を有効なワークスペース選択として扱う。 */
   it("SessionFolder 選択時は未確定 path の代わりに選択状態を投影する", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",
@@ -178,6 +201,7 @@ describe("home-launch-projection", () => {
   // scope = "Home launch random selection projection"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 固定IDが残っていてもランダム選択と同時表示せず、必要な取得が済めば起動を許可する。 */
   it("random character選択時は固定Characterを選択状態にしない", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",
@@ -207,6 +231,7 @@ describe("home-launch-projection", () => {
   // scope = "Home launch specific Character validity"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 有効な候補一覧にない固定IDを、ランダムや選択済みとして扱わない。 */
   it("specific Character がactive一覧に存在しない場合は開始不可にする", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",
@@ -236,6 +261,7 @@ describe("home-launch-projection", () => {
   // scope = "Home launch Character catalog readiness"
   // lifecycle = "permanent"
   // @end-test-value
+  /** キャラクターの未取得を取得済みの空一覧と区別し、履歴を取得済みでも開始を待たせる。 */
   it("Character catalog 読み込み前は開始不可にする", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",
@@ -265,6 +291,7 @@ describe("home-launch-projection", () => {
   // lifecycle = "permanent"
   // distinction = "このcaseは入力欠落時のprojectionを確認し、有効入力は同fileのpositive case、個々の不足条件とvalidation messageはhome-launch-state.test.tsが担う"
   // @end-test-value
+  /** プロバイダーを選べても、通常起動のタイトルとワークスペースが未入力なら起動不可にする。 */
   it("通常 Session は標準の開始条件を使う", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",

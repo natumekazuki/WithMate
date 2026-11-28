@@ -14,13 +14,17 @@ import {
   type ClipboardHelperProcessResult,
 } from "../../src-electron/files/windows-file-drop-clipboard-writer.js";
 
+/** 標準出力を指定してヘルパーが正常終了した結果を作る。 */
 const completed = (stdout = ""): ClipboardHelperProcessResult => ({
   started: true,
   exitCode: 0,
   timedOut: false,
   stdout,
 });
-const writeStarted = (overrides: Partial<ClipboardHelperProcessResult> = {}): ClipboardHelperProcessResult => ({
+/** 書き込み開始マーカーを含む結果に、終了コードなどの例外条件を重ねる。 */
+const writeStarted = (
+  overrides: Partial<ClipboardHelperProcessResult> = {},
+): ClipboardHelperProcessResult => ({
   ...completed("WITHMATE_FILE_DROP_READY"),
   ...overrides,
 });
@@ -37,23 +41,44 @@ const writeStarted = (overrides: Partial<ClipboardHelperProcessResult> = {}): Cl
 // impact = "コピー成功の誤表示や、正しい単一fileを結果不明とする誤判定を防ぐ"
 // distinction = "既存testはhelperのJSON結果をstubするため、PowerShellの配列処理と実際の照合式を確認できない"
 // @end-test-value
-test("Windows file-drop検証scriptは同じDataObjectのfile一覧とmarkerを照合する", { skip: process.platform !== "win32" }, async () => {
-  const targetPath = "C:\\資料\\報告書.txt";
-  for (const fixture of [
-    { files: [targetPath.toUpperCase()], marker: "operation-1", match: true },
-    { files: [], marker: "operation-1", match: false },
-    { files: [targetPath, "C:\\other.txt"], marker: "operation-1", match: false },
-    { files: ["C:\\different.txt"], marker: "operation-1", match: false },
-    { files: [targetPath], marker: "another-operation", match: false },
-  ]) {
-    const fixtureBase64 = Buffer.from(JSON.stringify(fixture), "utf8").toString("base64");
-    const spawnWithFixture = ((command: string, args: readonly string[], options: SpawnOptions) => {
-      const script = Buffer.from(args.at(-1)!, "base64").toString("utf16le");
-      const isolatedScript = script.replace("[System.Windows.Forms.Clipboard]::GetDataObject()", "$fixtureData");
-      assert.notEqual(isolatedScript, script);
-      // テストをユーザーのシステムクリップボードから隔離する。
-      assert.doesNotMatch(isolatedScript, /\[System\.Windows\.Forms\.Clipboard\]/u);
-      const setup = String.raw`
+/** 単一ファイルのパスと操作マーカーが揃うときだけ、検証スクリプトが一致を返す。 */
+test(
+  "Windows file-drop検証scriptは同じDataObjectのfile一覧とmarkerを照合する",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const targetPath = "C:\\資料\\報告書.txt";
+    for (const fixture of [
+      { files: [targetPath.toUpperCase()], marker: "operation-1", match: true },
+      { files: [], marker: "operation-1", match: false },
+      {
+        files: [targetPath, "C:\\other.txt"],
+        marker: "operation-1",
+        match: false,
+      },
+      { files: ["C:\\different.txt"], marker: "operation-1", match: false },
+      { files: [targetPath], marker: "another-operation", match: false },
+    ]) {
+      const fixtureBase64 = Buffer.from(
+        JSON.stringify(fixture),
+        "utf8",
+      ).toString("base64");
+      const spawnWithFixture = ((
+        command: string,
+        args: readonly string[],
+        options: SpawnOptions,
+      ) => {
+        const script = Buffer.from(args.at(-1)!, "base64").toString("utf16le");
+        const isolatedScript = script.replace(
+          "[System.Windows.Forms.Clipboard]::GetDataObject()",
+          "$fixtureData",
+        );
+        assert.notEqual(isolatedScript, script);
+        // テストをユーザーのシステムクリップボードから隔離する。
+        assert.doesNotMatch(
+          isolatedScript,
+          /\[System\.Windows\.Forms\.Clipboard\]/u,
+        );
+        const setup = String.raw`
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 Add-Type -AssemblyName System.Windows.Forms
@@ -63,21 +88,33 @@ $fixtureData.SetData([System.Windows.Forms.DataFormats]::FileDrop, $true, [strin
 $fixtureData.SetData("Preferred DropEffect", $false, [System.IO.MemoryStream]::new([byte[]](1, 0, 0, 0), $false))
 $fixtureData.SetData("WithMate File Copy Operation", $false, [System.IO.MemoryStream]::new([System.Text.Encoding]::UTF8.GetBytes([string]$fixture.marker), $false))
 `;
-      return spawn(command, [
-        ...args.slice(0, -1),
-        Buffer.from(setup + isolatedScript, "utf16le").toString("base64"),
-      ], options);
-    }) as typeof spawn;
-    const result = await runPowerShellClipboardHelper({
-      mode: "verify", payload: { path: targetPath, marker: "operation-1" },
-    }, process.env.SystemRoot, undefined, spawnWithFixture);
-    assert.equal(result.started, true);
-    assert.equal(result.timedOut, false);
-    assert.equal(result.exitCode, 0);
-    assert.deepEqual(JSON.parse(result.stdout), { match: fixture.match });
-  }
-});
+        return spawn(
+          command,
+          [
+            ...args.slice(0, -1),
+            Buffer.from(setup + isolatedScript, "utf16le").toString("base64"),
+          ],
+          options,
+        );
+      }) as typeof spawn;
+      const result = await runPowerShellClipboardHelper(
+        {
+          mode: "verify",
+          payload: { path: targetPath, marker: "operation-1" },
+        },
+        process.env.SystemRoot,
+        undefined,
+        spawnWithFixture,
+      );
+      assert.equal(result.started, true);
+      assert.equal(result.timedOut, false);
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(JSON.parse(result.stdout), { match: fixture.match });
+    }
+  },
+);
 
+/** 日本語を含むパスと操作マーカーを、ASCII の JSON を介して元に戻せる。 */
 test("Windows file-drop writerは非ASCII pathをASCII-safeなhelper payloadへ変換する", () => {
   const encoded = encodeClipboardHelperPayload({
     path: "C:\\資料\\設計メモ.md",
@@ -85,41 +122,69 @@ test("Windows file-drop writerは非ASCII pathをASCII-safeなhelper payloadへ�
   });
   assert.match(encoded, /^[\x00-\x7f]+$/u);
 
-  const parsed = JSON.parse(encoded) as { pathBase64: string; markerBase64: string };
-  assert.equal(Buffer.from(parsed.pathBase64, "base64").toString("utf8"), "C:\\資料\\設計メモ.md");
-  assert.equal(Buffer.from(parsed.markerBase64, "base64").toString("utf8"), "操作-1");
+  const parsed = JSON.parse(encoded) as {
+    pathBase64: string;
+    markerBase64: string;
+  };
+  assert.equal(
+    Buffer.from(parsed.pathBase64, "base64").toString("utf8"),
+    "C:\\資料\\設計メモ.md",
+  );
+  assert.equal(
+    Buffer.from(parsed.markerBase64, "base64").toString("utf8"),
+    "操作-1",
+  );
 });
 
+/** 絶対 SystemRoot から Windows PowerShell を特定し、相対パスや未指定では実行しない。 */
 test("Windows file-drop writerはSystem32のPowerShellを絶対pathで解決する", async () => {
   assert.equal(
     resolveWindowsPowerShellExecutablePath("C:\\Windows"),
     "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
   );
-  assert.equal(resolveWindowsPowerShellExecutablePath("relative\\Windows"), null);
+  assert.equal(
+    resolveWindowsPowerShellExecutablePath("relative\\Windows"),
+    null,
+  );
   assert.equal(resolveWindowsPowerShellExecutablePath(undefined), null);
 
   const writer = new WindowsFileDropClipboardWriter({
     platform: "win32",
     systemRoot: "relative\\Windows",
   });
-  assert.deepEqual(await writer.copyFile("C:\\data.txt"), { status: "failed-before-write" });
+  assert.deepEqual(await writer.copyFile("C:\\data.txt"), {
+    status: "failed-before-write",
+  });
 });
 
+/** 書き込みと別の検証へ同一ペイロードを渡し、一致を確認して初めて成功を返す。 */
 test("Windows file-drop writerはwriteと別processの三形式read-back一致後だけ成功する", async () => {
   const requests: ClipboardHelperProcessRequest[] = [];
   const writer = new WindowsFileDropClipboardWriter({
     platform: "win32",
+    /** 両ヘルパーへ同じ識別子が渡ることを照合できるようにする。 */
     createOperationMarker: () => "operation-1",
+    /** 呼び出し順と書き込み・検証それぞれのペイロードを記録する。 */
     runHelper: async (request) => {
       requests.push(request);
-      return request.mode === "write" ? writeStarted() : completed('{"match":true}');
+      return request.mode === "write"
+        ? writeStarted()
+        : completed('{"match":true}');
     },
   });
 
-  assert.deepEqual(await writer.copyFile("C:\\資料\\報告書.txt"), { status: "copied" });
+  assert.deepEqual(await writer.copyFile("C:\\資料\\報告書.txt"), {
+    status: "copied",
+  });
   assert.deepEqual(requests, [
-    { mode: "write", payload: { path: "C:\\資料\\報告書.txt", marker: "operation-1" } },
-    { mode: "verify", payload: { path: "C:\\資料\\報告書.txt", marker: "operation-1" } },
+    {
+      mode: "write",
+      payload: { path: "C:\\資料\\報告書.txt", marker: "operation-1" },
+    },
+    {
+      mode: "verify",
+      payload: { path: "C:\\資料\\報告書.txt", marker: "operation-1" },
+    },
   ]);
 });
 
@@ -134,11 +199,13 @@ test("Windows file-drop writerはwriteと別processの三形式read-back一致�
 // lifecycle = "permanent"
 // distinction = "native process開始前の失敗をclipboard書込み後の不明と区別する"
 // @end-test-value
+/** 書き込みプロセス未開始では、準備済みの検証側が読み取りを許可されない。 */
 test("Windows file-drop writerはnative process未開始をeffect noneの失敗として返す", async () => {
   const modes: string[] = [];
   let allowed: boolean | undefined;
   const writer = new WindowsFileDropClipboardWriter({
     platform: "win32",
+    /** 未開始の結果を返し、検証側の待機がどの許可値で終わるか記録する。 */
     runHelper: async (request, waitForWrite) => {
       modes.push(request.mode);
       if (waitForWrite) {
@@ -148,18 +215,23 @@ test("Windows file-drop writerはnative process未開始をeffect noneの失敗�
     },
   });
 
-  assert.deepEqual(await writer.copyFile("C:\\data.txt"), { status: "failed-before-write" });
+  assert.deepEqual(await writer.copyFile("C:\\data.txt"), {
+    status: "failed-before-write",
+  });
   assert.deepEqual(modes, ["write", "verify"]);
   assert.equal(allowed, false);
 });
 
+/** 偽の子プロセスを用い、実ヘルパーランナーの標準入出力と終了処理を検査可能にする。 */
 function createProcessHarness() {
   const children: ReturnType<typeof createChild>[] = [];
+  /** プロセスのイベントと標準入出力をテストから制御できる子プロセスを作る。 */
   function createChild() {
     const child = Object.assign(new EventEmitter(), {
       stdin: new PassThrough(),
       stdout: new PassThrough(),
       killed: false,
+      /** 停止を記録して終了イベントを発行し、プロセス回収を模擬する。 */
       kill() {
         child.killed = true;
         child.emit("close", null);
@@ -175,8 +247,16 @@ function createProcessHarness() {
   }) as unknown as typeof spawn;
   const writer = new WindowsFileDropClipboardWriter({
     platform: "win32",
+    /** 入力比較用に操作マーカーを固定する。 */
     createOperationMarker: () => "operation-1",
-    runHelper: (request, waitForWrite) => runPowerShellClipboardHelper(request, "C:\\Windows", waitForWrite, spawnProcess),
+    /** 実行ファイルは起動せず、実ランナーを偽のプロセス生成に接続する。 */
+    runHelper: (request, waitForWrite) =>
+      runPowerShellClipboardHelper(
+        request,
+        "C:\\Windows",
+        waitForWrite,
+        spawnProcess,
+      ),
   });
   return { children, writer };
 }
@@ -193,6 +273,7 @@ function createProcessHarness() {
 // impact = "不要な起動待ちと書込み前のclipboard読取りによる結果誤判定を防ぐ"
 // distinction = "runHelper結果のstubで通らない実helper runnerのstdin gateをfake processで低コストに検証する"
 // @end-test-value
+/** 読取プロセスを先に用意しても、書込側の終了までは照合用入力を渡さない。 */
 test("Windows file-drop helperは並行準備したreaderをwriter終了後に解放する", async () => {
   const { writer, children } = createProcessHarness();
   const pending = writer.copyFile("C:\\資料\\報告書.txt");
@@ -225,6 +306,7 @@ test("Windows file-drop helperは並行準備したreaderをwriter終了後に�
 // lifecycle = "permanent"
 // distinction = "process生成後かつnative write前の失敗で実runnerがreaderを回収することを検証する"
 // @end-test-value
+/** 書き込み開始を確認できなければ、検証待ちのプロセスを入力なしで停止する。 */
 test("Windows file-drop helperはwrite未開始なら待機readerを停止する", async () => {
   const { writer, children } = createProcessHarness();
   const pending = writer.copyFile("C:\\data.txt");
@@ -247,6 +329,7 @@ test("Windows file-drop helperはwrite未開始なら待機readerを停止する
 // lifecycle = "permanent"
 // distinction = "結果stubのtimedOutフラグでなく実runnerの8秒timerと終了処理を仮想時刻で確認する"
 // @end-test-value
+/** 書き込み開始を観測した後で時間切れになれば、両プロセスを停止して結果不明とする。 */
 test("Windows file-drop helperはtimeout時に停止してunknownを返す", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const { writer, children } = createProcessHarness();
@@ -272,32 +355,44 @@ test("Windows file-drop helperはtimeout時に停止してunknownを返す", asy
 // lifecycle = "permanent"
 // distinction = "process生成前のpayload準備例外を対象としprocess結果のstubでは代替しない"
 // @end-test-value
+/** 操作マーカーの準備が失敗した場合は、書き込み側も検証側も呼び出さない。 */
 test("Windows file-drop writerはpayload構築失敗でnative writeとread-backを開始しない", async () => {
   const modes: string[] = [];
   const writer = new WindowsFileDropClipboardWriter({
     platform: "win32",
-    createOperationMarker: () => { throw new Error("marker failed"); },
+    /** ペイロード構築時の例外を再現する。 */
+    createOperationMarker: () => {
+      throw new Error("marker failed");
+    },
+    /** 準備失敗後に誤ってヘルパーを呼んだ場合、そのモードを観測できるようにする。 */
     runHelper: async (request) => {
       modes.push(request.mode);
       return completed();
     },
   });
 
-  assert.deepEqual(await writer.copyFile("C:\\data.txt"), { status: "failed-before-write" });
+  assert.deepEqual(await writer.copyFile("C:\\data.txt"), {
+    status: "failed-before-write",
+  });
   assert.deepEqual(modes, []);
 });
 
+/** 書き込み前の起動例外と、開始確認後の検証例外を別の状態に分類する。 */
 test("Windows file-drop writerはhelper例外をwrite境界の前後で分類する", async () => {
   const beforeWrite = new WindowsFileDropClipboardWriter({
     platform: "win32",
+    /** 書き込み開始が観測されるより前に、プロセスの起動失敗を報告する。 */
     runHelper: async () => {
       throw new Error("spawn failed");
     },
   });
-  assert.deepEqual(await beforeWrite.copyFile("C:\\data.txt"), { status: "failed-before-write" });
+  assert.deepEqual(await beforeWrite.copyFile("C:\\data.txt"), {
+    status: "failed-before-write",
+  });
 
   const afterWrite = new WindowsFileDropClipboardWriter({
     platform: "win32",
+    /** 書き込み開始を先に報告し、続く検証だけを例外で失敗させる。 */
     runHelper: async (request) => {
       if (request.mode === "write") {
         return writeStarted();
@@ -305,9 +400,12 @@ test("Windows file-drop writerはhelper例外をwrite境界の前後で分類す
       throw new Error("verification failed");
     },
   });
-  assert.deepEqual(await afterWrite.copyFile("C:\\data.txt"), { status: "effect-unknown" });
+  assert.deepEqual(await afterWrite.copyFile("C:\\data.txt"), {
+    status: "effect-unknown",
+  });
 });
 
+/** 書き込み開始後の不一致、時間切れ、検証未起動をいずれも結果不明として扱う。 */
 test("Windows file-drop writerはnative write開始後にread-backを確認できなければeffect unknownを返す", async () => {
   for (const verification of [
     completed('{"match":false}'),
@@ -316,27 +414,38 @@ test("Windows file-drop writerはnative write開始後にread-backを確認で�
   ] satisfies ClipboardHelperProcessResult[]) {
     const writer = new WindowsFileDropClipboardWriter({
       platform: "win32",
-      runHelper: async (request) => request.mode === "write" ? writeStarted() : verification,
+      /** 書き込みは開始させ、検証側だけを反復中の失敗条件に切り替える。 */
+      runHelper: async (request) =>
+        request.mode === "write" ? writeStarted() : verification,
     });
-    assert.deepEqual(await writer.copyFile("C:\\data.txt"), { status: "effect-unknown" });
+    assert.deepEqual(await writer.copyFile("C:\\data.txt"), {
+      status: "effect-unknown",
+    });
   }
 });
 
+/** 書き込みプロセスが異常終了しても、別プロセスの照合に成功すればコピー済みとする。 */
 test("Windows file-drop writerはwriter応答より別processのpostconditionを成功根拠にする", async () => {
   const writer = new WindowsFileDropClipboardWriter({
     platform: "win32",
-    runHelper: async (request) => request.mode === "write"
-      ? writeStarted({ exitCode: 1 })
-      : completed('{"match":true}'),
+    /** 書き込み開始後の異常終了と、独立した照合の成功を返す。 */
+    runHelper: async (request) =>
+      request.mode === "write"
+        ? writeStarted({ exitCode: 1 })
+        : completed('{"match":true}'),
   });
 
   assert.deepEqual(await writer.copyFile("C:\\data.txt"), { status: "copied" });
 });
 
+/** 非 Windows では対応外と判断し、ネイティブ処理に入らない。 */
 test("Windows file-drop writerは非Windowsでnative helperを開始しない", async () => {
   const writer = new WindowsFileDropClipboardWriter({
     platform: "linux",
+    /** 対応外でもヘルパーを呼び出した場合は直ちに失敗させる。 */
     runHelper: async () => assert.fail("helper must not run"),
   });
-  assert.deepEqual(await writer.copyFile("/tmp/data.txt"), { status: "failed-before-write" });
+  assert.deepEqual(await writer.copyFile("/tmp/data.txt"), {
+    status: "failed-before-write",
+  });
 });

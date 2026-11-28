@@ -32,6 +32,7 @@ import {
   parseSessionSummaryPageRequest,
 } from "./session-summary-query.js";
 
+/** V2 の Session ヘッダーで保持する表示・ワークスペース・モデル・実行状態。本文は別の行にある。 */
 type SessionHeaderRow = {
   id: string;
   task_title: string;
@@ -59,6 +60,7 @@ type SessionHeaderRow = {
   last_active_at: string | number;
 };
 
+/** Home の一覧に必要な V2 行。履歴と成果物を読まずに、活動順と表示情報を取得する。 */
 type HomeSessionSummaryRow = {
   id: string;
   task_title: string;
@@ -77,10 +79,12 @@ type HomeSessionSummaryRow = {
   last_active_at: string | number;
 };
 
+/** ID だけを照会した結果の行。 */
 type SessionIdRow = {
   id: string;
 };
 
+/** V2 のメッセージ行と、別格納の成果物が照会された場合の JSON。 */
 type SessionMessageRow = {
   role: string;
   text: string;
@@ -90,6 +94,7 @@ type SessionMessageRow = {
   artifact_json: string | null;
 };
 
+/** 不正な保存行を一覧で読み飛ばすか、個別の厳密な取得で例外にするかを選ぶ。 */
 type SessionRowParseMode = "skip" | "throw";
 
 const UPSERT_SESSION_SQL = `
@@ -281,11 +286,20 @@ const GET_SESSION_MESSAGE_ARTIFACT_SQL = `
     AND m.seq = ?
 `;
 
-function parseAllowedAdditionalDirectories(row: SessionHeaderRow, mode: SessionRowParseMode): string[] | null {
+/** 追加ディレクトリを JSON の文字列配列として検証する。不正な値は空に置き換えず方針に従って扱う。 */
+function parseAllowedAdditionalDirectories(
+  row: SessionHeaderRow,
+  mode: SessionRowParseMode,
+): string[] | null {
   try {
     const parsed = JSON.parse(row.allowed_additional_directories_json);
-    if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === "string")) {
-      throw new Error("allowed_additional_directories_json is not a string array");
+    if (
+      !Array.isArray(parsed) ||
+      !parsed.every((entry) => typeof entry === "string")
+    ) {
+      throw new Error(
+        "allowed_additional_directories_json is not a string array",
+      );
     }
     return parsed;
   } catch (error) {
@@ -295,17 +309,28 @@ function parseAllowedAdditionalDirectories(row: SessionHeaderRow, mode: SessionR
       error,
     });
     if (mode === "throw") {
-      throw new Error(`保存済み session ${row.id} の allowed_additional_directories_json が壊れているよ。`);
+      throw new Error(
+        `保存済み session ${row.id} の allowed_additional_directories_json が壊れているよ。`,
+      );
     }
     return null;
   }
 }
 
-function rowToSessionSummary(row: SessionHeaderRow, mode: SessionRowParseMode = "skip"): SessionSummary | null {
-  const allowedAdditionalDirectories = parseAllowedAdditionalDirectories(row, mode);
+/** V2 ヘッダーから履歴を含まない要約を復元し、不正な保存値は指定の読み取り方針で処理する。 */
+function rowToSessionSummary(
+  row: SessionHeaderRow,
+  mode: SessionRowParseMode = "skip",
+): SessionSummary | null {
+  const allowedAdditionalDirectories = parseAllowedAdditionalDirectories(
+    row,
+    mode,
+  );
   if (!allowedAdditionalDirectories) {
     if (mode === "throw") {
-      throw new Error(`保存済み session ${row.id} の allowed_additional_directories_json が壊れているよ。`);
+      throw new Error(
+        `保存済み session ${row.id} の allowed_additional_directories_json が壊れているよ。`,
+      );
     }
     return null;
   }
@@ -345,7 +370,10 @@ function rowToSessionSummary(row: SessionHeaderRow, mode: SessionRowParseMode = 
   return summary;
 }
 
-function rowToHomeSessionSummary(row: HomeSessionSummaryRow): HomeSessionSummary | null {
+/** V2 の限定列を、書き込み可能な Home 一覧用の要約へ正規化する。 */
+function rowToHomeSessionSummary(
+  row: HomeSessionSummaryRow,
+): HomeSessionSummary | null {
   return normalizeHomeSessionSummary({
     id: row.id,
     taskTitle: row.task_title,
@@ -368,6 +396,7 @@ function rowToHomeSessionSummary(row: HomeSessionSummaryRow): HomeSessionSummary
   });
 }
 
+/** 利用者とアシスタントの行だけを履歴へ写し、壊れた成果物だけは本文を残して省く。 */
 function rowToMessage(row: SessionMessageRow): Message | null {
   if (row.role !== "user" && row.role !== "assistant") {
     return null;
@@ -391,7 +420,12 @@ function rowToMessage(row: SessionMessageRow): Message | null {
   };
 }
 
-function rowToSession(row: SessionHeaderRow, messages: Message[], mode: SessionRowParseMode = "skip"): Session | null {
+/** ヘッダーと取得済みメッセージから Session を復元する。保存していないライブストリームは空とする。 */
+function rowToSession(
+  row: SessionHeaderRow,
+  messages: Message[],
+  mode: SessionRowParseMode = "skip",
+): Session | null {
   const summary = rowToSessionSummary(row, mode);
   if (!summary) {
     return null;
@@ -409,11 +443,13 @@ function rowToSession(row: SessionHeaderRow, messages: Message[], mode: SessionR
   return session;
 }
 
+/** 全 Session ID を集合として取得し、全置換時に保存済みの対象を照合できるようにする。 */
 function readSessionIds(db: DatabaseSync): Set<string> {
   const rows = db.prepare(LIST_SESSION_IDS_SQL).all() as SessionIdRow[];
   return new Set(rows.map((row) => row.id));
 }
 
+/** Session の表示・実行情報とメッセージ件数を、指定の活動時刻とともにヘッダーへ書く。 */
 function writeSessionHeader(
   statement: ReturnType<DatabaseSync["prepare"]>,
   session: Session,
@@ -448,6 +484,7 @@ function writeSessionHeader(
   );
 }
 
+/** 履歴の並びをシーケンスとして書き、成果物がある場合は採番された行に別テーブルで関連付ける。 */
 function writeSessionMessages(
   insertMessageStatement: ReturnType<DatabaseSync["prepare"]>,
   insertArtifactStatement: ReturnType<DatabaseSync["prepare"]>,
@@ -465,32 +502,44 @@ function writeSessionMessages(
       "",
     );
     if (message.artifact) {
-      insertArtifactStatement.run(Number(result.lastInsertRowid), JSON.stringify(message.artifact));
+      insertArtifactStatement.run(
+        Number(result.lastInsertRowid),
+        JSON.stringify(message.artifact),
+      );
     }
   });
 }
 
+/** V2 のヘッダー・メッセージ・成果物を別レコードで保持する SQLite ストア。 */
 export class SessionStorageV2 {
   private db: DatabaseSync | null;
 
+  /** 接続を開いてプロバイダー ID の関数を登録し、旧保存データから読めるスキーマに整える。 */
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
     registerSessionProviderIdNormalizer(this.db);
     this.ensureSchema();
   }
 
+  /** 既存のメッセージテーブルにブックマーク列がなければ、既定値付きで追加する。 */
   private ensureSchema(): void {
     this.withDb((db) => {
       const columns = new Set(
-        (db.prepare("PRAGMA table_info(session_messages)").all() as Array<{ name: string }>)
-          .map((column) => column.name),
+        (
+          db.prepare("PRAGMA table_info(session_messages)").all() as Array<{
+            name: string;
+          }>
+        ).map((column) => column.name),
       );
       if (!columns.has("is_bookmarked")) {
-        db.exec("ALTER TABLE session_messages ADD COLUMN is_bookmarked INTEGER NOT NULL DEFAULT 0;");
+        db.exec(
+          "ALTER TABLE session_messages ADD COLUMN is_bookmarked INTEGER NOT NULL DEFAULT 0;",
+        );
       }
     });
   }
 
+  /** ストアが開いている場合だけ SQLite の操作を実行する。 */
   private withDb<T>(runner: (db: DatabaseSync) => T): T {
     if (!this.db) {
       throw new Error("SessionStorageV2 は close 済みだよ。");
@@ -499,9 +548,12 @@ export class SessionStorageV2 {
     return runner(this.db);
   }
 
+  /** 一覧表示向けに、本文を取得せずヘッダーだけで構成できる Session を返す。 */
   listSessions(): Session[] {
     return this.withDb((db) => {
-      const rows = db.prepare(LIST_SESSION_SUMMARIES_SQL).all() as SessionHeaderRow[];
+      const rows = db
+        .prepare(LIST_SESSION_SUMMARIES_SQL)
+        .all() as SessionHeaderRow[];
       return cloneSessions(
         rows
           .map((row) => rowToSession(row, []))
@@ -510,30 +562,47 @@ export class SessionStorageV2 {
     });
   }
 
+  /** 不正な行を除いた V2 の要約一覧を返す。メッセージと成果物は読み込まない。 */
   listSessionSummaries(): SessionSummary[] {
     return this.withDb((db) => {
-      const rows = db.prepare(LIST_SESSION_SUMMARIES_SQL).all() as SessionHeaderRow[];
+      const rows = db
+        .prepare(LIST_SESSION_SUMMARIES_SQL)
+        .all() as SessionHeaderRow[];
       return cloneSessionSummaries(
-        rows.map((row) => rowToSessionSummary(row)).filter((session): session is SessionSummary => session !== null),
+        rows
+          .map((row) => rowToSessionSummary(row))
+          .filter((session): session is SessionSummary => session !== null),
       );
     });
   }
 
-  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): HomeSessionSummaryPageResult {
+  /** Home の最近および開いている Session をページ化する。V2 はピン留めを保存していないため空を返す。 */
+  listSessionSummaryPage(
+    request?: SessionSummaryPageRequest | null,
+  ): HomeSessionSummaryPageResult {
     return this.withDb((db) => {
       const parsed = parseSessionSummaryPageRequest(request);
-      const cursor = parsed.scope === "open"
-        ? null
-        : decodeSessionSummaryCursor(parsed.cursor, parsed.scope, parsed.searchText);
+      const cursor =
+        parsed.scope === "open"
+          ? null
+          : decodeSessionSummaryCursor(
+              parsed.cursor,
+              parsed.scope,
+              parsed.searchText,
+            );
       if (parsed.scope === "pinned") {
         return { entries: [], nextCursor: null, hasMore: false };
       }
-      const search = buildSessionSummarySearchClauseForColumns("s", parsed.searchText, {
-        title: "s.task_title",
-        workspacePath: "s.workspace_path",
-        workspaceLabel: "s.workspace_label",
-        sessionKind: "s.session_kind",
-      });
+      const search = buildSessionSummarySearchClauseForColumns(
+        "s",
+        parsed.searchText,
+        {
+          title: "s.task_title",
+          workspacePath: "s.workspace_path",
+          workspaceLabel: "s.workspace_label",
+          sessionKind: "s.session_kind",
+        },
+      );
       const keyset = buildSessionSummaryKeysetClause("s", cursor);
       const where: string[] = [];
       const params: Array<string | number> = [];
@@ -552,32 +621,47 @@ export class SessionStorageV2 {
         where.push(search.sql);
         params.push(...search.params);
       }
-      const rows = db.prepare(`
+      const rows = db
+        .prepare(
+          `
         SELECT ${HOME_SESSION_SUMMARY_SELECT_COLUMNS}, last_active_at
         FROM sessions AS s
         ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
         ORDER BY s.last_active_at DESC, s.id DESC
         LIMIT ?
-      `).all(...params, parsed.limit + 1) as HomeSessionSummaryRow[];
+      `,
+        )
+        .all(...params, parsed.limit + 1) as HomeSessionSummaryRow[];
       const visibleRows = rows.slice(0, parsed.limit);
       const entries = cloneHomeSessionSummaries(
-        visibleRows.map((row) => rowToHomeSessionSummary(row)).filter((summary): summary is HomeSessionSummary => summary !== null),
+        visibleRows
+          .map((row) => rowToHomeSessionSummary(row))
+          .filter((summary): summary is HomeSessionSummary => summary !== null),
       );
       const hasMore = parsed.scope !== "open" && rows.length > parsed.limit;
       const lastRow = visibleRows.at(-1);
       return {
         entries,
         hasMore,
-        nextCursor: hasMore && lastRow && parsed.scope !== "open"
-          ? encodeSessionSummaryCursor(parsed.scope, String(lastRow.last_active_at), lastRow.id, parsed.searchText)
-          : null,
+        nextCursor:
+          hasMore && lastRow && parsed.scope !== "open"
+            ? encodeSessionSummaryCursor(
+                parsed.scope,
+                String(lastRow.last_active_at),
+                lastRow.id,
+                parsed.searchText,
+              )
+            : null,
       };
     });
   }
 
+  /** 通常 Session に使われたキャラクターを、最後に使われた順に ID で列挙する。 */
   listSessionCharacterUsage(): SessionCharacterUsage[] {
     return this.withDb((db) => {
-      const rows = db.prepare(`
+      const rows = db
+        .prepare(
+          `
         SELECT s.character_id
         FROM sessions AS s
         WHERE s.session_kind = 'default'
@@ -594,22 +678,32 @@ export class SessionStorageV2 {
               )
           )
         ORDER BY s.last_active_at DESC, s.id DESC
-      `).all() as Array<{ character_id: string }>;
+      `,
+        )
+        .all() as Array<{ character_id: string }>;
       return rows
         .map((row) => row.character_id.trim())
         .filter(Boolean)
-        .map((characterId) => ({ characterId, sessionKind: "default" as const }));
+        .map((characterId) => ({
+          characterId,
+          sessionKind: "default" as const,
+        }));
     });
   }
 
-  getLatestSessionSummaryForProvider(providerId: string): SessionSummary | null {
+  /** 指定プロバイダーの最新要約を取得する。空の指定や対象なしは null、壊れた行はエラーとする。 */
+  getLatestSessionSummaryForProvider(
+    providerId: string,
+  ): SessionSummary | null {
     const normalizedProviderId = providerId.trim();
     if (!normalizedProviderId) {
       return null;
     }
     return this.withDb((db) => {
-      const row = db.prepare(GET_LATEST_SESSION_SUMMARY_FOR_PROVIDER_SQL)
-        .get(normalizeProviderId(normalizedProviderId)) as SessionHeaderRow | undefined;
+      const row = db
+        .prepare(GET_LATEST_SESSION_SUMMARY_FOR_PROVIDER_SQL)
+        .get(normalizeProviderId(normalizedProviderId)) as
+        SessionHeaderRow | undefined;
       if (!row) {
         return null;
       }
@@ -618,14 +712,18 @@ export class SessionStorageV2 {
     });
   }
 
+  /** 指定 Session のヘッダーと保存済み履歴を読み、本文付きの正規化された Session を返す。 */
   getSession(sessionId: string): Session | null {
     return this.withDb((db) => {
-      const row = db.prepare(GET_SESSION_HEADER_SQL).get(sessionId) as SessionHeaderRow | undefined;
+      const row = db.prepare(GET_SESSION_HEADER_SQL).get(sessionId) as
+        SessionHeaderRow | undefined;
       if (!row) {
         return null;
       }
 
-      const messageRows = db.prepare(LIST_SESSION_MESSAGES_SQL).all(sessionId) as SessionMessageRow[];
+      const messageRows = db
+        .prepare(LIST_SESSION_MESSAGES_SQL)
+        .all(sessionId) as SessionMessageRow[];
       const messages = messageRows
         .map((messageRow) => rowToMessage(messageRow))
         .filter((message): message is Message => message !== null);
@@ -634,11 +732,16 @@ export class SessionStorageV2 {
     });
   }
 
-  getSessionMessageArtifact(sessionId: string, messageIndex: number): MessageArtifact | null {
+  /** 指定メッセージの成果物だけを取得する。未保存または復元できない場合は null。 */
+  getSessionMessageArtifact(
+    sessionId: string,
+    messageIndex: number,
+  ): MessageArtifact | null {
     return this.withDb((db) => {
-      const row = db.prepare(GET_SESSION_MESSAGE_ARTIFACT_SQL).get(sessionId, messageIndex) as
-        | { artifact_json: string | null }
-        | undefined;
+      const row = db
+        .prepare(GET_SESSION_MESSAGE_ARTIFACT_SQL)
+        .get(sessionId, messageIndex) as
+        { artifact_json: string | null } | undefined;
       if (!row?.artifact_json) {
         return null;
       }
@@ -650,13 +753,19 @@ export class SessionStorageV2 {
     });
   }
 
-  listSessionIdsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): string[] {
+  /** 指定の活動時刻より古い Session の、空でない ID を列挙する。 */
+  listSessionIdsLastActiveBefore(
+    cutoff: DeleteSessionsLastActiveBeforeCutoff,
+  ): string[] {
     return this.withDb((db) => {
-      const rows = db.prepare(LIST_SESSION_IDS_LAST_ACTIVE_BEFORE_SQL).all(cutoff.cutoffTimestampMs) as SessionIdRow[];
+      const rows = db
+        .prepare(LIST_SESSION_IDS_LAST_ACTIVE_BEFORE_SQL)
+        .all(cutoff.cutoffTimestampMs) as SessionIdRow[];
       return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
     });
   }
 
+  /** 正規化後のヘッダーと置換した全メッセージを一つのトランザクションで保存する。 */
   upsertSession(session: Session): Session {
     const normalized = normalizeSession(session);
     if (!normalized) {
@@ -673,7 +782,11 @@ export class SessionStorageV2 {
       try {
         writeSessionHeader(upsertSessionStatement, normalized, Date.now());
         deleteMessagesStatement.run(normalized.id);
-        writeSessionMessages(insertMessageStatement, insertArtifactStatement, normalized);
+        writeSessionMessages(
+          insertMessageStatement,
+          insertArtifactStatement,
+          normalized,
+        );
         db.exec("COMMIT");
         return cloneSessions([normalized])[0];
       } catch (error) {
@@ -683,6 +796,7 @@ export class SessionStorageV2 {
     });
   }
 
+  /** 指定集合だけを入力順で残す。削除・ヘッダー更新・履歴置換はすべて成功した場合に確定する。 */
   replaceSessions(nextSessions: Session[]): Session[] {
     const normalizedSessions = nextSessions.map((session) => {
       const normalized = normalizeSession(session);
@@ -695,7 +809,9 @@ export class SessionStorageV2 {
 
     return this.withDb((db) => {
       const existingSessionIds = readSessionIds(db);
-      const nextSessionIds = new Set(normalizedSessions.map((session) => session.id));
+      const nextSessionIds = new Set(
+        normalizedSessions.map((session) => session.id),
+      );
       const upsertSessionStatement = db.prepare(UPSERT_SESSION_SQL);
       const deleteSessionStatement = db.prepare(DELETE_SESSION_SQL);
       const deleteMessagesStatement = db.prepare(DELETE_SESSION_MESSAGES_SQL);
@@ -717,7 +833,11 @@ export class SessionStorageV2 {
             baseLastActiveAt - index,
           );
           deleteMessagesStatement.run(session.id);
-          writeSessionMessages(insertMessageStatement, insertArtifactStatement, session);
+          writeSessionMessages(
+            insertMessageStatement,
+            insertArtifactStatement,
+            session,
+          );
         });
         db.exec("COMMIT");
         return cloneSessions(normalizedSessions);
@@ -728,28 +848,36 @@ export class SessionStorageV2 {
     });
   }
 
+  /** ID 一件を複数削除と同じ正規化・削除経路に渡す。 */
   deleteSession(sessionId: string): void {
     this.deleteSessions([sessionId]);
   }
 
+  /** 空白と重複を除いた明示 ID に該当する V2 Session だけを削除する。 */
   deleteSessions(sessionIds: readonly string[]): void {
-    const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    const uniqueSessionIds = Array.from(
+      new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)),
+    );
     if (uniqueSessionIds.length === 0) {
       return;
     }
 
     this.withDb((db) => {
       const placeholders = uniqueSessionIds.map(() => "?").join(", ");
-      db.prepare(`DELETE FROM sessions WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
+      db.prepare(`DELETE FROM sessions WHERE id IN (${placeholders})`).run(
+        ...uniqueSessionIds,
+      );
     });
   }
 
+  /** V2 の Session を全件削除する。 */
   clearSessions(): void {
     this.withDb((db) => {
       db.prepare(DELETE_ALL_SESSIONS_SQL).run();
     });
   }
 
+  /** 開いている SQLite 接続を一度だけ閉じ、その後の操作を拒否する。 */
   close(): void {
     if (!this.db) {
       return;

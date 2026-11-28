@@ -6,26 +6,53 @@ import { createRoot } from "react-dom/client";
 
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { SessionMonitorPageResult } from "../../src-shared/window/withmate-window-types.js";
-import { buildNewSession, projectHomeSessionSummary } from "../../src-shared/session/session-state.js";
-import { fetchHomeSessionMonitorSnapshot, useHomeSessionMonitor } from "../../src/home/use-home-session-monitor.js";
+import {
+  buildNewSession,
+  projectHomeSessionSummary,
+} from "../../src-shared/session/session-state.js";
+import {
+  fetchHomeSessionMonitorSnapshot,
+  useHomeSessionMonitor,
+} from "../../src/home/use-home-session-monitor.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
+/** 指定IDで親Sessionのテストデータを生成し、本番と同じ手順でHome用の要約へ投影する。 */
 function entry(id: string) {
-  return projectHomeSessionSummary(buildNewSession({
-    id, taskTitle: id, workspaceLabel: "Workspace", workspacePath: "C:\\workspace", branch: "",
-    characterId: "mia", character: "Mia", characterIconPath: "",
-    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request",
-  }));
+  return projectHomeSessionSummary(
+    buildNewSession({
+      id,
+      taskTitle: id,
+      workspaceLabel: "Workspace",
+      workspacePath: "C:\\workspace",
+      branch: "",
+      characterId: "mia",
+      character: "Mia",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: "on-request",
+    }),
+  );
 }
 
+/** 親が一件で次ページを持たないMonitor応答を作る。 */
 function page(id: string): SessionMonitorPageResult {
-  return { entries: [entry(id)], auxiliarySessions: [], nextCursor: null, hasMore: false };
+  return {
+    entries: [entry(id)],
+    auxiliarySessions: [],
+    nextCursor: null,
+    hasMore: false,
+  };
 }
 
+/** 任意のタイミングで取得結果を解決できるよう、Promiseと解決関数を返す。 */
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => { resolve = next; });
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
   return { promise, resolve };
 }
 
@@ -41,25 +68,42 @@ function deferred<T>() {
 // impact = "履歴pageの外にいる実行中Sessionを監視から欠落させない"
 // distinction = "型checkや単一pageのHome描画testでは複数pageの取得制御と失効時の中断を確認できない"
 // @end-test-value
+/** 100件上限のカーソル取得で全ページを連結し、最初の応答待ちに無効化されたときは追加取得も結果適用もしない。 */
 test("Monitor snapshotは全pageを結合し、失効後の後続pageを止める", async () => {
   const requests: unknown[] = [];
-  const snapshot = await fetchHomeSessionMonitorSnapshot({
-    listSessionMonitorPage: async (request) => {
-      requests.push(request);
-      return request?.cursor ? page("z") : { ...page("a"), nextCursor: "a", hasMore: true };
+  const snapshot = await fetchHomeSessionMonitorSnapshot(
+    {
+      /** 要求を記録し、カーソルの有無で先頭ページと最終ページを返す。 */
+      listSessionMonitorPage: async (request) => {
+        requests.push(request);
+        return request?.cursor
+          ? page("z")
+          : { ...page("a"), nextCursor: "a", hasMore: true };
+      },
     },
-  }, () => true);
-  assert.deepEqual(snapshot.entries.map(({ id }) => id), ["a", "z"]);
-  assert.deepEqual(requests, [{ cursor: null, limit: 100 }, { cursor: "a", limit: 100 }]);
+    () => true,
+  );
+  assert.deepEqual(
+    snapshot.entries.map(({ id }) => id),
+    ["a", "z"],
+  );
+  assert.deepEqual(requests, [
+    { cursor: null, limit: 100 },
+    { cursor: "a", limit: 100 },
+  ]);
   let current = true;
   let calls = 0;
-  const discarded = await fetchHomeSessionMonitorSnapshot({
-    listSessionMonitorPage: async () => {
-      calls += 1;
-      current = false;
-      return { ...page("obsolete"), nextCursor: "obsolete", hasMore: true };
+  const discarded = await fetchHomeSessionMonitorSnapshot(
+    {
+      /** 最初の取得中に状態を失効させ、次カーソルのある応答を返す。 */
+      listSessionMonitorPage: async () => {
+        calls += 1;
+        current = false;
+        return { ...page("obsolete"), nextCursor: "obsolete", hasMore: true };
+      },
     },
-  }, () => current);
+    () => current,
+  );
   assert.equal(calls, 1);
   assert.deepEqual(discarded.entries, []);
 });
@@ -76,25 +120,62 @@ test("Monitor snapshotは全pageを結合し、失効後の後続pageを止め�
 // impact = "実行監視の古い表示・取得増殖・失敗中のSession到達不能を防ぐ"
 // distinction = "pure projectionでは検出できないReact lifecycle・購読・非同期取得・再試行の結線を小さいhook consumerで観測する"
 // @end-test-value
+/** 初回取得中の通知をまとめて古い応答を捨て、同状態の通知で再取得しない。更新失敗後は既存行を保って再試行でき、終了時には購読を解除する。 */
 test("Monitor hookは更新を集約し、stale応答と同状態streamingを除外して失敗後に再試行する", async () => {
-  const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: "https://withmate.local/" });
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: "https://withmate.local/",
+  });
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
-  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
-  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "window", {
+    value: dom.window,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "document", {
+    value: dom.window.document,
+    configurable: true,
+  });
   const stale = deferred<SessionMonitorPageResult>();
   let calls = 0;
+  /** 初回の遅延応答に続く既定結果を用意し、ケース途中で失敗や復旧へ差し替えられるようにする。 */
   let query = async () => page("latest");
-  const live = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
-  const invalidations = new Set<Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0]>();
-  const turns = new Set<Parameters<WithMateWindowApi["onSessionTurnUpdated"]>[0]>();
+  const live = new Set<
+    Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]
+  >();
+  const invalidations = new Set<
+    Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0]
+  >();
+  const turns = new Set<
+    Parameters<WithMateWindowApi["onSessionTurnUpdated"]>[0]
+  >();
   dom.window.withmate = {
-    listSessionMonitorPage: async () => ++calls === 1 ? stale.promise : query(),
-    subscribeLiveSessionRunStatus: (listener) => { live.add(listener); return () => { live.delete(listener); }; },
-    subscribeSessionInvalidation: (listener) => { invalidations.add(listener); return () => { invalidations.delete(listener); }; },
-    onSessionTurnUpdated: (listener) => { turns.add(listener); return () => { turns.delete(listener); }; },
+    /** 初回だけ取得を待機させ、以降はその時点の動作に委ねながら呼び出し回数を記録する。 */
+    listSessionMonitorPage: async () =>
+      ++calls === 1 ? stale.promise : query(),
+    /** 実行状態通知の購読を保持し、通知の発行と解除後の残数を検査できるようにする。 */
+    subscribeLiveSessionRunStatus: (listener) => {
+      live.add(listener);
+      return () => {
+        live.delete(listener);
+      };
+    },
+    /** データ失効通知の購読を保持し、テストから再取得を要求できるようにする。 */
+    subscribeSessionInvalidation: (listener) => {
+      invalidations.add(listener);
+      return () => {
+        invalidations.delete(listener);
+      };
+    },
+    /** turn更新購読の登録と破棄を検査可能にする。 */
+    onSessionTurnUpdated: (listener) => {
+      turns.add(listener);
+      return () => {
+        turns.delete(listener);
+      };
+    },
   } as Partial<WithMateWindowApi> as WithMateWindowApi;
   let state!: ReturnType<typeof useHomeSessionMonitor>;
+  /** Monitor hookに開いているSession IDを渡し、その結果の行IDをDOMへ表示する。 */
   function Probe({ ids }: { ids: string[] }) {
     state = useHomeSessionMonitor(true, ids);
     return <div>{state.entries.map(({ id }) => id).join(",")}</div>;
@@ -114,12 +195,18 @@ test("Monitor hookは更新を集約し、stale応答と同状態streamingを除
     assert.equal(element.textContent, "latest");
     assert.equal(state.status, "loaded");
     query = async () => page("running");
-    await act(async () => { for (const listener of live) listener("latest", { runState: "running" }); });
+    await act(async () => {
+      for (const listener of live) listener("latest", { runState: "running" });
+    });
     assert.equal(element.textContent, "running");
     const beforeStreaming = calls;
-    await act(async () => { for (const listener of live) listener("latest", { runState: "running" }); });
+    await act(async () => {
+      for (const listener of live) listener("latest", { runState: "running" });
+    });
     assert.equal(calls, beforeStreaming);
-    query = async () => { throw new Error("Monitor unavailable"); };
+    query = async () => {
+      throw new Error("Monitor unavailable");
+    };
     await act(async () => root.render(<Probe ids={["open-window"]} />));
     assert.equal(element.textContent, "running");
     assert.equal(state.status, "error");
@@ -140,7 +227,13 @@ test("Monitor hookは更新を集約し、stale応答と同状態streamingを除
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
-    Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+    Object.defineProperty(globalThis, "window", {
+      value: previousWindow,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "document", {
+      value: previousDocument,
+      configurable: true,
+    });
   }
 });

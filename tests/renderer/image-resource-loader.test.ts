@@ -1,28 +1,50 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createMarkdownImageLoader, type MarkdownImageApi } from "../../src/ui/markdown/image-resource-loader.js";
-import type { SessionFileDescriptor, SessionImageResourceRequest, SessionImageChunkRequest } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import {
+  createMarkdownImageLoader,
+  type MarkdownImageApi,
+} from "../../src/ui/markdown/image-resource-loader.js";
+import type {
+  SessionFileDescriptor,
+  SessionImageResourceRequest,
+  SessionImageChunkRequest,
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 const MIB = 1024 * 1024;
 const descriptor: SessionFileDescriptor = {
-  sessionId: "session-1", absolutePath: "C:/outside/image.png", name: "image.png",
+  sessionId: "session-1",
+  absolutePath: "C:/outside/image.png",
+  name: "image.png",
   absoluteFilePath: "C:/outside/image.png",
-  kind: "image", byteLength: MIB + 3, mimeType: "image/png", revision: "image-r1",
-  modifiedAt: "2026-10-03T00:00:00.000Z", suggestedEncoding: "utf-8",
+  kind: "image",
+  byteLength: MIB + 3,
+  mimeType: "image/png",
+  revision: "image-r1",
+  modifiedAt: "2026-10-03T00:00:00.000Z",
+  suggestedEncoding: "utf-8",
 };
 
+/** バッファの読込や検査の完了時点をテスト側で選べる Promise を用意する。 */
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((nextResolve) => { resolve = nextResolve; });
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
   return { promise, resolve };
 }
 
+/** 境界の前後を識別できるバイト値で、要求範囲と画像の版を反映した応答を作る。 */
 function chunk(request: SessionImageChunkRequest) {
-  const data = new Uint8Array(request.length).fill(request.offset === 0 ? 1 : 2).buffer;
+  const data = new Uint8Array(request.length).fill(
+    request.offset === 0 ? 1 : 2,
+  ).buffer;
   return {
-    data, offset: request.offset, nextOffset: request.offset + request.length,
-    totalBytes: descriptor.byteLength, done: request.offset + request.length === descriptor.byteLength,
+    data,
+    offset: request.offset,
+    nextOffset: request.offset + request.length,
+    totalBytes: descriptor.byteLength,
+    done: request.offset + request.length === descriptor.byteLength,
     revision: request.expectedRevision,
   };
 }
@@ -39,19 +61,42 @@ function chunk(request: SessionImageChunkRequest) {
 // impact = "chatとpreviewからroot外を含む画像を同じ読込制限で表示する"
 // distinction = "Mainのpath解決testと異なりrenderer context伝達とchunkから表示resourceへの変換を確認する"
 // @end-test-value
+/** 会話・プレビューの基点を Main への要求に残し、分割読み込みの結果を独立した画像として組み立てる。 */
 test("共通画像loaderはcontextを保持してroot外画像を1MiB chunkで読み込む", async () => {
   const contexts = [
     { sessionId: "session-1" },
-    { sessionId: "session-1", baseResource: { sessionId: "session-1", rootId: "workspace", relativePath: "docs/readme.md" } },
-    { sessionId: "session-1", baseResource: { sessionId: "session-1", absolutePath: "C:/notes/diagram.mmd" } },
+    {
+      sessionId: "session-1",
+      baseResource: {
+        sessionId: "session-1",
+        rootId: "workspace",
+        relativePath: "docs/readme.md",
+      },
+    },
+    {
+      sessionId: "session-1",
+      baseResource: {
+        sessionId: "session-1",
+        absolutePath: "C:/notes/diagram.mmd",
+      },
+    },
   ];
   for (const context of contexts) {
-    for (const target of ["../../outside/image.png", "C:/outside/image.png", "file:///C:/outside/image.png"]) {
+    for (const target of [
+      "../../outside/image.png",
+      "C:/outside/image.png",
+      "file:///C:/outside/image.png",
+    ]) {
       const inspected: SessionImageResourceRequest[] = [];
       const reads: SessionImageChunkRequest[] = [];
       const buffers: ArrayBuffer[] = [];
       const api: MarkdownImageApi = {
-        async inspectSessionImage(request) { inspected.push(request); return descriptor; },
+        /** 画像の調査要求を記録し、複数チャンクを要する固定の画像情報を返す。 */
+        async inspectSessionImage(request) {
+          inspected.push(request);
+          return descriptor;
+        },
+        /** 読取要求と元のバッファを保存し、返却後の書き換えが画像に漏れないか確かめられるようにする。 */
         async readSessionImageChunk(request) {
           reads.push(request);
           const result = chunk(request);
@@ -65,8 +110,20 @@ test("共通画像loaderはcontextを保持してroot外画像を1MiB chunkで�
       try {
         assert.deepEqual(inspected, [{ ...context, target }]);
         assert.deepEqual(reads, [
-          { ...context, target, offset: 0, length: MIB, expectedRevision: descriptor.revision },
-          { ...context, target, offset: MIB, length: 3, expectedRevision: descriptor.revision },
+          {
+            ...context,
+            target,
+            offset: 0,
+            length: MIB,
+            expectedRevision: descriptor.revision,
+          },
+          {
+            ...context,
+            target,
+            offset: MIB,
+            length: 3,
+            expectedRevision: descriptor.revision,
+          },
         ]);
         for (const buffer of buffers) new Uint8Array(buffer).fill(9);
         const response = await fetch(url);
@@ -75,7 +132,10 @@ test("共通画像loaderはcontextを保持してroot外画像を1MiB chunkで�
         assert.equal(bytes.byteLength, MIB + 3);
         assert.ok(bytes.subarray(0, MIB).every((value) => value === 1));
         assert.deepEqual([...bytes.subarray(MIB)], [2, 2, 2]);
-      } finally { URL.revokeObjectURL(url); loader.invalidate(); }
+      } finally {
+        URL.revokeObjectURL(url);
+        loader.invalidate();
+      }
     }
   }
 });
@@ -92,16 +152,26 @@ test("共通画像loaderはcontextを保持してroot外画像を1MiB chunkで�
 // impact = "認可境界と画像revision整合性を維持し、失敗後のreloadで画像を回復できる"
 // distinction = "Mainの実path認可testと異なりrendererがAPI失敗を伝播し、offset/総bytes/終了通知の実行時整合性と再試行を確認する"
 // @end-test-value
+/** アクセス拒否と不整合なチャンクは表示せず、正常な再取得を妨げないことを確かめる。 */
 test("共通画像loaderは認可とchunk整合性の失敗後も再取得できる", async () => {
-  for (const fault of ["denied", "offset", "total", "short", "overflow", "empty"] as const) {
+  for (const fault of [
+    "denied",
+    "offset",
+    "total",
+    "short",
+    "overflow",
+    "empty",
+  ] as const) {
     let failed = true;
     let inspections = 0;
     const api: MarkdownImageApi = {
+      /** 調査回数を数え、拒否ケースの最初の試行だけ例外にする。 */
       async inspectSessionImage() {
         inspections += 1;
         if (failed && fault === "denied") throw new Error("Image path denied.");
         return descriptor;
       },
+      /** 最初の試行で選ばれた境界違反を注入し、次の試行には正しいチャンクを返す。 */
       async readSessionImageChunk(request) {
         const result = chunk(request);
         if (!failed) return result;
@@ -112,11 +182,18 @@ test("共通画像loaderは認可とchunk整合性の失敗後も再取得でき
           const data = new ArrayBuffer(descriptor.byteLength + 1);
           return { ...result, data, nextOffset: data.byteLength };
         }
-        return { ...result, data: new ArrayBuffer(0), nextOffset: request.offset };
+        return {
+          ...result,
+          data: new ArrayBuffer(0),
+          nextOffset: request.offset,
+        };
       },
     };
     const loader = createMarkdownImageLoader(api, { sessionId: "session-1" });
-    await assert.rejects(loader.resolve("image.png"), fault === "denied" ? /denied/ : /changed while/);
+    await assert.rejects(
+      loader.resolve("image.png"),
+      fault === "denied" ? /denied/ : /changed while/,
+    );
     failed = false;
     const url = await loader.resolve("image.png");
     assert.ok(url);
@@ -126,7 +203,10 @@ test("共通画像loaderは認可とchunk整合性の失敗後も再取得でき
       assert.equal(bytes[0], 1);
       assert.equal(bytes.at(-1), 2);
       assert.equal(inspections, 2);
-    } finally { URL.revokeObjectURL(url); loader.invalidate(); }
+    } finally {
+      URL.revokeObjectURL(url);
+      loader.invalidate();
+    }
   }
 });
 
@@ -142,18 +222,36 @@ test("共通画像loaderは認可とchunk整合性の失敗後も再取得でき
 // impact = "大量の画像requestによる負荷を抑え対象切替後のstale resourceを防ぐ"
 // distinction = "queue単体testとは異なり実際の画像inspectとread境界の制限を確認する"
 // @end-test-value
+/** 調査を最大 4 件に制限し、無効化後は待機中も実行中も画像を返さない。 */
 test("共通画像loaderは同時4件で無効化時に待機と実行中の画像を停止する", async () => {
-  const gates = Array.from({ length: 4 }, () => deferred<SessionFileDescriptor>());
+  const gates = Array.from({ length: 4 }, () =>
+    deferred<SessionFileDescriptor>(),
+  );
   const inspected: string[] = [];
   let readCount = 0;
   const api: MarkdownImageApi = {
-    inspectSessionImage(request) { inspected.push(request.target); return gates[inspected.length - 1].promise; },
-    async readSessionImageChunk(request) { readCount += 1; return chunk(request); },
+    /** 開始順を記録し、各画像の調査を個別のゲートで停止する。 */
+    inspectSessionImage(request) {
+      inspected.push(request.target);
+      return gates[inspected.length - 1].promise;
+    },
+    /** チャンクの読み取りが調査の無効化後まで続かなかったか計測する。 */
+    async readSessionImageChunk(request) {
+      readCount += 1;
+      return chunk(request);
+    },
   };
   const loader = createMarkdownImageLoader(api, { sessionId: "session-1" });
-  const resolutions = Array.from({ length: 6 }, (_, index) => loader.resolve(`image-${index}.png`));
+  const resolutions = Array.from({ length: 6 }, (_, index) =>
+    loader.resolve(`image-${index}.png`),
+  );
   await Promise.resolve();
-  assert.deepEqual(inspected, ["image-0.png", "image-1.png", "image-2.png", "image-3.png"]);
+  assert.deepEqual(inspected, [
+    "image-0.png",
+    "image-1.png",
+    "image-2.png",
+    "image-3.png",
+  ]);
   loader.invalidate();
   for (const gate of gates) gate.resolve(descriptor);
   assert.deepEqual(await Promise.all(resolutions), Array(6).fill(null));
@@ -173,13 +271,21 @@ test("共通画像loaderは同時4件で無効化時に待機と実行中の画�
 // impact = "破棄した描画の無駄な読込と異なる世代の画像bytes混在を防ぐ"
 // distinction = "型検査では実行中IPCから戻った後の取消とrevision照合を確認できない"
 // @end-test-value
+/** 最初のチャンクの待機中に取り消した場合と、応答の版が変わった場合に、次の読み込みを止める。 */
 test("共通画像loaderはabortとrevision変更でchunk読込を止める", async () => {
   for (const outcome of ["abort", "changed"] as const) {
     const gate = deferred<ReturnType<typeof chunk>>();
     let reads = 0;
     const api: MarkdownImageApi = {
-      async inspectSessionImage() { return descriptor; },
-      readSessionImageChunk() { reads += 1; return gate.promise; },
+      /** 読取開始に必要な画像の版とサイズを返す。 */
+      async inspectSessionImage() {
+        return descriptor;
+      },
+      /** 最初の読み取りを保留し、取消要求や版の不一致を返却時に観測できるようにする。 */
+      readSessionImageChunk() {
+        reads += 1;
+        return gate.promise;
+      },
     };
     const controller = new AbortController();
     const loader = createMarkdownImageLoader(api, { sessionId: "session-1" });
@@ -188,7 +294,16 @@ test("共通画像loaderはabortとrevision変更でchunk読込を止める", as
     await Promise.resolve();
     assert.equal(reads, 1);
     if (outcome === "abort") controller.abort();
-    gate.resolve({ ...chunk({ sessionId: "session-1", target: "image.png", offset: 0, length: MIB, expectedRevision: descriptor.revision }), revision: "changed" });
+    gate.resolve({
+      ...chunk({
+        sessionId: "session-1",
+        target: "image.png",
+        offset: 0,
+        length: MIB,
+        expectedRevision: descriptor.revision,
+      }),
+      revision: "changed",
+    });
     if (outcome === "abort") assert.equal(await resolution, null);
     else await assert.rejects(resolution, /changed while/);
     assert.equal(reads, 1);

@@ -3,23 +3,79 @@ import test from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import type { ReorderQueuedSessionTurnsRequest, SessionTurnQueueReceipt, SessionTurnQueueReorderResult } from "../../src-shared/session/session-turn-queue.js";
-import { useSessionTurnQueue, type SessionTurnQueueApi } from "../../src/chat/conversation/use-session-turn-queue.js";
+import type {
+  ReorderQueuedSessionTurnsRequest,
+  SessionTurnQueueReceipt,
+  SessionTurnQueueReorderResult,
+} from "../../src-shared/session/session-turn-queue.js";
+import {
+  useSessionTurnQueue,
+  type SessionTurnQueueApi,
+} from "../../src/chat/conversation/use-session-turn-queue.js";
 import { SessionTurnQueueRow } from "../../src/chat/conversation/session-turn-queue-row.js";
 import { projectSessionTurnQueue } from "../../src/chat/conversation/session-turn-queue-projection.js";
 import { buildMessageListProjection } from "../../src/chat/auxiliary/auxiliary-session-message-projection.js";
 
+/** 受付順と待機位置を別々に上書きできる、本文を含む待機中の受付結果を用意する。 */
 function receipt(id: string, sequence: number): SessionTurnQueueReceipt {
-  return { sessionId: "session", incarnationId: "inc", id, requestId: id, sequence, queuePosition: sequence, state: "queued",
-    captured: { request: { clientRequestId: id, userMessage: `Message ${id}`, executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
-    turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" };
+  return {
+    sessionId: "session",
+    incarnationId: "inc",
+    id,
+    requestId: id,
+    sequence,
+    queuePosition: sequence,
+    state: "queued",
+    captured: {
+      request: {
+        clientRequestId: id,
+        userMessage: `Message ${id}`,
+        executionOptions: {
+          model: "model",
+          reasoningEffort: "medium",
+          approvalMode: "on-request",
+          codexSandboxMode: "workspace-write",
+          codexSpeed: "standard",
+          codexReviewer: "user",
+          customAgentName: "",
+        },
+      },
+      attachments: [],
+      provider: "codex",
+      workspacePath: "workspace",
+    },
+    turnId: null,
+    userMessageSeq: null,
+    reason: null,
+    releasedAt: null,
+    createdAt: "now",
+    updatedAt: "now",
+  };
 }
 
+/** 実フックと並べ替え行を描画し、保存応答・再取得・フォーカスを個別に制御する。 */
 async function mount() {
-  const dom = new JSDOM("<div id='root'></div>", { url: "https://withmate.test", pretendToBeVisual: true });
-  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
-  const originals = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const dom = new JSDOM("<div id='root'></div>", {
+    url: "https://withmate.test",
+    pretendToBeVisual: true,
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
   let items = [receipt("A", 1), receipt("B", 2), receipt("C", 3)];
   let finish!: (result: SessionTurnQueueReorderResult) => void;
   let fail!: (error: Error) => void;
@@ -27,40 +83,108 @@ async function mount() {
   let reads = 0;
   const requests: ReorderQueuedSessionTurnsRequest[] = [];
   const api: SessionTurnQueueApi = {
-    listSessionTurnQueue: async () => { reads += 1; if (readError) throw readError; return items; },
-    getSessionTurnQueueReceipt: async (_sessionId, id) => ({ ...receipt(id, 1), state: "canceled" }),
+    /** 読取回数を数え、指定された保存済み一覧または再取得失敗を返す。 */
+    listSessionTurnQueue: async () => {
+      reads += 1;
+      if (readError) throw readError;
+      return items;
+    },
+    /** 個別に取得した待機項目は取消済みとして扱う。 */
+    getSessionTurnQueueReceipt: async (_sessionId, id) => ({
+      ...receipt(id, 1),
+      state: "canceled",
+    }),
+    /** 並べ替え要求を取り込み、応答を返すタイミングをテスト側に委ねる。 */
     reorderQueuedSessionTurns: async (_sessionId, request) => {
       requests.push(request);
-      return new Promise<SessionTurnQueueReorderResult>((resolve, reject) => { finish = resolve; fail = reject; });
+      return new Promise<SessionTurnQueueReorderResult>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
     },
   };
   let current!: ReturnType<typeof useSessionTurnQueue>;
+  /** 現在の会話の待機項目、操作、通知と再取得エラーを DOM に反映する。 */
   function View({ sessionId }: { sessionId: string }) {
     current = useSessionTurnQueue(api, sessionId, "inc", true);
-    return <div className="session-message-list" tabIndex={-1}>
-      {current.queuedReceipts.map((item, index) => <SessionTurnQueueRow key={item.id} receipt={item} character={{ name: "Mate", iconPath: "" }}
-        position={index + 1} queueSize={current.queuedReceipts.length} busy={current.busyId !== null} busyKind={current.busyId === item.id ? current.busyKind : null}
-        onMove={current.move} onCancel={current.cancel} />)}
-      <span role="status">{current.announcement}</span>
-      {current.error ? <div role="alert">{current.error}<button onClick={current.reload}>Retry Queue</button></div> : null}
-    </div>;
+    return (
+      <div className="session-message-list" tabIndex={-1}>
+        {current.queuedReceipts.map((item, index) => (
+          <SessionTurnQueueRow
+            key={item.id}
+            receipt={item}
+            character={{ name: "Mate", iconPath: "" }}
+            position={index + 1}
+            queueSize={current.queuedReceipts.length}
+            busy={current.busyId !== null}
+            busyKind={current.busyId === item.id ? current.busyKind : null}
+            onMove={current.move}
+            onCancel={current.cancel}
+          />
+        ))}
+        <span role="status">{current.announcement}</span>
+        {current.error ? (
+          <div role="alert">
+            {current.error}
+            <button onClick={current.reload}>Retry Queue</button>
+          </div>
+        ) : null}
+      </div>
+    );
   }
   const root = createRoot(dom.window.document.getElementById("root")!);
   await act(async () => root.render(<View sessionId="session" />));
   return {
-    document: dom.window.document, requests,
-    get current() { return current; },
-    get reads() { return reads; },
-    setReadError(error: Error | null) { readError = error; },
-    setItems(next: SessionTurnQueueReceipt[]) { items = next; },
-    button(position: number, direction: string) { return dom.window.document.querySelector<HTMLButtonElement>(`button[aria-label="Move queued turn ${position} ${direction}"]`)!; },
-    async click(button: HTMLButtonElement) { button.focus(); await act(async () => button.click()); },
-    async resolve(outcome: SessionTurnQueueReorderResult["outcome"]) { await act(async () => finish({ outcome, receipts: items })); },
-    async reject() { await act(async () => fail(new Error("reply lost"))); },
-    async switchOwner() { await act(async () => root.render(<View sessionId="another" />)); },
-    async close() { await act(async () => root.unmount()); dom.window.close(); for (const [key, descriptor] of originals) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
-    } },
+    document: dom.window.document,
+    requests,
+    /** 描画されたフックの最新状態を読む。 */
+    get current() {
+      return current;
+    },
+    /** 最初の取得と再取得の累計を読む。 */
+    get reads() {
+      return reads;
+    },
+    /** 次の一覧取得を失敗または成功に切り替える。 */
+    setReadError(error: Error | null) {
+      readError = error;
+    },
+    /** 画面の変更とは別に、保存側が持つ最新の待機順を差し替える。 */
+    setItems(next: SessionTurnQueueReceipt[]) {
+      items = next;
+    },
+    /** 現在表示されている位置と移動方向に対応するボタンを得る。 */
+    button(position: number, direction: string) {
+      return dom.window.document.querySelector<HTMLButtonElement>(
+        `button[aria-label="Move queued turn ${position} ${direction}"]`,
+      )!;
+    },
+    /** キーボード操作時と同じようにボタンにフォーカスしてから押す。 */
+    async click(button: HTMLButtonElement) {
+      button.focus();
+      await act(async () => button.click());
+    },
+    /** 保留中の並べ替えに、指定結果と最新の保存済み一覧を返す。 */
+    async resolve(outcome: SessionTurnQueueReorderResult["outcome"]) {
+      await act(async () => finish({ outcome, receipts: items }));
+    },
+    /** 保存結果が確認できない通信断として応答を拒否する。 */
+    async reject() {
+      await act(async () => fail(new Error("reply lost")));
+    },
+    /** 並べ替え応答を待つ間に表示対象だけを別 Session へ切り替える。 */
+    async switchOwner() {
+      await act(async () => root.render(<View sessionId="another" />));
+    },
+    /** 描画を破棄し、テスト間で JSDOM が残らないようグローバル定義も戻す。 */
+    async close() {
+      await act(async () => root.unmount());
+      dom.window.close();
+      for (const [key, descriptor] of originals) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+      }
+    },
   };
 }
 
@@ -76,15 +200,47 @@ async function mount() {
 // impact = "実行順と見える順番が食い違い、利用者が誤った順序を前提に操作する"
 // distinction = "storageのclaim testはrenderer側の再sortを検出しない。小さい純粋投影で両会話を確認する"
 // @end-test-value
+/** 保存済みの履歴とライブ応答を動かさず、待機列の表示と開始候補だけを保存順にする。 */
 test("queue projection follows persisted execution order without moving history", () => {
   for (const kind of ["session", "auxiliary"] as const) {
-    const receipts = [{ ...receipt("A", 1), queuePosition: 3 }, { ...receipt("B", 2), queuePosition: 1 }, { ...receipt("C", 3), queuePosition: 2 }];
-    const history = buildMessageListProjection([{ role: "user", text: "saved", historyIndex: 0 }], [], "session", {
-      primaryMessageSourceKind: kind, liveAssistant: { sessionId: "session", threadId: "thread", messageIndex: 1, text: "live" },
-    });
-    const projected = projectSessionTurnQueue(history, receipts, { sessionId: "session", incarnationId: "inc" }, { submissions: [], hasActiveRun: true });
-    assert.deepEqual(projected.projection.messages.map((item) => item.text), ["saved", "live", "Message B", "Message C", "Message A"]);
-    assert.equal(projectSessionTurnQueue(history, receipts, { sessionId: "session", incarnationId: "inc" }, { submissions: [], hasActiveRun: false }).activeReceipt?.id, "B");
+    const receipts = [
+      { ...receipt("A", 1), queuePosition: 3 },
+      { ...receipt("B", 2), queuePosition: 1 },
+      { ...receipt("C", 3), queuePosition: 2 },
+    ];
+    const history = buildMessageListProjection(
+      [{ role: "user", text: "saved", historyIndex: 0 }],
+      [],
+      "session",
+      {
+        primaryMessageSourceKind: kind,
+        liveAssistant: {
+          sessionId: "session",
+          threadId: "thread",
+          messageIndex: 1,
+          text: "live",
+        },
+      },
+    );
+    const projected = projectSessionTurnQueue(
+      history,
+      receipts,
+      { sessionId: "session", incarnationId: "inc" },
+      { submissions: [], hasActiveRun: true },
+    );
+    assert.deepEqual(
+      projected.projection.messages.map((item) => item.text),
+      ["saved", "live", "Message B", "Message C", "Message A"],
+    );
+    assert.equal(
+      projectSessionTurnQueue(
+        history,
+        receipts,
+        { sessionId: "session", incarnationId: "inc" },
+        { submissions: [], hasActiveRun: false },
+      ).activeReceipt?.id,
+      "B",
+    );
   }
 });
 
@@ -100,6 +256,7 @@ test("queue projection follows persisted execution order without moving history"
 // impact = "誤った項目の変更やkeyboard操作の中断、未保存の成功表示を防ぐ"
 // distinction = "型検査とstorage testはReactのbusy/focus/ACK表示を確認しない。deferred ACKで実hookとcomponentを通る"
 // @end-test-value
+/** 保存前の表示を変えず二重送信を止め、保存後は移動先と端の操作可否にフォーカスを合わせる。 */
 test("queue move keeps receipt focus and waits for the saved order", async () => {
   const view = await mount();
   try {
@@ -108,22 +265,47 @@ test("queue move keeps receipt focus and waits for the saved order", async () =>
     const button = view.button(3, "up");
     await view.click(button);
     await view.click(button);
-    assert.deepEqual(view.requests, [{ incarnationId: "inc", expectedQueuedIds: ["A", "B", "C"], queuedIds: ["A", "C", "B"] }]);
-    assert.deepEqual(view.current.queuedReceipts.map((item) => item.id), ["A", "B", "C"]);
+    assert.deepEqual(view.requests, [
+      {
+        incarnationId: "inc",
+        expectedQueuedIds: ["A", "B", "C"],
+        queuedIds: ["A", "C", "B"],
+      },
+    ]);
+    assert.deepEqual(
+      view.current.queuedReceipts.map((item) => item.id),
+      ["A", "B", "C"],
+    );
     assert.equal(view.current.announcement, "");
     assert.equal(button.getAttribute("aria-busy"), "true");
-    view.setItems([receipt("A", 1), { ...receipt("C", 3), queuePosition: 2 }, { ...receipt("B", 2), queuePosition: 3 }]);
+    view.setItems([
+      receipt("A", 1),
+      { ...receipt("C", 3), queuePosition: 2 },
+      { ...receipt("B", 2), queuePosition: 3 },
+    ]);
     await view.resolve("reordered");
-    assert.deepEqual(view.current.queuedReceipts.map((item) => item.id), ["A", "C", "B"]);
+    assert.deepEqual(
+      view.current.queuedReceipts.map((item) => item.id),
+      ["A", "C", "B"],
+    );
     assert.equal(view.document.activeElement, button);
     assert.equal(button.getAttribute("aria-label"), "Move queued turn 2 up");
     assert.match(view.current.announcement, /position 2 of 3/);
     await view.click(button);
-    view.setItems([{ ...receipt("C", 3), queuePosition: 1 }, { ...receipt("A", 1), queuePosition: 2 }, { ...receipt("B", 2), queuePosition: 3 }]);
+    view.setItems([
+      { ...receipt("C", 3), queuePosition: 1 },
+      { ...receipt("A", 1), queuePosition: 2 },
+      { ...receipt("B", 2), queuePosition: 3 },
+    ]);
     await view.resolve("reordered");
     assert.equal(button.disabled, true);
-    assert.equal(view.document.activeElement?.getAttribute("aria-label"), "Queued turn 1 of 3");
-  } finally { await view.close(); }
+    assert.equal(
+      view.document.activeElement?.getAttribute("aria-label"),
+      "Queued turn 1 of 3",
+    );
+  } finally {
+    await view.close();
+  }
 });
 
 // @test-value v2
@@ -138,27 +320,50 @@ test("queue move keeps receipt focus and waits for the saved order", async () =>
 // impact = "保存と表示の不一致、意図しない再操作、会話間の状態混入を防ぐ"
 // distinction = "storageのrollback/競合testではrendererの再送と非同期owner境界を検出できない"
 // @end-test-value
+/** 競合や応答喪失では再送せず、別会話に移った後は元の並べ替え結果を混ぜない。 */
 test("queue move refreshes conflict and uncertain outcomes without replaying", async () => {
-  for (const outcome of ["conflict", "lost-saved", "lost-unsaved", "switched"] as const) {
+  for (const outcome of [
+    "conflict",
+    "lost-saved",
+    "lost-unsaved",
+    "switched",
+  ] as const) {
     const view = await mount();
     try {
       await view.click(view.button(2, "up"));
       if (outcome === "conflict") {
         view.setItems([receipt("B", 2), receipt("C", 3)]);
         await view.resolve("conflict");
-        assert.deepEqual(view.current.queuedReceipts.map((item) => item.id), ["B", "C"]);
+        assert.deepEqual(
+          view.current.queuedReceipts.map((item) => item.id),
+          ["B", "C"],
+        );
         assert.match(view.current.error, /queue changed/);
       } else {
-        if (outcome === "lost-saved") view.setItems([{ ...receipt("B", 2), queuePosition: 1 }, { ...receipt("A", 1), queuePosition: 2 }, receipt("C", 3)]);
+        if (outcome === "lost-saved")
+          view.setItems([
+            { ...receipt("B", 2), queuePosition: 1 },
+            { ...receipt("A", 1), queuePosition: 2 },
+            receipt("C", 3),
+          ]);
         if (outcome === "switched") await view.switchOwner();
         await view.reject();
-        assert.deepEqual(view.current.queuedReceipts.map((item) => item.id), outcome === "switched" ? [] : outcome === "lost-saved" ? ["B", "A", "C"] : ["A", "B", "C"]);
+        assert.deepEqual(
+          view.current.queuedReceipts.map((item) => item.id),
+          outcome === "switched"
+            ? []
+            : outcome === "lost-saved"
+              ? ["B", "A", "C"]
+              : ["A", "B", "C"],
+        );
         if (outcome === "switched") assert.equal(view.current.error, "");
         else assert.match(view.current.error, /could not be confirmed/);
       }
       assert.equal(view.current.announcement, "");
       assert.equal(view.requests.length, 1);
-    } finally { await view.close(); }
+    } finally {
+      await view.close();
+    }
   }
 });
 
@@ -174,6 +379,7 @@ test("queue move refreshes conflict and uncertain outcomes without replaying", a
 // impact = "取得失敗時に消失済み項目を最新と誤認せず、再取得から操作へ戻れる"
 // distinction = "既存競合testは再取得成功のみ。API失敗と操作ACKを実hookで組み合わせる小さいtestであり型検査では代替できない"
 // @end-test-value
+/** 競合後に読取が失敗したら旧一覧との違いを知らせ、再試行では読取だけをやり直す。 */
 test("queue conflict exposes refresh failure and retries the read without replaying the move", async () => {
   const view = await mount();
   try {
@@ -181,10 +387,16 @@ test("queue conflict exposes refresh failure and retries the read without replay
     view.setItems([receipt("B", 2), receipt("C", 3)]);
     view.setReadError(new Error("queue read unavailable"));
     await view.resolve("conflict");
-    assert.deepEqual(view.current.queuedReceipts.map((item) => item.id), ["A", "B", "C"]);
+    assert.deepEqual(
+      view.current.queuedReceipts.map((item) => item.id),
+      ["A", "B", "C"],
+    );
     const alert = view.document.querySelector('[role="alert"]')!;
     assert.match(alert.textContent ?? "", /queue changed/);
-    assert.match(alert.textContent ?? "", /Queue refresh failed.*may be out of date.*queue read unavailable/);
+    assert.match(
+      alert.textContent ?? "",
+      /Queue refresh failed.*may be out of date.*queue read unavailable/,
+    );
     assert.equal(view.current.announcement, "");
     assert.equal(view.reads, 2);
     assert.equal(view.requests.length, 1);
@@ -192,10 +404,15 @@ test("queue conflict exposes refresh failure and retries the read without replay
     const retry = alert.querySelector<HTMLButtonElement>("button")!;
     assert.equal(retry.textContent, "Retry Queue");
     await view.click(retry);
-    assert.deepEqual(view.current.queuedReceipts.map((item) => item.id), ["B", "C"]);
+    assert.deepEqual(
+      view.current.queuedReceipts.map((item) => item.id),
+      ["B", "C"],
+    );
     assert.equal(view.document.querySelector('[role="alert"]'), null);
     assert.equal(view.current.announcement, "");
     assert.equal(view.reads, 3);
     assert.equal(view.requests.length, 1);
-  } finally { await view.close(); }
+  } finally {
+    await view.close();
+  }
 });

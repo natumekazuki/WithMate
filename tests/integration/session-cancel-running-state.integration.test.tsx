@@ -6,8 +6,14 @@ import { runInNewContext } from "node:vm";
 import React, { act } from "react";
 import { JSDOM } from "jsdom";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
-import type { CancelSessionRunRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
-import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
+import type {
+  CancelSessionRunRequest,
+  LiveSessionRunState,
+} from "../../src-shared/session/runtime-state.js";
+import {
+  getSessionIncarnationId,
+  type Session,
+} from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
@@ -23,189 +29,449 @@ import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-t
 // impact = "取消後のSend拒否や次Turnの状態破損で同じSessionの会話を継続できなくなる"
 // distinction = "Mainのguardやhook単体では実Sessionの保存snapshot・live・開始receiptと二つのdockの配線を検査できない。合成IPCとdeferredで待機順序を固定する"
 // @end-test-value
-test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run表示へ反映しない", { timeout: 30_000 }, async () => {
-  const dom = new JSDOM("<!doctype html><div id='root'></div>", {
-    url: "http://withmate.test/session.html?sessionId=benchmark-main", pretendToBeVisual: true,
-  });
-  const globals = {
-    window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
-    HTMLElement: dom.window.HTMLElement, HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
-    localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true,
-    requestAnimationFrame: (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 0),
-    cancelAnimationFrame: (id: ReturnType<typeof setTimeout>) => clearTimeout(id),
-    ResizeObserver: class { observe() {} disconnect() {} unobserve() {} },
-    IntersectionObserver: class { observe() {} disconnect() {} unobserve() {} },
-  };
-  const originals = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
-  Object.defineProperty(dom.window, "matchMedia", { value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
-  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { value() {} });
-  dom.window.HTMLElement.prototype.scrollTo = function () {};
-  const alerts: string[] = [];
-  dom.window.alert = (message) => { alerts.push(String(message)); };
-  let api!: WithMateWindowApi;
-  runInNewContext(readFileSync(new URL("../../scripts/benchmarks/benchmark-composer-input-preload.cjs", import.meta.url), "utf8"), {
-    require: () => ({ contextBridge: { exposeInMainWorld: (_key: string, value: WithMateWindowApi) => { api = value; } } }),
-    process: { argv: [] }, Buffer,
-  });
-
-  const getModelCatalog = api.getModelCatalog;
-  api.getModelCatalog = async (request) => {
-    const snapshot = await getModelCatalog(request);
-    return snapshot ? { ...snapshot, workspacePath: request?.workspacePath } : snapshot;
-  };
- let session: Session = { ...(await api.getSession("benchmark-main"))!, runState: "running", status: "running" };
-  const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRun"]>[0]>();
-  const sessionListeners = new Set<Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0]>();
-  let live: LiveSessionRunState | null = {
-    sessionId: session.id, threadId: session.threadId, turnId: "current-native-turn", sessionTurnId: "current-saved-turn", inputAvailable: true, assistantText: "partial response",
-    steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
-  };
-  api.getSession = async () => session;
-  api.getLiveSessionRun = async () => live;
-  let startingAuxiliaryReceipt: SessionTurnQueueReceipt | null = null;
-  api.listSessionTurnQueue = async (id) => startingAuxiliaryReceipt?.sessionId === id ? [startingAuxiliaryReceipt] : [];
-  api.subscribeLiveSessionRun = (listener) => { liveListeners.add(listener); return () => { liveListeners.delete(listener); }; };
-  api.subscribeSessionInvalidation = (listener) => { sessionListeners.add(listener); return () => { sessionListeners.delete(listener); }; };
-  api.listSessionFileRoots = async () => [];
-  api.getSessionGlossaryProjection = async () => ({
-    sessionId: session.id, scopeRevision: "fixture", sequence: 1,
-    checkout: { repositoryName: "Fixture", branch: "test", pathLabel: "fixture" },
-    state: { status: "valid", relativePath: ".withmate/glossary.yaml", revision: "fixture", entries: [] },
-  });
-  const broadcastLive = () => liveListeners.forEach((listener) => listener(session.id, live));
-  let finishCancel!: () => void;
-  const cancelAck = new Promise<void>((resolve) => { finishCancel = resolve; });
-  let cancelCalls = 0;
-  const auxiliaryStops: CancelSessionRunRequest[] = [];
-  api.cancelAuxiliarySessionRun = async (request) => { auxiliaryStops.push(request); };
-  api.cancelSessionRun = async (request) => {
-    assert.deepEqual(request, { sessionId: session.id, incarnationId: getSessionIncarnationId(session), execution: { kind: "turn", id: "current-saved-turn" } });
-    cancelCalls += 1;
-    await cancelAck;
-  };
-  let sendCalls = 0;
-  api.runSessionTurn = async () => {
-    sendCalls += 1;
-    throw new Error("unexpected direct run");
-  };
-  let steerCalls = 0;
-  api.steerSessionTurn = async () => { steerCalls += 1; throw new Error("unexpected input while canceling"); };
-  const enqueue = api.enqueueSessionTurn;
-  let queueCalls = 0;
-  api.enqueueSessionTurn = async (id, request) => {
-    queueCalls += 1;
-    assert.equal(id, session.id);
-    assert.equal(request.userMessage, "next prompt");
-    return enqueue(id, request);
-  };
-  Object.defineProperty(dom.window, "withmate", { value: api });
-  const { createRoot } = await import("react-dom/client");
-  const cssImports = registerHooks({ load(url, context, next) {
-    return url.endsWith(".css") ? { format: "module", shortCircuit: true, source: "" } : next(url, context);
-  } });
-  const { default: App } = await import("../../src/app/SessionWindowApp.js").finally(() => cssImports.deregister());
-  const root = createRoot(dom.window.document.getElementById("root")!);
-  const buttons = (label: string) => Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("button"))
-    .filter((button) => button.textContent?.trim() === label);
-  const cancelingButtons = () => Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>('button[title="Canceling"]'));
-  const send = () => {
-    const button = buttons("Send")[0];
-    assert.ok(button);
-    return button;
-  };
-  try {
-    await act(async () => { root.render(<App />); });
-    const cancel = buttons("Cancel")[0];
-    assert.ok(cancel);
-    await act(async () => { cancel.click(); });
-    assert.equal(cancelCalls, 1);
-    for (const button of cancelingButtons()) {
-      assert.equal(button.disabled, true);
-      assert.equal(button.getAttribute("aria-busy"), "true");
-      await act(async () => { button.click(); });
-    }
-    assert.equal(cancelCalls, 1);
-    assert.ok(cancelingButtons().length >= 2, "expanded and compact docks must both reflect cancellation");
-    await act(async () => {
-      live = { ...live!, cancellationState: "requested" };
-      broadcastLive();
+/** 実 Session 画面で Main の保存 Turn の取消待ち中に次の Turn を予約でき、遅い取消応答で後続実行を巻き戻さないことと、Turn 作成前の Auxiliary は受付票を指定して取り消せることを確かめる。 */
+test(
+  "Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run表示へ反映しない",
+  { timeout: 30_000 },
+  async () => {
+    const dom = new JSDOM("<!doctype html><div id='root'></div>", {
+      url: "http://withmate.test/session.html?sessionId=benchmark-main",
+      pretendToBeVisual: true,
     });
-    assert.equal(send().disabled, true);
-    await act(async () => {
-      session = { ...session, runState: "idle", status: "idle" };
-      live = { ...live!, cancellationState: "terminating" };
-      broadcastLive();
-      sessionListeners.forEach((listener) => listener({ scope: "ids", sessionIds: [session.id] }));
-    });
-    await act(async () => { buttons("Auxiliary")[0]!.click(); });
-    await act(async () => { buttons("Main")[0]!.click(); });
-    assert.equal(liveListeners.size, 1, "target switching must keep one Window ingress");
-    assert.ok(cancelingButtons().length >= 2, "resubscription must preserve cancellation in both docks until authoritative state arrives");
-    const textarea = dom.window.document.querySelector<HTMLTextAreaElement>('textarea[data-shortcut-scope="composer"]')!;
-    assert.ok(textarea);
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "next prompt");
-      textarea.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-    });
-    assert.equal(send().disabled, false, "cancellation must allow admission for a later turn");
-    await act(async () => {
-      textarea.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, shiftKey: true, bubbles: true }));
-    });
-    assert.equal(steerCalls, 0, "the current turn cannot receive input while canceling");
-    await act(async () => {
-      textarea.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
-      send().click();
-    });
-    assert.equal(sendCalls, 0);
-    assert.equal(queueCalls, 1, "shortcut and button must share one pending admission");
-    assert.equal(textarea.value, "", "durable admission must consume only the submitted draft");
-    await act(async () => { live = null; broadcastLive(); });
-    assert.equal(cancelingButtons().length, 0);
-    await act(async () => {
-      session = { ...session, runState: "running", status: "running" };
-      live = { sessionId: session.id, threadId: session.threadId, turnId: "next-turn", sessionTurnId: "next-saved-turn", inputAvailable: true, assistantText: "next response",
-        steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
-      broadcastLive();
-      sessionListeners.forEach((listener) => listener({ scope: "ids", sessionIds: [session.id] }));
-    });
-    await act(async () => { finishCancel(); });
-    assert.ok(buttons("Cancel").length >= 2, "old cancel acknowledgement must leave the next run active");
-    assert.equal(cancelingButtons().length, 0);
-    assert.equal(sendCalls, 0);
-    assert.deepEqual(alerts, []);
-    const auxiliary = await api.getAuxiliarySession("benchmark-aux-1");
-    assert.ok(auxiliary);
-    const requestId = "7d7ee350-a11c-43c5-a774-6fa7f2814d7f";
-    startingAuxiliaryReceipt = {
-      id: "aux-starting", requestId, sessionId: auxiliary.id, incarnationId: auxiliary.createdAt,
-      sequence: 1, queuePosition: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
-      captured: { provider: auxiliary.provider, workspacePath: session.workspacePath, attachments: [],
-        request: { clientRequestId: requestId, userMessage: "Preparing the Auxiliary run", executionOptions: captureSessionExecutionOptions(session) } },
-      createdAt: auxiliary.createdAt, updatedAt: auxiliary.updatedAt,
+    const globals = {
+      window: dom.window,
+      document: dom.window.document,
+      navigator: dom.window.navigator,
+      HTMLElement: dom.window.HTMLElement,
+      HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
+      localStorage: dom.window.localStorage,
+      IS_REACT_ACT_ENVIRONMENT: true,
+      /** 描画コールバックを JSDOM のタイマーで実行する。 */
+      requestAnimationFrame: (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 0),
+      /** DOM の更新待ちに予約したタイマーを取り消す。 */
+      cancelAnimationFrame: (id: ReturnType<typeof setTimeout>) =>
+        clearTimeout(id),
+      ResizeObserver: class {
+        observe /** 実際のサイズ測定を行わず、監視の開始を受け付ける。 */() {}
+        disconnect /** サイズ監視を停止する呼び出しを受け付ける。 */() {}
+        unobserve /** 要素個別のサイズ監視解除を受け付ける。 */() {}
+      },
+      IntersectionObserver: class {
+        observe /** 交差判定は発生させずに監視登録を受け付ける。 */() {}
+        disconnect /** 交差監視の終了を受け付ける。 */() {}
+        unobserve /** 要素ごとの交差監視解除を受け付ける。 */() {}
+      },
     };
-    await act(async () => {
-      live = null;
-      session = { ...session, runState: "idle", status: "idle" };
-      broadcastLive();
-      sessionListeners.forEach((listener) => listener({ scope: "ids", sessionIds: [session.id] }));
+    const originals = new Map(
+      Object.keys(globals).map((key) => [
+        key,
+        Object.getOwnPropertyDescriptor(globalThis, key),
+      ]),
+    );
+    for (const [key, value] of Object.entries(globals))
+      Object.defineProperty(globalThis, key, {
+        configurable: true,
+        writable: true,
+        value,
+      });
+    Object.defineProperty(dom.window, "matchMedia", {
+      /** メディアクエリに一致しない画面条件を返す。 */ value: () => ({
+        matches: false,
+        /** 画面条件を固定しているため、監視登録から通知は送らない。 */ addEventListener() {},
+        /** 固定した画面条件の変更監視を解除できるようにする。 */ removeEventListener() {},
+      }),
     });
-    await act(async () => { buttons("Auxiliary")[0]!.click(); });
-    const openAuxiliary = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Open Auxiliary"]');
-    assert.ok(openAuxiliary);
-    await act(async () => { openAuxiliary.click(); });
-    const cancelStarting = buttons("Cancel").find((button) => !button.disabled);
-    assert.ok(cancelStarting, "an accepted starting receipt can be canceled before its Turn exists");
-    await act(async () => { cancelStarting.click(); });
-    assert.deepEqual(auxiliaryStops, [{ sessionId: auxiliary.id, incarnationId: auxiliary.createdAt, execution: { kind: "receipt", id: "aux-starting" } }]);
-    assert.equal(cancelCalls, 1, "Auxiliary Cancel never routes to Main");
-  } finally {
-    finishCancel();
-    await act(async () => { root.unmount(); });
-    dom.window.close();
-    for (const [key, descriptor] of originals) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else Reflect.deleteProperty(globalThis, key);
+    Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
+      /** 実スクロールを伴わず、要素を表示範囲へ移す要求を受け付ける。 */ value() {},
+    });
+    dom.window.HTMLElement.prototype.scrollTo = function () {};
+    const alerts: string[] = [];
+    dom.window.alert = (message) => {
+      alerts.push(String(message));
+    };
+    let api!: WithMateWindowApi;
+    runInNewContext(
+      readFileSync(
+        new URL(
+          "../../scripts/benchmarks/benchmark-composer-input-preload.cjs",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      {
+        /** ベンチマーク用 preload に API 公開用の Electron スタブを渡す。 */
+        require: () => ({
+          contextBridge: {
+            /** 公開された API を捕捉し、取消と送信の応答をテストで制御できるようにする。 */ exposeInMainWorld:
+              (_key: string, value: WithMateWindowApi) => {
+                api = value;
+              },
+          },
+        }),
+        process: { argv: [] },
+        Buffer,
+      },
+    );
+
+    const getModelCatalog = api.getModelCatalog;
+    api.getModelCatalog = async (request) => {
+      const snapshot = await getModelCatalog(request);
+      return snapshot
+        ? { ...snapshot, workspacePath: request?.workspacePath }
+        : snapshot;
+    };
+    let session: Session = {
+      ...(await api.getSession("benchmark-main"))!,
+      runState: "running",
+      status: "running",
+    };
+    const liveListeners = new Set<
+      Parameters<WithMateWindowApi["subscribeLiveSessionRun"]>[0]
+    >();
+    const sessionListeners = new Set<
+      Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0]
+    >();
+    let live: LiveSessionRunState | null = {
+      sessionId: session.id,
+      threadId: session.threadId,
+      turnId: "current-native-turn",
+      sessionTurnId: "current-saved-turn",
+      inputAvailable: true,
+      assistantText: "partial response",
+      steps: [],
+      backgroundTasks: [],
+      usage: null,
+      errorMessage: "",
+      approvalRequest: null,
+      elicitationRequest: null,
+    };
+    api.getSession = async () => session;
+    api.getLiveSessionRun = async () => live;
+    let startingAuxiliaryReceipt: SessionTurnQueueReceipt | null = null;
+    api.listSessionTurnQueue = async (id) =>
+      startingAuxiliaryReceipt?.sessionId === id
+        ? [startingAuxiliaryReceipt]
+        : [];
+    api.subscribeLiveSessionRun = (listener) => {
+      liveListeners.add(listener);
+      return () => {
+        liveListeners.delete(listener);
+      };
+    };
+    api.subscribeSessionInvalidation = (listener) => {
+      sessionListeners.add(listener);
+      return () => {
+        sessionListeners.delete(listener);
+      };
+    };
+    api.listSessionFileRoots = async () => [];
+    api.getSessionGlossaryProjection = async () => ({
+      sessionId: session.id,
+      scopeRevision: "fixture",
+      sequence: 1,
+      checkout: {
+        repositoryName: "Fixture",
+        branch: "test",
+        pathLabel: "fixture",
+      },
+      state: {
+        status: "valid",
+        relativePath: ".withmate/glossary.yaml",
+        revision: "fixture",
+        entries: [],
+      },
+    });
+    /** 現在の Session の実行状態を登録済みリスナーへ配信する。 */
+    const broadcastLive = () =>
+      liveListeners.forEach((listener) => listener(session.id, live));
+    let finishCancel!: () => void;
+    const cancelAck = new Promise<void>((resolve) => {
+      finishCancel = resolve;
+    });
+    let cancelCalls = 0;
+    const auxiliaryStops: CancelSessionRunRequest[] = [];
+    api.cancelAuxiliarySessionRun = async (request) => {
+      auxiliaryStops.push(request);
+    };
+    api.cancelSessionRun = async (request) => {
+      assert.deepEqual(request, {
+        sessionId: session.id,
+        incarnationId: getSessionIncarnationId(session),
+        execution: { kind: "turn", id: "current-saved-turn" },
+      });
+      cancelCalls += 1;
+      await cancelAck;
+    };
+    let sendCalls = 0;
+    api.runSessionTurn = async () => {
+      sendCalls += 1;
+      throw new Error("unexpected direct run");
+    };
+    let steerCalls = 0;
+    api.steerSessionTurn = async () => {
+      steerCalls += 1;
+      throw new Error("unexpected input while canceling");
+    };
+    const enqueue = api.enqueueSessionTurn;
+    let queueCalls = 0;
+    api.enqueueSessionTurn = async (id, request) => {
+      queueCalls += 1;
+      assert.equal(id, session.id);
+      assert.equal(request.userMessage, "next prompt");
+      return enqueue(id, request);
+    };
+    Object.defineProperty(dom.window, "withmate", { value: api });
+    const { createRoot } = await import("react-dom/client");
+    const cssImports = registerHooks({
+      /** CSS だけを空のモジュールに置き換え、Session 画面の読み込みを続ける。 */ load(
+        url,
+        context,
+        next,
+      ) {
+        return url.endsWith(".css")
+          ? { format: "module", shortCircuit: true, source: "" }
+          : next(url, context);
+      },
+    });
+    const { default: App } =
+      await import("../../src/app/SessionWindowApp.js").finally(() =>
+        cssImports.deregister(),
+      );
+    const root = createRoot(dom.window.document.getElementById("root")!);
+    /** 画面内のボタンをラベルで抽出し、両ドックの同名操作を調べられるようにする。 */
+    const buttons = (label: string) =>
+      Array.from(
+        dom.window.document.querySelectorAll<HTMLButtonElement>("button"),
+      ).filter((button) => button.textContent?.trim() === label);
+    /** 両ドックから取消処理中のツールチップを持つボタンを抽出する。 */
+    const cancelingButtons = () =>
+      Array.from(
+        dom.window.document.querySelectorAll<HTMLButtonElement>(
+          'button[title="Canceling"]',
+        ),
+      );
+    /** 通常送信のボタンを取得し、描画されていなければテストを失敗させる。 */
+    const send = () => {
+      const button = buttons("Send")[0];
+      assert.ok(button);
+      return button;
+    };
+    try {
+      await act(async () => {
+        root.render(<App />);
+      });
+      const cancel = buttons("Cancel")[0];
+      assert.ok(cancel);
+      await act(async () => {
+        cancel.click();
+      });
+      assert.equal(cancelCalls, 1);
+      for (const button of cancelingButtons()) {
+        assert.equal(button.disabled, true);
+        assert.equal(button.getAttribute("aria-busy"), "true");
+        await act(async () => {
+          button.click();
+        });
+      }
+      assert.equal(cancelCalls, 1);
+      assert.ok(
+        cancelingButtons().length >= 2,
+        "expanded and compact docks must both reflect cancellation",
+      );
+      await act(async () => {
+        live = { ...live!, cancellationState: "requested" };
+        broadcastLive();
+      });
+      assert.equal(send().disabled, true);
+      await act(async () => {
+        session = { ...session, runState: "idle", status: "idle" };
+        live = { ...live!, cancellationState: "terminating" };
+        broadcastLive();
+        sessionListeners.forEach((listener) =>
+          listener({ scope: "ids", sessionIds: [session.id] }),
+        );
+      });
+      await act(async () => {
+        buttons("Auxiliary")[0]!.click();
+      });
+      await act(async () => {
+        buttons("Main")[0]!.click();
+      });
+      assert.equal(
+        liveListeners.size,
+        1,
+        "target switching must keep one Window ingress",
+      );
+      assert.ok(
+        cancelingButtons().length >= 2,
+        "resubscription must preserve cancellation in both docks until authoritative state arrives",
+      );
+      const textarea = dom.window.document.querySelector<HTMLTextAreaElement>(
+        'textarea[data-shortcut-scope="composer"]',
+      )!;
+      assert.ok(textarea);
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          dom.window.HTMLTextAreaElement.prototype,
+          "value",
+        )!.set!.call(textarea, "next prompt");
+        textarea.dispatchEvent(
+          new dom.window.Event("input", { bubbles: true }),
+        );
+      });
+      assert.equal(
+        send().disabled,
+        false,
+        "cancellation must allow admission for a later turn",
+      );
+      await act(async () => {
+        textarea.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            key: "Enter",
+            ctrlKey: true,
+            shiftKey: true,
+            bubbles: true,
+          }),
+        );
+      });
+      assert.equal(
+        steerCalls,
+        0,
+        "the current turn cannot receive input while canceling",
+      );
+      await act(async () => {
+        textarea.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            key: "Enter",
+            ctrlKey: true,
+            bubbles: true,
+          }),
+        );
+        send().click();
+      });
+      assert.equal(sendCalls, 0);
+      assert.equal(
+        queueCalls,
+        1,
+        "shortcut and button must share one pending admission",
+      );
+      assert.equal(
+        textarea.value,
+        "",
+        "durable admission must consume only the submitted draft",
+      );
+      await act(async () => {
+        live = null;
+        broadcastLive();
+      });
+      assert.equal(cancelingButtons().length, 0);
+      await act(async () => {
+        session = { ...session, runState: "running", status: "running" };
+        live = {
+          sessionId: session.id,
+          threadId: session.threadId,
+          turnId: "next-turn",
+          sessionTurnId: "next-saved-turn",
+          inputAvailable: true,
+          assistantText: "next response",
+          steps: [],
+          backgroundTasks: [],
+          usage: null,
+          errorMessage: "",
+          approvalRequest: null,
+          elicitationRequest: null,
+        };
+        broadcastLive();
+        sessionListeners.forEach((listener) =>
+          listener({ scope: "ids", sessionIds: [session.id] }),
+        );
+      });
+      await act(async () => {
+        finishCancel();
+      });
+      assert.ok(
+        buttons("Cancel").length >= 2,
+        "old cancel acknowledgement must leave the next run active",
+      );
+      assert.equal(cancelingButtons().length, 0);
+      assert.equal(sendCalls, 0);
+      assert.deepEqual(alerts, []);
+      const auxiliary = await api.getAuxiliarySession("benchmark-aux-1");
+      assert.ok(auxiliary);
+      const requestId = "7d7ee350-a11c-43c5-a774-6fa7f2814d7f";
+      startingAuxiliaryReceipt = {
+        id: "aux-starting",
+        requestId,
+        sessionId: auxiliary.id,
+        incarnationId: auxiliary.createdAt,
+        sequence: 1,
+        queuePosition: 1,
+        state: "starting",
+        turnId: null,
+        userMessageSeq: null,
+        reason: null,
+        releasedAt: null,
+        captured: {
+          provider: auxiliary.provider,
+          workspacePath: session.workspacePath,
+          attachments: [],
+          request: {
+            clientRequestId: requestId,
+            userMessage: "Preparing the Auxiliary run",
+            executionOptions: captureSessionExecutionOptions(session),
+          },
+        },
+        createdAt: auxiliary.createdAt,
+        updatedAt: auxiliary.updatedAt,
+      };
+      await act(async () => {
+        live = null;
+        session = { ...session, runState: "idle", status: "idle" };
+        broadcastLive();
+        sessionListeners.forEach((listener) =>
+          listener({ scope: "ids", sessionIds: [session.id] }),
+        );
+      });
+      await act(async () => {
+        buttons("Auxiliary")[0]!.click();
+      });
+      const openAuxiliary =
+        dom.window.document.querySelector<HTMLButtonElement>(
+          'button[aria-label="Open Auxiliary"]',
+        );
+      assert.ok(openAuxiliary);
+      await act(async () => {
+        openAuxiliary.click();
+      });
+      const cancelStarting = buttons("Cancel").find(
+        (button) => !button.disabled,
+      );
+      assert.ok(
+        cancelStarting,
+        "an accepted starting receipt can be canceled before its Turn exists",
+      );
+      await act(async () => {
+        cancelStarting.click();
+      });
+      assert.deepEqual(auxiliaryStops, [
+        {
+          sessionId: auxiliary.id,
+          incarnationId: auxiliary.createdAt,
+          execution: { kind: "receipt", id: "aux-starting" },
+        },
+      ]);
+      assert.equal(cancelCalls, 1, "Auxiliary Cancel never routes to Main");
+    } finally {
+      finishCancel();
+      await act(async () => {
+        root.unmount();
+      });
+      dom.window.close();
+      for (const [key, descriptor] of originals) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+      }
     }
-  }
-});
+  },
+);

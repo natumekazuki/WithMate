@@ -11,6 +11,7 @@ import {
 import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js";
 import { RELEASED_V6_SCHEMA_SQL } from "./fixtures/released-v6-schema.js";
 
+/** 外部キーを有効にしたメモリDBへ、Companion削除前の関連スキーマを用意する。 */
 function database(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON;");
@@ -42,6 +43,7 @@ function database(): DatabaseSync {
   return db;
 }
 
+/** 旧リリースのAuxiliaryテーブルを再現し、現在のスキーマだけに依存せず移行時の参照を検証できるようにする。 */
 function installReleasedLegacyAuxiliarySessionsTable(db: DatabaseSync): void {
   db.exec(`
     PRAGMA foreign_keys = OFF;
@@ -60,6 +62,7 @@ function installReleasedLegacyAuxiliarySessionsTable(db: DatabaseSync): void {
   `);
 }
 
+/** 削除候補の列挙、共有データの保護、DB削除の原子性をSQLiteで検証する。 */
 describe("companion removal database", () => {
   // @test-value v2
   // kind = "invariant"
@@ -74,26 +77,38 @@ describe("companion removal database", () => {
   // distinction = "旧payload_json fixtureではなく現行normalized message tableと同じschemaを使う"
   // risk_tags = ["irreversible-data-loss"]
   // @end-test-value
+  /** 正規化された通常Auxiliaryのメッセージから、生きている添付パスが保全対象に入ることを確認する。 */
   it("preserves normalized Auxiliary message attachment references", () => {
     const db = new DatabaseSync(":memory:");
-    const liveAttachment = path.join(os.tmpdir(), "withmate-live-aux-attachment.txt");
+    const liveAttachment = path.join(
+      os.tmpdir(),
+      "withmate-live-aux-attachment.txt",
+    );
     const message = {
       role: "user",
       text: `Please review [attachment](<${liveAttachment.replaceAll("\\", "/")}>)`,
     };
     try {
       ensureV6Schema(db);
-      db.prepare(`INSERT INTO auxiliary_sessions
+      db.prepare(
+        `INSERT INTO auxiliary_sessions
         (id, parent_session_id, created_at, updated_at)
-        VALUES ('live-aux', 'live-parent', 'now', 'now')`).run();
-      db.prepare(`INSERT INTO auxiliary_session_messages
+        VALUES ('live-aux', 'live-parent', 'now', 'now')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO auxiliary_session_messages
         (auxiliary_session_id, seq, role, body, created_at)
-        VALUES ('live-aux', 0, 'user', ?, 'now')`).run(JSON.stringify(message));
+        VALUES ('live-aux', 0, 'user', ?, 'now')`,
+      ).run(JSON.stringify(message));
 
       const target = collectCompanionRemovalDatabaseTarget(db);
 
-      assert.deepEqual(target.survivingFilePaths, [liveAttachment.replaceAll("\\", "/")]);
-    } finally { db.close(); }
+      assert.deepEqual(target.survivingFilePaths, [
+        liveAttachment.replaceAll("\\", "/"),
+      ]);
+    } finally {
+      db.close();
+    }
   });
 
   // @test-value v2
@@ -106,6 +121,7 @@ describe("companion removal database", () => {
   // scope = "companion-removal-database"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 削除するSessionと配下Auxiliaryを特定し、共有blobや通常Sessionのファイルは保全対象にも残す。 */
   it("collects owned metadata and surviving references", () => {
     const db = database();
     try {
@@ -127,16 +143,26 @@ describe("companion removal database", () => {
         INSERT INTO session_turn_provider_outputs_v6 (turn_id, seq, kind, payload_blob_id, created_at) VALUES (last_insert_rowid(), 0, 'operation', 'shared', 'now');
       `);
       const target = collectCompanionRemovalDatabaseTarget(db);
-      assert.deepEqual(target.sessions, [{
-        id: "c1", groupId: "g1", repoRoot: "/repo", targetBranch: "main", baseSnapshotRef: "refs/base",
-        baseSnapshotCommit: "abc", companionBranch: "companion/c1", worktreePath: "/tmp/wt",
-      }]);
+      assert.deepEqual(target.sessions, [
+        {
+          id: "c1",
+          groupId: "g1",
+          repoRoot: "/repo",
+          targetBranch: "main",
+          baseSnapshotRef: "refs/base",
+          baseSnapshotCommit: "abc",
+          companionBranch: "companion/c1",
+          worktreePath: "/tmp/wt",
+        },
+      ]);
       assert.deepEqual(target.auxiliarySessionIds, ["a1"]);
       assert.deepEqual(target.ownedBlobIds, ["owned", "shared"]);
       assert.deepEqual(target.survivingBlobIds, ["shared"]);
       assert.deepEqual(target.preservedSessionIds, ["normal"]);
       assert.deepEqual(target.survivingFilePaths, ["/normal/session"]);
-    } finally { db.close(); }
+    } finally {
+      db.close();
+    }
   });
 
   // @test-value v2
@@ -151,6 +177,7 @@ describe("companion removal database", () => {
   // impact = "更新時の削除migrationで大きな既存DBから起動できなくなることと、共有blobの誤削除を防ぐ"
   // distinction = "実SQLiteの遅延評価payloadで本文取得を検出し、巨大fixtureや不安定な壁時計・heap測定をCIへ持ち込まない"
   // @end-test-value
+  /** Providerペイロードの評価回数を計測し、本文を読まずに専有・共有blobを分類できることを確かめる。 */
   it("classifies provider blobs without materializing provider payloads", () => {
     const db = database();
     let payloadReads = 0;
@@ -176,7 +203,14 @@ describe("companion removal database", () => {
         INSERT INTO session_turn_provider_outputs_v6 (id, turn_id, payload_blob_id)
           VALUES (1, 1, 'owned'), (2, 1, 'shared'), (3, 2, 'shared'), (4, 2, 'live-only');
       `);
-      assert.equal(db.prepare("SELECT payload_json FROM session_turn_provider_outputs_v6 LIMIT 1").get()?.payload_json, '{"text":"provider response"}');
+      assert.equal(
+        db
+          .prepare(
+            "SELECT payload_json FROM session_turn_provider_outputs_v6 LIMIT 1",
+          )
+          .get()?.payload_json,
+        '{"text":"provider response"}',
+      );
       assert.ok(payloadReads > 0);
       payloadReads = 0;
 
@@ -187,7 +221,9 @@ describe("companion removal database", () => {
       assert.deepEqual(target.survivingBlobIds, ["live-only", "shared"]);
       assert.deepEqual(target.preservedSessionIds, ["normal"]);
       assert.deepEqual(target.auxiliarySessionIds, ["a1"]);
-    } finally { db.close(); }
+    } finally {
+      db.close();
+    }
   });
 
   // @test-value v2
@@ -202,22 +238,32 @@ describe("companion removal database", () => {
   // impact = "全DBの事前棚卸しで、削除候補がないDBの本文・draft解析を避けて起動を継続する"
   // distinction = "通常Sessionの不正JSONを含む最小SQLiteで軽量経路と従来の参照収集経路を分離して確認する"
   // @end-test-value
+  /** 普通のSessionの補助JSONが破損していても、軽量収集は本文やファイル参照を読まずに対象有無を判定できる。 */
   it("skips normal-session JSON and file references in lightweight collection", () => {
     const db = database();
     try {
-      db.exec("ALTER TABLE sessions_v6 ADD COLUMN payload_json TEXT; ALTER TABLE sessions_v6 ADD COLUMN messages_json TEXT;");
+      db.exec(
+        "ALTER TABLE sessions_v6 ADD COLUMN payload_json TEXT; ALTER TABLE sessions_v6 ADD COLUMN messages_json TEXT;",
+      );
       db.exec(`
         INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision, model_id, approval_mode,
           allowed_additional_directories_json, payload_json, messages_json, created_at, updated_at, last_active_at)
           VALUES ('normal', 'Normal', 'active', 'test', 1, 'model', 'never',
             '{not-json', '{also-not-json', '{still-not-json', 'now', 'now', 'now');
       `);
-      const target = collectCompanionRemovalDatabaseTarget(db, { includeFileReferences: false });
+      const target = collectCompanionRemovalDatabaseTarget(db, {
+        includeFileReferences: false,
+      });
       assert.deepEqual(target.sessions, []);
       assert.deepEqual(target.preservedSessionIds, ["normal"]);
       assert.deepEqual(target.survivingFilePaths, []);
-      assert.throws(() => collectCompanionRemovalDatabaseTarget(db), /JSON|Unexpected token/);
-    } finally { db.close(); }
+      assert.throws(
+        () => collectCompanionRemovalDatabaseTarget(db),
+        /JSON|Unexpected token/,
+      );
+    } finally {
+      db.close();
+    }
   });
 
   // @test-value v2
@@ -230,6 +276,7 @@ describe("companion removal database", () => {
   // scope = "companion-removal-database"
   // lifecycle = "permanent"
   // @end-test-value
+  /** Companion専用行・スキーマとsource参照の削除後も、共有Memory本文・必要なblobと外部キーの整合を保つ。 */
   it("removes companion rows and source references while preserving bodies", () => {
     const db = database();
     try {
@@ -275,28 +322,159 @@ describe("companion removal database", () => {
       `);
       const target = collectCompanionRemovalDatabaseTarget(db);
       applyCompanionRemovalDatabaseTarget(db, target);
-      assert.deepEqual(db.prepare("SELECT name FROM sqlite_schema WHERE tbl_name LIKE 'companion_%'").all(), []);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM auxiliary_sessions").get() as { n: number }).n, 1);
-      assert.deepEqual(db.prepare("SELECT id, body, source_session_id FROM memory_entries_v6 ORDER BY id").all().map((row) => ({ ...row })), [
-        { id: "shared-memory", body: "shared body", source_session_id: null },
-      ]);
-      assert.deepEqual(db.prepare("SELECT id, body, source_session_id FROM character_memory_entries").all().map((row) => ({ ...row })), [
-        { id: "legacy-shared", body: "legacy body", source_session_id: null },
-      ]);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM characters WHERE id = 'char-1'").get() as { n: number }).n, 1);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM app_settings WHERE setting_key = 'theme'").get() as { n: number }).n, 1);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM auxiliary_sessions WHERE id = 'a-normal'").get() as { n: number }).n, 1);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM session_turns_v6 WHERE session_id = 'normal'").get() as { n: number }).n, 1);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM session_turn_provider_outputs_v6 WHERE payload_blob_id = 'shared'").get() as { n: number }).n, 1);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM character_affect_events_v6 WHERE id = 'affect-1'").get() as { n: number }).n, 1);
-      assert.deepEqual(db.prepare("SELECT object_id FROM memory_protected_objects_v6 ORDER BY object_id").all().map((row) => ({ ...row })), [{ object_id: "shared-object" }]);
-      assert.deepEqual(db.prepare("SELECT tag_type_canonical, usage_count FROM memory_tag_catalog_v6").all().map((row) => ({ ...row })), [{ tag_type_canonical: "topic", usage_count: 1 }]);
-      assert.deepEqual(db.prepare("SELECT scope_type, scope_id FROM memory_target_tag_stats_v6").all().map((row) => ({ ...row })), [{ scope_type: "character", scope_id: "char-1" }]);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM sessions_v6 WHERE id = 'normal'").get() as { n: number }).n, 1);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM blob_objects WHERE blob_id = 'shared'").get() as { n: number }).n, 1);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM blob_objects WHERE blob_id = 'owned'").get() as { n: number }).n, 0);
+      assert.deepEqual(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_schema WHERE tbl_name LIKE 'companion_%'",
+          )
+          .all(),
+        [],
+      );
+      assert.equal(
+        (
+          db.prepare("SELECT count(*) AS n FROM auxiliary_sessions").get() as {
+            n: number;
+          }
+        ).n,
+        1,
+      );
+      assert.deepEqual(
+        db
+          .prepare(
+            "SELECT id, body, source_session_id FROM memory_entries_v6 ORDER BY id",
+          )
+          .all()
+          .map((row) => ({ ...row })),
+        [{ id: "shared-memory", body: "shared body", source_session_id: null }],
+      );
+      assert.deepEqual(
+        db
+          .prepare(
+            "SELECT id, body, source_session_id FROM character_memory_entries",
+          )
+          .all()
+          .map((row) => ({ ...row })),
+        [{ id: "legacy-shared", body: "legacy body", source_session_id: null }],
+      );
+      assert.equal(
+        (
+          db
+            .prepare("SELECT count(*) AS n FROM characters WHERE id = 'char-1'")
+            .get() as { n: number }
+        ).n,
+        1,
+      );
+      assert.equal(
+        (
+          db
+            .prepare(
+              "SELECT count(*) AS n FROM app_settings WHERE setting_key = 'theme'",
+            )
+            .get() as { n: number }
+        ).n,
+        1,
+      );
+      assert.equal(
+        (
+          db
+            .prepare(
+              "SELECT count(*) AS n FROM auxiliary_sessions WHERE id = 'a-normal'",
+            )
+            .get() as { n: number }
+        ).n,
+        1,
+      );
+      assert.equal(
+        (
+          db
+            .prepare(
+              "SELECT count(*) AS n FROM session_turns_v6 WHERE session_id = 'normal'",
+            )
+            .get() as { n: number }
+        ).n,
+        1,
+      );
+      assert.equal(
+        (
+          db
+            .prepare(
+              "SELECT count(*) AS n FROM session_turn_provider_outputs_v6 WHERE payload_blob_id = 'shared'",
+            )
+            .get() as { n: number }
+        ).n,
+        1,
+      );
+      assert.equal(
+        (
+          db
+            .prepare(
+              "SELECT count(*) AS n FROM character_affect_events_v6 WHERE id = 'affect-1'",
+            )
+            .get() as { n: number }
+        ).n,
+        1,
+      );
+      assert.deepEqual(
+        db
+          .prepare(
+            "SELECT object_id FROM memory_protected_objects_v6 ORDER BY object_id",
+          )
+          .all()
+          .map((row) => ({ ...row })),
+        [{ object_id: "shared-object" }],
+      );
+      assert.deepEqual(
+        db
+          .prepare(
+            "SELECT tag_type_canonical, usage_count FROM memory_tag_catalog_v6",
+          )
+          .all()
+          .map((row) => ({ ...row })),
+        [{ tag_type_canonical: "topic", usage_count: 1 }],
+      );
+      assert.deepEqual(
+        db
+          .prepare(
+            "SELECT scope_type, scope_id FROM memory_target_tag_stats_v6",
+          )
+          .all()
+          .map((row) => ({ ...row })),
+        [{ scope_type: "character", scope_id: "char-1" }],
+      );
+      assert.equal(
+        (
+          db
+            .prepare(
+              "SELECT count(*) AS n FROM sessions_v6 WHERE id = 'normal'",
+            )
+            .get() as { n: number }
+        ).n,
+        1,
+      );
+      assert.equal(
+        (
+          db
+            .prepare(
+              "SELECT count(*) AS n FROM blob_objects WHERE blob_id = 'shared'",
+            )
+            .get() as { n: number }
+        ).n,
+        1,
+      );
+      assert.equal(
+        (
+          db
+            .prepare(
+              "SELECT count(*) AS n FROM blob_objects WHERE blob_id = 'owned'",
+            )
+            .get() as { n: number }
+        ).n,
+        0,
+      );
       assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
-    } finally { db.close(); }
+    } finally {
+      db.close();
+    }
   });
 
   // @test-value v2
@@ -309,34 +487,100 @@ describe("companion removal database", () => {
   // scope = "companion-removal-database"
   // lifecycle = "permanent"
   // @end-test-value
+  /** DB削除を途中で失敗させ、専用スキーマ・行・本文と参照がロールバックされることを確認する。 */
   it("rolls back when the database operation fails", () => {
     const db = database();
     try {
-      db.exec("INSERT INTO companion_sessions VALUES ('c1', 'g1', '/repo', 'main', '', '', 'branch', '/tmp/wt');");
-      db.exec("INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at, payload_json) VALUES ('a1', 'c1', 'active', 'now', 'now', '{}');");
-      db.exec("INSERT INTO companion_messages (id, session_id, text_blob_id) VALUES (1, 'c1', 'owned');");
-      db.exec("INSERT INTO companion_audit_logs VALUES ('audit-owned', 'c1', 'Preserve this body on rollback');");
+      db.exec(
+        "INSERT INTO companion_sessions VALUES ('c1', 'g1', '/repo', 'main', '', '', 'branch', '/tmp/wt');",
+      );
+      db.exec(
+        "INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at, payload_json) VALUES ('a1', 'c1', 'active', 'now', 'now', '{}');",
+      );
+      db.exec(
+        "INSERT INTO companion_messages (id, session_id, text_blob_id) VALUES (1, 'c1', 'owned');",
+      );
+      db.exec(
+        "INSERT INTO companion_audit_logs VALUES ('audit-owned', 'c1', 'Preserve this body on rollback');",
+      );
       db.exec("INSERT INTO blob_objects VALUES ('owned');");
-      db.exec("CREATE TRIGGER fail_companion_removal BEFORE DELETE ON blob_objects BEGIN SELECT RAISE(ABORT, 'forced'); END;");
+      db.exec(
+        "CREATE TRIGGER fail_companion_removal BEFORE DELETE ON blob_objects BEGIN SELECT RAISE(ABORT, 'forced'); END;",
+      );
       const target = collectCompanionRemovalDatabaseTarget(db);
-      assert.throws(() => applyCompanionRemovalDatabaseTarget(db, target), /forced/);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name = 'companion_sessions'").get() as { n: number }).n, 1);
-      assert.deepEqual(db.prepare("SELECT id, group_id, worktree_path FROM companion_sessions").all().map((row) => ({ ...row })), [
-        { id: "c1", group_id: "g1", worktree_path: "/tmp/wt" },
-      ]);
-      assert.deepEqual(db.prepare("SELECT id, session_id, text_blob_id FROM companion_messages").all().map((row) => ({ ...row })), [
-        { id: 1, session_id: "c1", text_blob_id: "owned" },
-      ]);
-      assert.deepEqual(db.prepare("SELECT id, parent_session_id, payload_json FROM auxiliary_sessions").all().map((row) => ({ ...row })), [
-        { id: "a1", parent_session_id: "c1", payload_json: "{}" },
-      ]);
-      assert.deepEqual(db.prepare("SELECT * FROM companion_audit_logs").all().map((row) => ({ ...row })), [
-        { id: "audit-owned", session_id: "c1", summary: "Preserve this body on rollback" },
-      ]);
-      assert.deepEqual(db.prepare("SELECT * FROM blob_objects").all().map((row) => ({ ...row })), [{ blob_id: "owned" }]);
+      assert.throws(
+        () => applyCompanionRemovalDatabaseTarget(db, target),
+        /forced/,
+      );
+      assert.equal(
+        (
+          db
+            .prepare(
+              "SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name = 'companion_sessions'",
+            )
+            .get() as { n: number }
+        ).n,
+        1,
+      );
+      assert.deepEqual(
+        db
+          .prepare("SELECT id, group_id, worktree_path FROM companion_sessions")
+          .all()
+          .map((row) => ({ ...row })),
+        [{ id: "c1", group_id: "g1", worktree_path: "/tmp/wt" }],
+      );
+      assert.deepEqual(
+        db
+          .prepare(
+            "SELECT id, session_id, text_blob_id FROM companion_messages",
+          )
+          .all()
+          .map((row) => ({ ...row })),
+        [{ id: 1, session_id: "c1", text_blob_id: "owned" }],
+      );
+      assert.deepEqual(
+        db
+          .prepare(
+            "SELECT id, parent_session_id, payload_json FROM auxiliary_sessions",
+          )
+          .all()
+          .map((row) => ({ ...row })),
+        [{ id: "a1", parent_session_id: "c1", payload_json: "{}" }],
+      );
+      assert.deepEqual(
+        db
+          .prepare("SELECT * FROM companion_audit_logs")
+          .all()
+          .map((row) => ({ ...row })),
+        [
+          {
+            id: "audit-owned",
+            session_id: "c1",
+            summary: "Preserve this body on rollback",
+          },
+        ],
+      );
+      assert.deepEqual(
+        db
+          .prepare("SELECT * FROM blob_objects")
+          .all()
+          .map((row) => ({ ...row })),
+        [{ blob_id: "owned" }],
+      );
       db.exec("DROP TRIGGER fail_companion_removal;");
       applyCompanionRemovalDatabaseTarget(db, target);
-      assert.equal((db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name = 'companion_sessions'").get() as { n: number }).n, 0);
-    } finally { db.close(); }
+      assert.equal(
+        (
+          db
+            .prepare(
+              "SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name = 'companion_sessions'",
+            )
+            .get() as { n: number }
+        ).n,
+        0,
+      );
+    } finally {
+      db.close();
+    }
   });
 });

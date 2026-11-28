@@ -5,10 +5,20 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 import { renderHomePlusIcon, renderHomeSearchIcon } from "./home-icons.js";
 
-export const homeRightPaneLabels = { monitor: "Monitor", crew: "Crew", characters: "Characters", previews: "Previews" } as const;
+/** タブの表示順を兼ねる、右ペイン種別ごとの名称。 */
+export const homeRightPaneLabels = {
+  monitor: "Monitor",
+  crew: "Crew",
+  characters: "Characters",
+  previews: "Previews",
+} as const;
+/** ヘッダーと右ペインが共通で使う、選択中のタブの識別子。 */
 export type HomeRightPaneView = keyof typeof homeRightPaneLabels;
-const homeRightPaneViews = Object.keys(homeRightPaneLabels) as HomeRightPaneView[];
+const homeRightPaneViews = Object.keys(
+  homeRightPaneLabels,
+) as HomeRightPaneView[];
 
+/** 検索入力とタブ、起動・ウィンドウ操作、復元や準備状態のフィードバックを受け取る。 */
 export type HomeHeaderProps = {
   searchInputText: string;
   onChangeSearchText: (value: string) => void;
@@ -30,6 +40,7 @@ export type HomeHeaderProps = {
   onRetryMateStatus?: () => void;
 };
 
+/** Home 全体に効く検索・作成・タブ切替と、独立ウィンドウの操作を一か所に配置する。 */
 export function HomeHeader({
   searchInputText,
   onChangeSearchText,
@@ -55,7 +66,9 @@ export function HomeHeader({
     <header className="home-settings-rail">
       <div className="home-header-search">
         <div className="toolbar-search-field home-header-search-field">
-          <span className="toolbar-search-icon" aria-hidden="true">{renderHomeSearchIcon()}</span>
+          <span className="toolbar-search-icon" aria-hidden="true">
+            {renderHomeSearchIcon()}
+          </span>
           <input
             ref={searchInputRef}
             className="toolbar-search-input"
@@ -64,7 +77,9 @@ export function HomeHeader({
             value={searchInputText}
             onChange={(event) => onChangeSearchText(event.target.value)}
             onCompositionStart={onSearchCompositionStart}
-            onCompositionEnd={(event) => onSearchCompositionEnd?.(event.currentTarget.value)}
+            onCompositionEnd={(event) =>
+              onSearchCompositionEnd?.(event.currentTarget.value)
+            }
           />
           {searchInputText ? (
             <button
@@ -78,7 +93,13 @@ export function HomeHeader({
               }}
             >
               <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-                <path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <path
+                  d="m5 5 10 10M15 5 5 15"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
               </svg>
             </button>
           ) : null}
@@ -94,26 +115,41 @@ export function HomeHeader({
           <span className="home-create-icon">{renderHomePlusIcon()}</span>
         </button>
       </div>
-      <div className="home-pane-toggle" role="tablist" aria-label="Home right pane">
+      <div
+        className="home-pane-toggle"
+        role="tablist"
+        aria-label="Home right pane"
+      >
         {homeRightPaneViews.map((view, index) => (
           <button
             key={view}
             className={`home-pane-toggle-button${rightPaneView === view ? " active" : ""}`}
             type="button"
             role="tab"
-            aria-controls={rightPaneView === view ? `home-panel-${view}` : undefined}
+            aria-controls={
+              rightPaneView === view ? `home-panel-${view}` : undefined
+            }
             aria-selected={rightPaneView === view}
             tabIndex={rightPaneView === view ? 0 : -1}
             onClick={() => onChangeRightPaneView(view)}
             onKeyDown={(event) => {
               const count = homeRightPaneViews.length;
-              const next = event.key === "ArrowLeft" ? (index - 1 + count) % count
-                : event.key === "ArrowRight" ? (index + 1) % count
-                : event.key === "Home" ? 0 : event.key === "End" ? count - 1 : null;
+              const next =
+                event.key === "ArrowLeft"
+                  ? (index - 1 + count) % count
+                  : event.key === "ArrowRight"
+                    ? (index + 1) % count
+                    : event.key === "Home"
+                      ? 0
+                      : event.key === "End"
+                        ? count - 1
+                        : null;
               if (next === null) return;
               event.preventDefault();
               onChangeRightPaneView(homeRightPaneViews[next]!);
-              event.currentTarget.parentElement?.querySelectorAll("button")[next]?.focus();
+              event.currentTarget.parentElement
+                ?.querySelectorAll("button")
+                [next]?.focus();
             }}
           >
             {homeRightPaneLabels[view]}
@@ -125,10 +161,14 @@ export function HomeHeader({
           className="restore-session-windows-button"
           type="button"
           onClick={onRestoreSessionWindows}
-          disabled={sessionWindowRestorePending || sessionWindowRestoreIds.length === 0}
+          disabled={
+            sessionWindowRestorePending || sessionWindowRestoreIds.length === 0
+          }
           aria-busy={sessionWindowRestorePending}
         >
-          <ButtonContent busy={sessionWindowRestorePending}>Restore Sessions</ButtonContent>
+          <ButtonContent busy={sessionWindowRestorePending}>
+            Restore Sessions
+          </ButtonContent>
         </button>
         <button
           className="launch-toggle home-monitor-window-button"
@@ -139,19 +179,32 @@ export function HomeHeader({
         >
           {monitorWindowIcon}
         </button>
-        <button className="launch-toggle home-settings-button" type="button" onClick={onOpenSettingsWindow}>
+        <button
+          className="launch-toggle home-settings-button"
+          type="button"
+          onClick={onOpenSettingsWindow}
+        >
           Settings
         </button>
       </div>
       {mateLoadStatus !== "loaded" ? (
         <div className="home-header-feedback">
-          {mateLoadStatus === "loading" ? <LoadingIndicator label="Loading app state" inline /> : (
-            <LoadError message={mateLoadError || "Could not load app state."} onRetry={onRetryMateStatus} />
+          {mateLoadStatus === "loading" ? (
+            <LoadingIndicator label="Loading app state" inline />
+          ) : (
+            <LoadError
+              message={mateLoadError || "Could not load app state."}
+              onRetry={onRetryMateStatus}
+            />
           )}
         </div>
       ) : null}
       {sessionWindowRestoreFeedback ? (
-        <p className="session-window-restore-feedback home-header-feedback" role="status" aria-live="polite">
+        <p
+          className="session-window-restore-feedback home-header-feedback"
+          role="status"
+          aria-live="polite"
+        >
           {sessionWindowRestoreFeedback}
         </p>
       ) : null}

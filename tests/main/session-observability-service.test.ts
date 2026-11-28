@@ -2,15 +2,28 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { SessionObservabilityService } from "../../src-electron/session/session-observability-service.js";
-import type { LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type {
+  LiveSessionRunState,
+  ProviderQuotaTelemetry,
+  SessionContextTelemetry,
+} from "../../src-shared/session/runtime-state.js";
 
+/** 予約からquota取得までに連なるPromiseの処理を、実時間を進めずに消化する。 */
 async function flushQuotaTasks(): Promise<void> {
   for (let i = 0; i < 12; i++) await Promise.resolve();
 }
 
+/** 週次の使用率を指定できる成功応答を作り、既定ではCodexの使用率をゼロとする。 */
 function quota(provider = "codex", usedPercentage = 0): ProviderQuotaTelemetry {
-  return { provider, updatedAt: new Date().toISOString(), snapshots: [],
-    rateLimits: [{ quotaKey: "weekly", usedPercentage, windowDurationMinutes: 10080 }], status: "ready" };
+  return {
+    provider,
+    updatedAt: new Date().toISOString(),
+    snapshots: [],
+    rateLimits: [
+      { quotaKey: "weekly", usedPercentage, windowDurationMinutes: 10080 },
+    ],
+    status: "ready",
+  };
 }
 
 // @test-value v2
@@ -25,6 +38,7 @@ function quota(provider = "codex", usedPercentage = 0): ProviderQuotaTelemetry {
 // impact = "別accountの残量を誤表示し、重複するprovider processを起動する"
 // distinction = "型検査では非同期完了順序を検証できず、制御した2つのPromiseで低コストに検出する"
 // @end-test-value
+/** clearで進行中の取得を中断し、遅れて届く旧応答が通知や新世代の重複排除を乱さないことを確認する。 */
 test("quota clearは旧応答を破棄し新世代のdedupeを守る", async () => {
   const { service, events } = createService();
   let finishOld!: (value: ProviderQuotaTelemetry) => void;
@@ -32,13 +46,21 @@ test("quota clearは旧応答を破棄し新世代のdedupeを守る", async () 
   let oldSignal: AbortSignal | undefined;
   const old = service.refreshProviderQuotaTelemetry("codex", (signal) => {
     oldSignal = signal;
-    return new Promise((resolve) => { finishOld = resolve; });
+    return new Promise((resolve) => {
+      finishOld = resolve;
+    });
   });
   await flushQuotaTasks();
   service.clearProviderQuotaTelemetry("codex");
   assert.equal(oldSignal?.aborted, true);
   assert.equal(service.getProviderQuotaTelemetry("codex"), null);
-  const next = service.refreshProviderQuotaTelemetry("codex", () => new Promise((resolve) => { finishNew = resolve; }));
+  const next = service.refreshProviderQuotaTelemetry(
+    "codex",
+    () =>
+      new Promise((resolve) => {
+        finishNew = resolve;
+      }),
+  );
   await flushQuotaTasks();
   const newLoading = service.getProviderQuotaTelemetry("codex");
   const eventCount = events.length;
@@ -47,7 +69,10 @@ test("quota clearは旧応答を破棄し新世代のdedupeを守る", async () 
   assert.equal(events.length, eventCount);
   assert.equal(service.getProviderQuotaTelemetry("codex"), newLoading);
   let extraCalls = 0;
-  const duplicate = service.refreshProviderQuotaTelemetry("codex", async () => { extraCalls++; return quota(); });
+  const duplicate = service.refreshProviderQuotaTelemetry("codex", async () => {
+    extraCalls++;
+    return quota();
+  });
   const expected = quota("codex", 10);
   finishNew(expected);
   assert.deepEqual(await Promise.all([next, duplicate]), [expected, expected]);
@@ -68,20 +93,38 @@ test("quota clearは旧応答を破棄し新世代のdedupeを守る", async () 
 // impact = "残量を誤認させ、認証失敗中にもリクエストが集中する"
 // distinction = "値の型では実測0と未観測を区別できず、mock clockで5分を実時間待機せず検査する"
 // @end-test-value
+/** 取得失敗でも前回の使用量を残し、抑制期間後だけ再試行し、応答がnullなら未対応と区別する。 */
 test("quotaは失敗時も最終成功値を保持し再取得を抑制する", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: 1000 });
   const { service } = createService();
   assert.equal(service.getProviderQuotaTelemetry("codex"), null);
   const expected = quota();
-  const ready = service.refreshProviderQuotaTelemetry("codex", async () => expected);
+  const ready = service.refreshProviderQuotaTelemetry(
+    "codex",
+    async () => expected,
+  );
   assert.equal(service.getProviderQuotaTelemetry("codex")?.status, "loading");
   await ready;
-  assert.equal(service.getProviderQuotaTelemetry("codex")?.rateLimits?.[0]?.usedPercentage, 0);
+  assert.equal(
+    service.getProviderQuotaTelemetry("codex")?.rateLimits?.[0]?.usedPercentage,
+    0,
+  );
   t.mock.timers.tick(60000);
-  await assert.rejects(service.refreshProviderQuotaTelemetry("codex", async () => { throw new Error("auth error"); }));
-  assert.deepEqual(service.getProviderQuotaTelemetry("codex"), { ...expected, status: "error" });
+  await assert.rejects(
+    service.refreshProviderQuotaTelemetry("codex", async () => {
+      throw new Error("auth error");
+    }),
+  );
+  assert.deepEqual(service.getProviderQuotaTelemetry("codex"), {
+    ...expected,
+    status: "error",
+  });
   let retries = 0;
-  const retry = async () => { retries++; return quota("codex", 12); };
+  /** 抑制期間を越えたときだけ増える取得回数と、新しい使用率を用意する。 */
+  const retry = async () => {
+    retries++;
+    return quota("codex", 12);
+  };
   await service.refreshProviderQuotaTelemetry("codex", retry);
   assert.equal(retries, 0);
   t.mock.timers.tick(300000);
@@ -89,7 +132,12 @@ test("quotaは失敗時も最終成功値を保持し再取得を抑制する", 
   assert.equal(retries, 1);
   assert.equal(service.getProviderQuotaTelemetry("codex")?.status, "ready");
   await service.refreshProviderQuotaTelemetry("claude", async () => null);
-  assert.deepEqual(service.getProviderQuotaTelemetry("claude"), { provider: "claude", updatedAt: null, snapshots: [], status: "unsupported" });
+  assert.deepEqual(service.getProviderQuotaTelemetry("claude"), {
+    provider: "claude",
+    updatedAt: null,
+    snapshots: [],
+    status: "unsupported",
+  });
   service.dispose();
 });
 
@@ -105,35 +153,52 @@ test("quotaは失敗時も最終成功値を保持し再取得を抑制する", 
 // impact = "無操作中に残量が更新されないか、reset/終了後の取得processが残る"
 // distinction = "SDK mockだけではMainの定期更新を通らず、fake timerによる少数の発火で確認する"
 // @end-test-value
+/** 定期取得とturn後の予約を動かし、clearAllやdispose後には遅延した取得も通知も再開しないことを確認する。 */
 test("quota pollingとturn後の予約はclearAllとdisposeで停止する", async (t) => {
-  t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: 1000 });
+  t.mock.timers.enable({
+    apis: ["Date", "setTimeout", "setInterval"],
+    now: 1000,
+  });
   const { service, events } = createService();
   let calls = 0;
-  const refresh = async () => { calls++; return quota(); };
+  /** タイマーから実際に取得が起きた回数を記録する。 */
+  const refresh = async () => {
+    calls++;
+    return quota();
+  };
   service.startProviderQuotaPolling("codex", 300000, refresh);
   assert.equal(calls, 0);
-  t.mock.timers.tick(1); await flushQuotaTasks();
+  t.mock.timers.tick(1);
+  await flushQuotaTasks();
   assert.equal(calls, 1);
   service.scheduleProviderQuotaTelemetryRefresh("codex", [3000], refresh);
   t.mock.timers.tick(1000);
   service.scheduleProviderQuotaTelemetryRefresh("codex", [3000], refresh);
-  t.mock.timers.tick(2999); await flushQuotaTasks();
+  t.mock.timers.tick(2999);
+  await flushQuotaTasks();
   assert.equal(calls, 1);
-  t.mock.timers.tick(1); await flushQuotaTasks();
+  t.mock.timers.tick(1);
+  await flushQuotaTasks();
   assert.equal(calls, 1);
-  t.mock.timers.tick(56000); await flushQuotaTasks();
+  t.mock.timers.tick(56000);
+  await flushQuotaTasks();
   assert.equal(calls, 2);
-  t.mock.timers.tick(300000); await flushQuotaTasks();
+  t.mock.timers.tick(300000);
+  await flushQuotaTasks();
   assert.equal(calls, 3);
   service.scheduleProviderQuotaTelemetryRefresh("codex", [3000], refresh);
   service.scheduleProviderQuotaTelemetryRefresh("claude", [3000], refresh);
   service.clearAllProviderQuotaTelemetry();
-  t.mock.timers.tick(600000); await flushQuotaTasks();
+  t.mock.timers.tick(600000);
+  await flushQuotaTasks();
   assert.equal(calls, 3);
   let signal: AbortSignal | undefined;
   let finish!: (value: ProviderQuotaTelemetry) => void;
   const pending = service.refreshProviderQuotaTelemetry("codex", (input) => {
-    signal = input; return new Promise((resolve) => { finish = resolve; });
+    signal = input;
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
   });
   await flushQuotaTasks();
   await service.refreshProviderQuotaTelemetry("claude", refresh);
@@ -144,7 +209,8 @@ test("quota pollingとturn後の予約はclearAllとdisposeで停止する", asy
   finish(quota());
   assert.equal(await pending, null);
   await service.waitForProviderQuotaRefreshes();
-  t.mock.timers.tick(600000); await flushQuotaTasks();
+  t.mock.timers.tick(600000);
+  await flushQuotaTasks();
   assert.equal(calls, 4);
   assert.equal(events.length, count);
   assert.equal(service.getProviderQuotaTelemetry("codex"), null);
@@ -162,11 +228,17 @@ test("quota pollingとturn後の予約はclearAllとdisposeで停止する", asy
 // impact = "短命processの起動が集中するか、連続作業中の残量更新が停止する"
 // distinction = "時刻とprovider分離は型検査で保証できず、SDK起動なしのfake timerで低コストに検査する"
 // @end-test-value
+/** 成功直後の要求をproviderごとの固定期限まで集約し、未対応応答や個別の遅延設定も混同しないことを確かめる。 */
 test("quota成功後の取得はprovider別の固定期限に集約する", async (t) => {
-  t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: 1000 });
+  t.mock.timers.enable({
+    apis: ["Date", "setTimeout", "setInterval"],
+    now: 1000,
+  });
   const { service } = createService();
+  /** 仮想タイマーを使ったケースの終了時に、サービスの予約を解放する。 */
   t.after(() => service.dispose());
   const calls: Array<[string, number]> = [];
+  /** 実際に取得したproviderと相対時刻を記録し、Claudeだけは未対応応答を返す。 */
   const refresh = (provider: string) => async () => {
     calls.push([provider, Date.now() - 1000]);
     return provider === "claude" ? null : quota(provider);
@@ -180,23 +252,77 @@ test("quota成功後の取得はprovider別の固定期限に集約する", asyn
   t.mock.timers.tick(1000);
   await service.refreshProviderQuotaTelemetry("claude", claudeRefresh);
   await service.refreshProviderQuotaTelemetry("opencode", opencodeRefresh);
-  assert.equal(service.getProviderQuotaTelemetry("claude")?.status, "unsupported");
-  service.scheduleProviderQuotaTelemetryRefresh("copilot", [0, 3000, 10000], copilotRefresh);
-  t.mock.timers.tick(0); await flushQuotaTasks();
+  assert.equal(
+    service.getProviderQuotaTelemetry("claude")?.status,
+    "unsupported",
+  );
+  service.scheduleProviderQuotaTelemetryRefresh(
+    "copilot",
+    [0, 3000, 10000],
+    copilotRefresh,
+  );
+  t.mock.timers.tick(0);
+  await flushQuotaTasks();
   for (let elapsed = 1000; elapsed <= 59000; elapsed += 1000) {
-    service.scheduleProviderQuotaTelemetryRefresh("codex", [3000], codexRefresh);
-    service.scheduleProviderQuotaTelemetryRefresh("claude", [3000], claudeRefresh);
-    service.scheduleProviderQuotaTelemetryRefresh("opencode", [3000], opencodeRefresh);
-    assert.equal(await service.refreshProviderQuotaTelemetry("codex", codexRefresh), cached);
-    t.mock.timers.tick(1000); await flushQuotaTasks();
+    service.scheduleProviderQuotaTelemetryRefresh(
+      "codex",
+      [3000],
+      codexRefresh,
+    );
+    service.scheduleProviderQuotaTelemetryRefresh(
+      "claude",
+      [3000],
+      claudeRefresh,
+    );
+    service.scheduleProviderQuotaTelemetryRefresh(
+      "opencode",
+      [3000],
+      opencodeRefresh,
+    );
+    assert.equal(
+      await service.refreshProviderQuotaTelemetry("codex", codexRefresh),
+      cached,
+    );
+    t.mock.timers.tick(1000);
+    await flushQuotaTasks();
   }
-  assert.deepEqual(calls.filter(([id]) => id === "codex"), [["codex", 0], ["codex", 60000]]);
-  assert.deepEqual(calls.filter(([id]) => id === "claude"), [["claude", 1000]]);
-  assert.deepEqual(calls.filter(([id]) => id === "copilot"), [["copilot", 1000], ["copilot", 4000], ["copilot", 11000]]);
-  t.mock.timers.tick(1000); await flushQuotaTasks();
-  assert.deepEqual(calls.filter(([id]) => id === "claude"), [["claude", 1000], ["claude", 61000]]);
-  assert.deepEqual(calls.filter(([id]) => id === "opencode"), [["opencode", 1000], ["opencode", 61000]]);
-  t.mock.timers.tick(60000); await flushQuotaTasks();
+  assert.deepEqual(
+    calls.filter(([id]) => id === "codex"),
+    [
+      ["codex", 0],
+      ["codex", 60000],
+    ],
+  );
+  assert.deepEqual(
+    calls.filter(([id]) => id === "claude"),
+    [["claude", 1000]],
+  );
+  assert.deepEqual(
+    calls.filter(([id]) => id === "copilot"),
+    [
+      ["copilot", 1000],
+      ["copilot", 4000],
+      ["copilot", 11000],
+    ],
+  );
+  t.mock.timers.tick(1000);
+  await flushQuotaTasks();
+  assert.deepEqual(
+    calls.filter(([id]) => id === "claude"),
+    [
+      ["claude", 1000],
+      ["claude", 61000],
+    ],
+  );
+  assert.deepEqual(
+    calls.filter(([id]) => id === "opencode"),
+    [
+      ["opencode", 1000],
+      ["opencode", 61000],
+    ],
+  );
+  t.mock.timers.tick(60000);
+  await flushQuotaTasks();
   assert.equal(calls.length, 9);
 });
 
@@ -212,33 +338,47 @@ test("quota成功後の取得はprovider別の固定期限に集約する", asyn
 // impact = "認証変更後に古い残量が残るか不要な取得processが起動する"
 // distinction = "既存の進行中Promise破棄testと異なり成功済み状態と予約の破棄をfake timerで検査する"
 // @end-test-value
+/** 成功後のclearで即座に再取得でき、clear前に予約した追加取得は発火しないことを確認する。 */
 test("quota clearは成功後の抑制と予約を破棄する", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
   const { service } = createService();
+  /** 予約破棄の検証後にサービスを閉じる。 */
   t.after(() => service.dispose());
   let calls = 0;
-  const refresh = async () => { calls++; return quota("codex", calls); };
+  /** 呼び出し回数の変化を取得結果の使用率からも読み取れるようにする。 */
+  const refresh = async () => {
+    calls++;
+    return quota("codex", calls);
+  };
   await service.refreshProviderQuotaTelemetry("codex", refresh);
   service.scheduleProviderQuotaTelemetryRefresh("codex", [3000], refresh);
   t.mock.timers.tick(1000);
   service.clearProviderQuotaTelemetry("codex");
   await service.refreshProviderQuotaTelemetry("codex", refresh);
   assert.equal(calls, 2);
-  assert.equal(service.getProviderQuotaTelemetry("codex")?.rateLimits?.[0]?.usedPercentage, 2);
-  t.mock.timers.tick(120000); await flushQuotaTasks();
+  assert.equal(
+    service.getProviderQuotaTelemetry("codex")?.rateLimits?.[0]?.usedPercentage,
+    2,
+  );
+  t.mock.timers.tick(120000);
+  await flushQuotaTasks();
   assert.equal(calls, 2);
 });
 
+/** 通知の種別・対象ID・値を発生順に捕捉できるサービスを組み立てる。 */
 function createService() {
   const events: Array<{ type: string; payload: unknown }> = [];
   const service = new SessionObservabilityService({
+    /** provider別の使用量通知を捕捉する。 */
     onProviderQuotaTelemetryChanged: (providerId, telemetry) => {
       events.push({ type: "quota", payload: { providerId, telemetry } });
     },
+    /** Session別のコンテキスト使用量通知を捕捉する。 */
     onSessionContextTelemetryChanged: (sessionId, telemetry) => {
       events.push({ type: "context", payload: { sessionId, telemetry } });
     },
 
+    /** Session別の実行状態通知を捕捉する。 */
     onLiveSessionRunChanged: (sessionId, state) => {
       events.push({ type: "live", payload: { sessionId, state } });
     },
@@ -257,6 +397,7 @@ function createService() {
 // scope = "session-observability-state-notification"
 // lifecycle = "permanent"
 // @end-test-value
+/** 別々のSessionとproviderの観測値が上書きされず、通知も設定した順序と対象を保つことを確認する。 */
 test("SessionObservabilityService は live run / telemetry を保持して通知する", () => {
   const { service, events } = createService();
 
@@ -291,25 +432,45 @@ test("SessionObservabilityService は live run / telemetry を保持して通知
 
   const otherLiveRun = { ...liveRun, sessionId: "s-2", threadId: "thread-2" };
   const otherQuota = { ...quota, provider: "codex" };
-  const otherContext = { ...context, provider: "codex", sessionId: "s-2", currentTokens: 240 };
+  const otherContext = {
+    ...context,
+    provider: "codex",
+    sessionId: "s-2",
+    currentTokens: 240,
+  };
   service.setLiveSessionRun("s-2", otherLiveRun);
   service.setProviderQuotaTelemetry("codex", otherQuota);
   service.setSessionContextTelemetry("s-2", otherContext);
 
   assert.equal(service.getLiveSessionRun("s-1")?.threadId, "thread-1");
-  assert.equal(service.getProviderQuotaTelemetry("copilot")?.provider, "copilot");
+  assert.equal(
+    service.getProviderQuotaTelemetry("copilot")?.provider,
+    "copilot",
+  );
   assert.equal(service.getSessionContextTelemetry("s-1")?.currentTokens, 120);
   assert.equal(service.getLiveSessionRun("s-2")?.threadId, "thread-2");
   assert.equal(service.getProviderQuotaTelemetry("codex")?.provider, "codex");
   assert.equal(service.getSessionContextTelemetry("s-2")?.currentTokens, 240);
-  assert.deepEqual(events.map((event) => event.type), ["live", "quota", "context", "live", "quota", "context"]);
-  assert.deepEqual(events.map((event) => (event.payload as { sessionId?: string; providerId?: string }).sessionId ?? (event.payload as { providerId: string }).providerId), ["s-1", "copilot", "s-1", "s-2", "codex", "s-2"]);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["live", "quota", "context", "live", "quota", "context"],
+  );
+  assert.deepEqual(
+    events.map(
+      (event) =>
+        (event.payload as { sessionId?: string; providerId?: string })
+          .sessionId ?? (event.payload as { providerId: string }).providerId,
+    ),
+    ["s-1", "copilot", "s-1", "s-2", "codex", "s-2"],
+  );
 });
 
+/** 同じproviderへの並行取得が一回にまとまり、clearがキャッシュと通知の双方に反映されることを確認する。 */
 test("SessionObservabilityService は provider quota refresh を dedupe して clear できる", async () => {
   const { service, events } = createService();
   let refreshCount = 0;
 
+  /** 並行要求が合流できる非同期の取得を用意し、実行回数を記録する。 */
   const refresh = async (): Promise<ProviderQuotaTelemetry> => {
     refreshCount += 1;
     await Promise.resolve();

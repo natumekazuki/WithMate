@@ -10,37 +10,54 @@ import {
   toggleMessageCollapseState,
 } from "../../src/chat/conversation/session-message-collapse.js";
 import { projectMessagePlainText } from "../../src-shared/session/message-search.js";
-import { buildMessageListProjection, type MessageListSource } from "../../src/chat/auxiliary/auxiliary-session-message-projection.js";
+import {
+  buildMessageListProjection,
+  type MessageListSource,
+} from "../../src/chat/auxiliary/auxiliary-session-message-projection.js";
 import type { Message } from "../../src-shared/session/session-state.js";
 
+/** 永続化済みのMainメッセージを履歴位置で指す。 */
 function sessionSource(messageIndex: number): MessageListSource {
   return { kind: "session", messageIndex };
 }
 
-function auxiliarySource(sessionId: string, messageIndex: number): MessageListSource {
+/** AuxiliaryのIDと履歴位置を組み合わせてMainと区別する。 */
+function auxiliarySource(
+  sessionId: string,
+  messageIndex: number,
+): MessageListSource {
   return { kind: "auxiliary", sessionId, messageIndex, artifact: undefined };
 }
 
+/** 保存前のAssistant応答を表すsourceを作り、永続化済み表示と区別する。 */
 function liveSource(sessionId: string): MessageListSource {
   return { kind: "live-assistant", sessionId, threadId: null };
 }
 
+/** 折りたたみに使う本文と役割を揃え、指定時だけaccentを付ける。 */
 function message(role: Message["role"], text: string, accent = false): Message {
   return { role, text, ...(accent ? { accent: true } : {}) };
 }
 
+/** しおり付きMainと通常のAuxiliaryを実際のメッセージ投影に通して折りたたみ対象を作る。 */
 function buildBookmarkProjectionTargets() {
   const projection = buildMessageListProjection(
     [{ role: "user", text: "bookmarked", isBookmarked: true }],
-    [{
-      id: "aux-1",
-      messages: [message("assistant", "ordinary")],
-      displayAfterMessageIndex: 0,
-      createdAt: "2026-05-24T00:00:00.000Z",
-    }],
+    [
+      {
+        id: "aux-1",
+        messages: [message("assistant", "ordinary")],
+        displayAfterMessageIndex: 0,
+        createdAt: "2026-05-24T00:00:00.000Z",
+      },
+    ],
     "session-1",
   );
-  return buildMessageCollapseTargets(projection.messages, projection.sources, projection.keys);
+  return buildMessageCollapseTargets(
+    projection.messages,
+    projection.sources,
+    projection.keys,
+  );
 }
 
 // @test-value v2
@@ -55,8 +72,12 @@ function buildBookmarkProjectionTargets() {
 // impact = "実在しない本文の表示、本物の本文の欠落、長いsummaryでの見通し悪化を防ぐ"
 // distinction = "代替文の削除と、その文言を含む実在本文の保持を同じ投影境界で区別する"
 // @end-test-value
+/** Markdown記号と空白を正規化し、投影が空なら代替文を生成せず、長文は省略記号込みで160コードポイントに収める。 */
 test("plain-text projection は Markdown と空白を正規化し、160 code pointsへ収める", () => {
-  assert.equal(projectMessagePlainText("# **hello**\n\n  world `code`"), "hello world code");
+  assert.equal(
+    projectMessagePlainText("# **hello**\n\n  world `code`"),
+    "hello world code",
+  );
   assert.equal(projectMessagePlainText("***\n\n  \n"), "");
   assert.equal(projectMessagePlainText("No content"), "No content");
 
@@ -77,6 +98,7 @@ test("plain-text projection は Markdown と空白を正規化し、160 code poi
 // scope = "session-message-collapse"
 // lifecycle = "permanent"
 // @end-test-value
+/** 表示キーがlive形式でも永続化済みのuser・assistantは折りたたみ対象に含め、sourceが配信中の合成応答だけを除外する。 */
 test("collapse target は persisted session/auxiliary の user/assistantだけを採用する", () => {
   const targets = buildMessageCollapseTargets(
     [
@@ -86,16 +108,31 @@ test("collapse target は persisted session/auxiliary の user/assistantだけ�
       message("assistant", "error"),
       message("assistant", "persisted live"),
     ],
-    [sessionSource(0), auxiliarySource("aux-1", 0), liveSource("session-1"), sessionSource(3), sessionSource(4)],
-    ["session-session-1-0", "auxiliary-aux-1-0", "live-assistant-session-1-2-pending", "error-row", "live-assistant-session-1-4-thread"],
+    [
+      sessionSource(0),
+      auxiliarySource("aux-1", 0),
+      liveSource("session-1"),
+      sessionSource(3),
+      sessionSource(4),
+    ],
+    [
+      "session-session-1-0",
+      "auxiliary-aux-1-0",
+      "live-assistant-session-1-2-pending",
+      "error-row",
+      "live-assistant-session-1-4-thread",
+    ],
   );
 
-  assert.deepEqual(targets.map((target) => [target.key, target.sourceKind, target.role]), [
-    ["session-session-1-0", "session", "user"],
-    ["auxiliary-aux-1-0", "auxiliary", "assistant"],
-    ["error-row", "session", "assistant"],
-    ["live-assistant-session-1-4-thread", "session", "assistant"],
-  ]);
+  assert.deepEqual(
+    targets.map((target) => [target.key, target.sourceKind, target.role]),
+    [
+      ["session-session-1-0", "session", "user"],
+      ["auxiliary-aux-1-0", "auxiliary", "assistant"],
+      ["error-row", "session", "assistant"],
+      ["live-assistant-session-1-4-thread", "session", "assistant"],
+    ],
+  );
 });
 
 // @test-value v2
@@ -110,6 +147,7 @@ test("collapse target は persisted session/auxiliary の user/assistantだけ�
 // impact = "filter対象や本文のtoggle対象を誤り、別messageのbookmarkを変更する"
 // distinction = "DOM操作ではなく、Messages filterと本文toggleが参照するprojection contractを直接確認する"
 // @end-test-value
+/** MainとAuxiliaryのsourceを区別し、しおりの有無を各ナビゲーター項目へ引き継ぐ。 */
 test("collapse target は bookmark state と persisted source identity を navigatorへ引き継ぐ", () => {
   const targets = buildBookmarkProjectionTargets();
 
@@ -119,14 +157,21 @@ test("collapse target は bookmark state と persisted source identity を navig
   assert.deepEqual(targets[1]?.source, auxiliarySource("aux-1", 0));
 
   const entries = buildMessageNavigatorEntries(targets, new Map());
-  assert.deepEqual(entries.map((entry) => [entry.key, entry.isBookmarked]), [
-    ["session-session-1-0", true],
-    ["auxiliary-aux-1-0", false],
-  ]);
+  assert.deepEqual(
+    entries.map((entry) => [entry.key, entry.isBookmarked]),
+    [
+      ["session-session-1-0", true],
+      ["auxiliary-aux-1-0", false],
+    ],
+  );
 });
 
+/** 末尾への追加やAuxiliaryの途中挿入で並びが変わっても、同じsourceとキーのメッセージだけが縮小状態を保つ。 */
 test("tail append と auxiliary insertion は key/source identityが同じmessageのstateを維持する", () => {
-  const initialMessages = [message("user", "first"), message("assistant", "second")];
+  const initialMessages = [
+    message("user", "first"),
+    message("assistant", "second"),
+  ];
   const initialTargets = buildMessageCollapseTargets(
     initialMessages,
     [sessionSource(0), sessionSource(1)],
@@ -139,10 +184,19 @@ test("tail append と auxiliary insertion は key/source identityが同じmessag
     [sessionSource(0), sessionSource(1), sessionSource(2)],
     ["session-s-0", "session-s-1", "session-s-2"],
   );
-  assert.equal(reconcileMessageCollapseState(collapsed, appendedTargets).has("session-s-1"), true);
+  assert.equal(
+    reconcileMessageCollapseState(collapsed, appendedTargets).has(
+      "session-s-1",
+    ),
+    true,
+  );
 
   const insertedTargets = buildMessageCollapseTargets(
-    [message("user", "first"), message("assistant", "auxiliary"), message("assistant", "second")],
+    [
+      message("user", "first"),
+      message("assistant", "auxiliary"),
+      message("assistant", "second"),
+    ],
     [sessionSource(0), auxiliarySource("aux-1", 0), sessionSource(1)],
     ["session-s-0", "auxiliary-aux-1-0", "session-s-1"],
   );
@@ -151,6 +205,7 @@ test("tail append と auxiliary insertion は key/source identityが同じmessag
   assert.equal(reconciled.has("auxiliary-aux-1-0"), false);
 });
 
+/** 表示キーが変わっても本文などが同じならキャッシュ済みの要約を使い、本文変更時は古い要約を再利用しない。 */
 test("collapse preview は不変なtargetを再利用し、本文変更では古いpreviewを使わない", () => {
   const initialTargets = buildMessageCollapseTargets(
     [message("assistant", "# first")],
@@ -180,6 +235,7 @@ test("collapse preview は不変なtargetを再利用し、本文変更では古
   assert.equal(changedTargets[0]?.preview, "changed");
 });
 
+/** 同じ表示キーでも本文やsourceの変更で縮小状態が消え、対象が空になったときも状態が残らない。 */
 test("同じkeyのsource/role/body変更、消えたkey、Session切り替えではstateを無効化できる", () => {
   const target = buildMessageCollapseTargets(
     [message("assistant", "before")],
@@ -204,21 +260,34 @@ test("同じkeyのsource/role/body変更、消えたkey、Session切り替えで
   assert.equal(reconcileMessageCollapseState(collapsed, []).size, 0);
 });
 
+/** 一方のメッセージを再展開しても、別のメッセージの縮小状態は残る。 */
 test("個別toggleは別messageの縮小状態を保持する", () => {
   const targets = buildMessageCollapseTargets(
-    [message("user", "user message"), message("assistant", "assistant response")],
+    [
+      message("user", "user message"),
+      message("assistant", "assistant response"),
+    ],
     [sessionSource(0), sessionSource(1)],
     ["user-key", "assistant-key"],
   );
 
   const userCollapsed = toggleMessageCollapseState(new Map(), targets[0]!);
   const bothCollapsed = toggleMessageCollapseState(userCollapsed, targets[1]!);
-  assert.deepEqual(Array.from(bothCollapsed.keys()), ["user-key", "assistant-key"]);
+  assert.deepEqual(Array.from(bothCollapsed.keys()), [
+    "user-key",
+    "assistant-key",
+  ]);
 
-  const assistantOnlyCollapsed = toggleMessageCollapseState(bothCollapsed, targets[0]!);
-  assert.deepEqual(Array.from(assistantOnlyCollapsed.keys()), ["assistant-key"]);
+  const assistantOnlyCollapsed = toggleMessageCollapseState(
+    bothCollapsed,
+    targets[0]!,
+  );
+  assert.deepEqual(Array.from(assistantOnlyCollapsed.keys()), [
+    "assistant-key",
+  ]);
 });
 
+/** 縮小と展開が混在するときは一括で縮小し、その状態で再度一括操作すると全件を展開する。ナビゲーターも縮小状態を引き継ぐ。 */
 test("一括toggle は一件でも展開中なら全縮小、全縮小済みなら全展開する", () => {
   const targets = buildMessageCollapseTargets(
     [message("user", "one"), message("assistant", "two")],
@@ -231,13 +300,20 @@ test("一括toggle は一件でも展開中なら全縮小、全縮小済みな�
   assert.equal(toggleAllMessageCollapseState(allCollapsed, targets).size, 0);
 
   const navigatorEntries = buildMessageNavigatorEntries(targets, allCollapsed);
-  assert.deepEqual(navigatorEntries.map((entry) => [entry.key, entry.isCollapsed]), [
-    ["one", true],
-    ["two", true],
-  ]);
+  assert.deepEqual(
+    navigatorEntries.map((entry) => [entry.key, entry.isCollapsed]),
+    [
+      ["one", true],
+      ["two", true],
+    ],
+  );
 });
 
+/** 途中挿入後の移動先は現在のキー配列で引き直し、該当キーがなければ未検出を返す。 */
 test("navigator jump は保存indexではなく現在のprojection keyからindexを解決する", () => {
-  assert.equal(findMessageIndexByKey(["first", "inserted", "target"], "target"), 2);
+  assert.equal(
+    findMessageIndexByKey(["first", "inserted", "target"], "target"),
+    2,
+  );
   assert.equal(findMessageIndexByKey(["first"], "missing"), -1);
 });

@@ -12,8 +12,11 @@ import { createRenderedTextSearchIndex } from "../../src/file-explorer/rendered-
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 import { isMessageRenderedSearchTextNode } from "../../src/chat/conversation/message-rendered-search-text.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
+/** 注釈のフォーカスとツールチップ描画に必要な DOM globals を設置し、復元処理を返す。 */
 function installDomGlobals(dom: JSDOM): () => void {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -23,9 +26,18 @@ function installDomGlobals(dom: JSDOM): () => void {
   const previousHTMLElement = globalThis.HTMLElement;
   const previousNode = globalThis.Node;
 
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
   Object.defineProperty(globalThis, "requestAnimationFrame", {
     configurable: true,
     value: dom.window.requestAnimationFrame.bind(dom.window),
@@ -34,25 +46,57 @@ function installDomGlobals(dom: JSDOM): () => void {
     configurable: true,
     value: dom.window.cancelAnimationFrame.bind(dom.window),
   });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
+  Object.defineProperty(globalThis, "Node", {
+    configurable: true,
+    value: dom.window.Node,
+  });
 
   return () => {
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-    Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: previousRequestAnimationFrame });
-    Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, value: previousCancelAnimationFrame });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
+    Object.defineProperty(globalThis, "requestAnimationFrame", {
+      configurable: true,
+      value: previousRequestAnimationFrame,
+    });
+    Object.defineProperty(globalThis, "cancelAnimationFrame", {
+      configurable: true,
+      value: previousCancelAnimationFrame,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      configurable: true,
+      value: previousHTMLElement,
+    });
+    Object.defineProperty(globalThis, "Node", {
+      configurable: true,
+      value: previousNode,
+    });
   };
 }
 
-const matcher = createGlossaryAnnotationMatcher([{
-  term: "Session Runtime",
-  aliases: ["Runtime"],
-  definition: "<strong>plain definition</strong>",
-}], "revision-1");
+const matcher = createGlossaryAnnotationMatcher(
+  [
+    {
+      term: "Session Runtime",
+      aliases: ["Runtime"],
+      definition: "<strong>plain definition</strong>",
+    },
+  ],
+  "revision-1",
+);
 
 // @test-value v2
 // kind = "contract"
@@ -66,35 +110,73 @@ const matcher = createGlossaryAnnotationMatcher([{
 // impact = "長文を読みながら注釈を操作するたびにrendererを再処理で占有することを防ぐ"
 // distinction = "matcher単体では観測できないReactのparse/注釈接続を実DOMのfocusとprop更新から確認する"
 // @end-test-value
+/** 注釈のフォーカスや操作先の変更では再分割せず、用語集 revision やメッセージ scope が変わると再投影することを確認する。 */
 test("注釈操作では全文投影せずrevisionとscope変更を現在の表示へ反映する", async () => {
-  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true, url: "https://example.test/" });
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", {
+    pretendToBeVisual: true,
+    url: "https://example.test/",
+  });
   const restore = installDomGlobals(dom);
   const root = createRoot(dom.window.document.getElementById("root")!);
   const segment = Intl.Segmenter.prototype.segment;
   let segmentCount = 0;
-  Intl.Segmenter.prototype.segment = function(value: string) { segmentCount++; return segment.call(this, value); };
+  Intl.Segmenter.prototype.segment = function (value: string) {
+    segmentCount++;
+    return segment.call(this, value);
+  };
   const text = "Runtime と ".repeat(100).trimEnd();
   const activated: string[] = [];
-  const render = async (activeMatcher = matcher, scopeKey = "m1", suffix = "old") => {
-    await act(async () => root.render(React.createElement(MessageRichText, {
-      text, forceFullRender: true, glossaryAnnotationMatcher: activeMatcher, glossaryAnnotationScopeKey: scopeKey,
-      onActivateGlossaryEntry: (term) => activated.push(`${term}:${suffix}`),
-    })));
+  /** 本文を固定し、注釈の再利用条件と操作先だけを入れ替えて描画する。 */
+  const render = async (
+    activeMatcher = matcher,
+    scopeKey = "m1",
+    suffix = "old",
+  ) => {
+    await act(async () =>
+      root.render(
+        React.createElement(MessageRichText, {
+          text,
+          forceFullRender: true,
+          glossaryAnnotationMatcher: activeMatcher,
+          glossaryAnnotationScopeKey: scopeKey,
+          /** 現在のコールバックが呼ばれたか判別できるよう用語と描画時の印を記録する。 */
+          onActivateGlossaryEntry: (term) =>
+            activated.push(`${term}:${suffix}`),
+        }),
+      ),
+    );
   };
   try {
     await render();
     const count = segmentCount;
-    const annotation = dom.window.document.querySelector<HTMLElement>(".glossary-annotation")!;
+    const annotation = dom.window.document.querySelector<HTMLElement>(
+      ".glossary-annotation",
+    )!;
     await act(async () => annotation.focus());
     await render(matcher, "m1", "current");
     await act(async () => annotation.click());
     assert.equal(segmentCount, count);
     assert.deepEqual(activated, ["Session Runtime:current"]);
-    assert.equal(dom.window.document.querySelector(".rich-text")?.textContent, text);
-    const revised = createGlossaryAnnotationMatcher([{ term: "Session Runtime", aliases: ["Runtime"], definition: "updated" }], "r2");
+    assert.equal(
+      dom.window.document.querySelector(".rich-text")?.textContent,
+      text,
+    );
+    const revised = createGlossaryAnnotationMatcher(
+      [
+        {
+          term: "Session Runtime",
+          aliases: ["Runtime"],
+          definition: "updated",
+        },
+      ],
+      "r2",
+    );
     await render(revised);
     assert.ok(segmentCount > count);
-    assert.equal(dom.window.document.querySelector("[role='tooltip']")?.textContent, "Session Runtimeupdated");
+    assert.equal(
+      dom.window.document.querySelector("[role='tooltip']")?.textContent,
+      "Session Runtimeupdated",
+    );
     const beforeScope = segmentCount;
     await render(revised, "m2");
     assert.ok(segmentCount > beforeScope);
@@ -106,6 +188,7 @@ test("注釈操作では全文投影せずrevisionとscope変更を現在の表�
   }
 });
 
+/** 見出しや引用などの通常本文だけを注釈し、リンク・コードと検索用の正規化テキストを変えないことを確認する。 */
 test("MessageRichTextはMarkdown parse後の通常textだけを注釈し本文とfind文字列を維持する", () => {
   const markdown = [
     "# Session Runtime",
@@ -120,31 +203,46 @@ test("MessageRichTextはMarkdown parse後の通常textだけを注釈し本文�
     "Runtime",
     "```",
   ].join("\n");
-  const plainHtml = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown, forceFullRender: true }));
-  const annotatedHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
-    text: markdown,
-    forceFullRender: true,
-    glossaryAnnotationMatcher: matcher,
-    glossaryAnnotationScopeKey: "message-1",
-    onActivateGlossaryEntry: () => undefined,
-  }));
+  const plainHtml = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: markdown,
+      forceFullRender: true,
+    }),
+  );
+  const annotatedHtml = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: markdown,
+      forceFullRender: true,
+      glossaryAnnotationMatcher: matcher,
+      glossaryAnnotationScopeKey: "message-1",
+      /** 静的出力の比較では用語を開かない。 */
+      onActivateGlossaryEntry: () => undefined,
+    }),
+  );
   const plainDom = new JSDOM(`<!doctype html>${plainHtml}`);
   const annotatedDom = new JSDOM(`<!doctype html>${annotatedHtml}`);
   try {
-    const plain = plainDom.window.document.querySelector<HTMLElement>(".rich-text");
-    const annotated = annotatedDom.window.document.querySelector<HTMLElement>(".rich-text");
+    const plain =
+      plainDom.window.document.querySelector<HTMLElement>(".rich-text");
+    const annotated =
+      annotatedDom.window.document.querySelector<HTMLElement>(".rich-text");
     assert.ok(plain);
     assert.ok(annotated);
     assert.deepEqual(
-      Array.from(annotated.querySelectorAll<HTMLElement>(".glossary-annotation"), (element) => element.textContent),
+      Array.from(
+        annotated.querySelectorAll<HTMLElement>(".glossary-annotation"),
+        (element) => element.textContent,
+      ),
       ["Session Runtime", "Runtime", "Runtime", "Runtime"],
     );
     assert.equal(annotated.querySelector("a .glossary-annotation"), null);
     assert.equal(annotated.querySelector("code .glossary-annotation"), null);
     assert.equal(annotated.textContent, plain.textContent);
     assert.equal(
-      createRenderedTextSearchIndex(annotated, isMessageRenderedSearchTextNode).normalizedText,
-      createRenderedTextSearchIndex(plain, isMessageRenderedSearchTextNode).normalizedText,
+      createRenderedTextSearchIndex(annotated, isMessageRenderedSearchTextNode)
+        .normalizedText,
+      createRenderedTextSearchIndex(plain, isMessageRenderedSearchTextNode)
+        .normalizedText,
     );
   } finally {
     plainDom.window.close();
@@ -163,8 +261,9 @@ test("MessageRichTextはMarkdown parse後の通常textだけを注釈し本文�
 // lifecycle = "permanent"
 // distinction = "通常textだけの注釈testと異なり実KaTeX変換後の数式と本文の境界を更新前後で確認する"
 // @end-test-value
+/** KaTeX で数式を描画し、初回も本文を追記した後も数式中の用語には注釈しないことを確認する。 */
 test("MessageRichTextは初回と本文追記で数式projectionを注釈対象にしない", async () => {
-  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
     url: "https://example.test/",
   });
@@ -176,32 +275,49 @@ test("MessageRichTextは初回と本文追記で数式projectionを注釈対象�
     assert.ok(container);
     root = createRoot(container);
     await act(async () => {
-      root?.render(React.createElement(MessageRichText, {
-        text: "$$Runtime$$\n\nRuntime",
-        glossaryAnnotationMatcher: matcher,
-        glossaryAnnotationScopeKey: "message-math",
-        onActivateGlossaryEntry: () => undefined,
-      }));
+      root?.render(
+        React.createElement(MessageRichText, {
+          text: "$$Runtime$$\n\nRuntime",
+          glossaryAnnotationMatcher: matcher,
+          glossaryAnnotationScopeKey: "message-math",
+          /** 初回は注釈の配置だけを確認し、用語を開かない。 */
+          onActivateGlossaryEntry: () => undefined,
+        }),
+      );
     });
 
     assert.ok(container.querySelector(".katex"));
     assert.deepEqual(
-      Array.from(container.querySelectorAll<HTMLElement>(".glossary-annotation"), (element) => element.textContent),
+      Array.from(
+        container.querySelectorAll<HTMLElement>(".glossary-annotation"),
+        (element) => element.textContent,
+      ),
       ["Runtime"],
     );
 
     await act(async () => {
-      root?.render(React.createElement(MessageRichText, {
-        text: "$$Runtime$$\n\nRuntime updated",
-        glossaryAnnotationMatcher: matcher,
-        glossaryAnnotationScopeKey: "message-math",
-        onActivateGlossaryEntry: () => undefined,
-      }));
+      root?.render(
+        React.createElement(MessageRichText, {
+          text: "$$Runtime$$\n\nRuntime updated",
+          glossaryAnnotationMatcher: matcher,
+          glossaryAnnotationScopeKey: "message-math",
+          /** 追記後も注釈の配置だけを確認し、用語を開かない。 */
+          onActivateGlossaryEntry: () => undefined,
+        }),
+      );
     });
 
-    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
+    assert.equal(
+      container
+        .querySelector("[data-markdown-render-mode]")
+        ?.getAttribute("data-markdown-render-mode"),
+      "full",
+    );
     assert.deepEqual(
-      Array.from(container.querySelectorAll<HTMLElement>(".glossary-annotation"), (element) => element.textContent),
+      Array.from(
+        container.querySelectorAll<HTMLElement>(".glossary-annotation"),
+        (element) => element.textContent,
+      ),
       ["Runtime"],
     );
   } finally {
@@ -213,8 +329,9 @@ test("MessageRichTextは初回と本文追記で数式projectionを注釈対象�
   }
 });
 
+/** 矢印で単一の Tab 停止位置を移し、Enter やクリックでは別名でなく正規用語を開くことと、定義がプレーンテキストで表示されることを確認する。 */
 test("MessageRichTextはmessage単位のroving focus、tooltip、canonical activationを提供する", async () => {
-  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
     url: "https://example.test/",
   });
@@ -227,59 +344,89 @@ test("MessageRichTextはmessage単位のroving focus、tooltip、canonical activ
     assert.ok(container);
     root = createRoot(container);
     await act(async () => {
-      root?.render(React.createElement(MessageRichText, {
-        text: "Runtime、Runtime、Runtime",
-        forceFullRender: true,
-        glossaryAnnotationMatcher: matcher,
-        glossaryAnnotationScopeKey: "message-1",
-        onActivateGlossaryEntry: (term) => activated.push(term),
-      }));
+      root?.render(
+        React.createElement(MessageRichText, {
+          text: "Runtime、Runtime、Runtime",
+          forceFullRender: true,
+          glossaryAnnotationMatcher: matcher,
+          glossaryAnnotationScopeKey: "message-1",
+          /** キーとクリックから受け取った用語を呼び出し順で記録する。 */
+          onActivateGlossaryEntry: (term) => activated.push(term),
+        }),
+      );
     });
-    const annotations = Array.from(container.querySelectorAll<HTMLElement>(".glossary-annotation"));
-    assert.deepEqual(annotations.map((element) => element.tabIndex), [0, -1, -1]);
+    const annotations = Array.from(
+      container.querySelectorAll<HTMLElement>(".glossary-annotation"),
+    );
+    assert.deepEqual(
+      annotations.map((element) => element.tabIndex),
+      [0, -1, -1],
+    );
 
     await act(async () => annotations[0]?.focus());
-    const tooltip = dom.window.document.body.querySelector<HTMLElement>("[role='tooltip']");
+    const tooltip =
+      dom.window.document.body.querySelector<HTMLElement>("[role='tooltip']");
     assert.ok(tooltip);
-    assert.equal(tooltip.textContent, "Session Runtime<strong>plain definition</strong>");
+    assert.equal(
+      tooltip.textContent,
+      "Session Runtime<strong>plain definition</strong>",
+    );
     assert.equal(tooltip.querySelector("strong"), null);
     assert.equal(container.contains(tooltip), false);
 
     await act(async () => {
-      annotations[0]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
-        key: "ArrowRight",
-        bubbles: true,
-        cancelable: true,
-      }));
+      annotations[0]?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
     assert.equal(dom.window.document.activeElement === annotations[1], true);
-    assert.deepEqual(annotations.map((element) => element.tabIndex), [-1, 0, -1]);
+    assert.deepEqual(
+      annotations.map((element) => element.tabIndex),
+      [-1, 0, -1],
+    );
 
     await act(async () => {
-      annotations[1]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
-        key: "Enter",
-        bubbles: true,
-        cancelable: true,
-      }));
+      annotations[1]?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
     assert.deepEqual(activated, ["Session Runtime"]);
 
-    const tabEvent = new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    const tabEvent = new dom.window.KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
     assert.equal(annotations[1]?.dispatchEvent(tabEvent), true);
     assert.equal(tabEvent.defaultPrevented, false);
 
     await act(async () => {
-      annotations[1]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
-        key: "Escape",
-        bubbles: true,
-        cancelable: true,
-      }));
+      annotations[1]?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
-    assert.equal(dom.window.document.body.querySelector("[role='tooltip']"), null);
+    assert.equal(
+      dom.window.document.body.querySelector("[role='tooltip']"),
+      null,
+    );
     assert.equal(dom.window.document.activeElement === annotations[1], true);
 
     await act(async () => {
-      annotations[2]?.dispatchEvent(new dom.window.MouseEvent("mouseenter", { bubbles: true }));
+      annotations[2]?.dispatchEvent(
+        new dom.window.MouseEvent("mouseenter", { bubbles: true }),
+      );
     });
     assert.deepEqual(activated, ["Session Runtime"]);
     await act(async () => annotations[2]?.click());
@@ -303,11 +450,16 @@ test("MessageRichTextはmessage単位のroving focus、tooltip、canonical activ
 // scope = "message glossary annotation tooltip layout"
 // lifecycle = "permanent"
 // @end-test-value
+/** スタイルシート上でツールチップの最大寸法と、ポインターやスクロールを引き受けない指定を照合する。 */
 test("glossary tooltipは非interactiveかつ360x240以内でscroll ownerを持たない", async () => {
   const styles = await readStylesheet();
-  const tooltipRule = styles.match(/\.glossary-annotation-tooltip\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const tooltipRule =
+    styles.match(/\.glossary-annotation-tooltip\s*{(?<body>[^}]*)}/)?.groups
+      ?.body ?? "";
   const definitionRules = Array.from(
-    styles.matchAll(/\.glossary-annotation-tooltip-definition\s*{(?<body>[^}]*)}/g),
+    styles.matchAll(
+      /\.glossary-annotation-tooltip-definition\s*{(?<body>[^}]*)}/g,
+    ),
     (match) => match.groups?.body ?? "",
   );
   const definitionRule = definitionRules.at(-1) ?? "";

@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ChildProcess, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import {
+  ChildProcess,
+  spawn,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
 import { PassThrough, Writable } from "node:stream";
-import { CodexAppServerTransport, CodexAppServerRpcError, type CodexProtocolEvent } from "../../src-electron/providers/codex/app-server-transport.js";
+import {
+  CodexAppServerTransport,
+  CodexAppServerRpcError,
+  type CodexProtocolEvent,
+} from "../../src-electron/providers/codex/app-server-transport.js";
 import { spawnOwnedProviderProcess as spawnOwnedCodexProcess } from "../../src-electron/providers/owned-process.js";
 
 const fixture = `
@@ -35,9 +43,13 @@ createInterface({ input: process.stdin }).on('line', line => {
 });
 setInterval(() => {}, 1000);
 `;
+/** Node実行ファイル上で合成app-serverを起動するstdioトランスポートを作る。 */
 function transport(): CodexAppServerTransport {
-  return new CodexAppServerTransport({ executable: process.execPath,
-    arguments: ["--input-type=module", "-e", fixture], clientInfo: { name: "withmate-test", version: "1" } });
+  return new CodexAppServerTransport({
+    executable: process.execPath,
+    arguments: ["--input-type=module", "-e", fixture],
+    clientInfo: { name: "withmate-test", version: "1" },
+  });
 }
 
 // @test-value v2
@@ -52,6 +64,7 @@ function transport(): CodexAppServerTransport {
 // impact = "turn開始応答と通知の順序でセッションが混線する"
 // distinction = "型検査では実processのJSONL順序や相関を検証できない;短いローカルprocessのみ使用"
 // @end-test-value
+/** 初期化後に通知が先着し応答順も逆転しても、RPCは要求IDで照合され、日本語通知はイベントとして届く。 */
 test("stdio initializes and correlates concurrent requests with early notifications", async () => {
   const sut = transport();
   try {
@@ -60,8 +73,14 @@ test("stdio initializes and correlates concurrent requests with early notificati
     const fast = sut.request("echo", { delay: 0, label: "fast" });
     assert.deepEqual(await fast, { delay: 0, label: "fast" });
     assert.deepEqual(await slow, { delay: 40, label: "slow" });
-    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "early", params: { text: "日本語" } });
-  } finally { await sut.close(); }
+    assert.deepEqual(await sut.nextEvent(), {
+      kind: "notification",
+      method: "early",
+      params: { text: "日本語" },
+    });
+  } finally {
+    await sut.close();
+  }
   assert.equal(sut.state, "closed");
 });
 
@@ -77,6 +96,7 @@ test("stdio initializes and correlates concurrent requests with early notificati
 // impact = "approval結果がサーバへ届かず処理が停止する"
 // distinction = "実processへの往復応答と一回性は型検査で確認できない"
 // @end-test-value
+/** サーバー要求へ二重応答できず、別のRPCの失敗はエラーコードとデータ付きで呼び出し元へ届く。 */
 test("server responses are one-shot and RPC errors preserve details", async () => {
   const sut = transport();
   try {
@@ -86,11 +106,26 @@ test("server responses are one-shot and RPC errors preserve details", async () =
     assert.equal(event.kind, "serverRequest");
     if (event.kind !== "serverRequest") throw new Error("Expected request");
     await event.respond({ decision: "accept" });
-    await assert.rejects(event.respond({ decision: "accept" }), /already resolved/);
-    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "answered", params: { decision: "accept" } });
-    await assert.rejects(sut.request("rpcError"), error => error instanceof CodexAppServerRpcError
-      && error.code === -32001 && error.message === "denied" && JSON.stringify(error.data) === '{"reason":"policy"}');
-  } finally { await sut.close(); }
+    await assert.rejects(
+      event.respond({ decision: "accept" }),
+      /already resolved/,
+    );
+    assert.deepEqual(await sut.nextEvent(), {
+      kind: "notification",
+      method: "answered",
+      params: { decision: "accept" },
+    });
+    await assert.rejects(
+      sut.request("rpcError"),
+      (error) =>
+        error instanceof CodexAppServerRpcError &&
+        error.code === -32001 &&
+        error.message === "denied" &&
+        JSON.stringify(error.data) === '{"reason":"policy"}',
+    );
+  } finally {
+    await sut.close();
+  }
 });
 
 // @test-value v2
@@ -105,17 +140,30 @@ test("server responses are one-shot and RPC errors preserve details", async () =
 // impact = "キャンセル後のセッション操作が停止または混線する"
 // distinction = "非同期のabortと遅延wire response競合は型やbuildでは検出できない"
 // @end-test-value
+/** 中止と期限切れで待機を終了し、それらの遅延応答を次のecho要求へ誤対応させない。 */
 test("abort and timeout settle callers without miscorrelating late responses", async () => {
   const sut = transport();
   try {
     await sut.start();
     const abort = new AbortController();
-    const request = sut.request("echo", { delay: 20 }, { signal: abort.signal });
+    const request = sut.request(
+      "echo",
+      { delay: 20 },
+      { signal: abort.signal },
+    );
     abort.abort();
     await assert.rejects(request, { name: "AbortError" });
-    await assert.rejects(sut.request("echo", { delay: 20 }, { timeoutMs: 1 }), /timed out/);
-    assert.deepEqual(await sut.request("echo", { delay: 40, label: "next" }), { delay: 40, label: "next" });
-  } finally { await sut.close(); }
+    await assert.rejects(
+      sut.request("echo", { delay: 20 }, { timeoutMs: 1 }),
+      /timed out/,
+    );
+    assert.deepEqual(await sut.request("echo", { delay: 40, label: "next" }), {
+      delay: 40,
+      label: "next",
+    });
+  } finally {
+    await sut.close();
+  }
 });
 
 // @test-value v2
@@ -130,6 +178,7 @@ test("abort and timeout settle callers without miscorrelating late responses", a
 // impact = "壊れたCLI通信を実行成功と誤認する、またはturnが停止する"
 // distinction = "実stdout streamの終了はschema/type検査では確認できない"
 // @end-test-value
+/** stdoutが不正JSONまたは途中で切れたフレームを含む場合、待機中の要求とイベント消費をどちらも失敗させる。 */
 test("malformed and truncated stdout fail requests and event consumers", async () => {
   for (const method of ["malformed", "partial"]) {
     const sut = transport();
@@ -140,7 +189,9 @@ test("malformed and truncated stdout fail requests and event consumers", async (
         assert.rejects(sut.request(method), /stdout|process exited/),
         assert.rejects(event, /stdout|process exited/),
       ]);
-    } finally { await sut.close(); }
+    } finally {
+      await sut.close();
+    }
   }
 });
 
@@ -156,6 +207,7 @@ test("malformed and truncated stdout fail requests and event consumers", async (
 // impact = "session停止後もCLI実行processが残留する"
 // distinction = "実OSのprocess tree終了を静的検査では確認できない;所有fixture processのみ使用"
 // @end-test-value
+/** closeで子孫プロセスも終了させ、保留中の要求とイベント待ちを拒否する。 */
 test("close terminates owned descendants and settles pending consumers", async () => {
   const sut = transport();
   try {
@@ -166,7 +218,9 @@ test("close terminates owned descendants and settles pending consumers", async (
     await sut.close();
     await Promise.all([pending, event]);
     assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
-  } finally { await sut.close(); }
+  } finally {
+    await sut.close();
+  }
 });
 
 // @test-value v2
@@ -181,6 +235,7 @@ test("close terminates owned descendants and settles pending consumers", async (
 // impact = "異常終了したCLIの子孫が次turnと同じworkspaceで競合する"
 // distinction = "active rootのclose testはroot不在時のcleanupを担わない;短い実process検証"
 // @end-test-value
+/** ルートが先に自然終了しても、イベント待ちに切断を返し、明示closeに頼らず子プロセスを終了させる。 */
 test("unexpected root exit cleans descendants without relying on a live root PID", async () => {
   const sut = transport();
   let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -191,11 +246,18 @@ test("unexpected root exit cleans descendants without relying on a live root PID
     await Promise.race([
       sut.whenClosed(),
       new Promise<never>((_resolve, reject) => {
-        watchdog = setTimeout(() => reject(new Error("Automatic descendant cleanup did not finish")), 5_000);
+        watchdog = setTimeout(
+          () =>
+            reject(new Error("Automatic descendant cleanup did not finish")),
+          5_000,
+        );
       }),
     ]);
     assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
-  } finally { clearTimeout(watchdog); await sut.close(); }
+  } finally {
+    clearTimeout(watchdog);
+    await sut.close();
+  }
 });
 
 // @test-value v2
@@ -210,44 +272,94 @@ test("unexpected root exit cleans descendants without relying on a live root PID
 // impact = "所有できないCLI子孫が停止後もworkspaceへアクセスする"
 // distinction = "実OSの成功系ではJob作成拒否の起動境界を確認できない"
 // @end-test-value
+/** WindowsのJob取得に失敗したら、所有権なしのプロセスを起動せずエラーにする。 */
 test("Windows ownership acquisition failure does not launch an unowned process", () => {
   let launched = false;
-  const forbiddenSpawn = (() => { launched = true; throw new Error("Unexpected spawn"); }) as typeof spawn;
-  assert.throws(() => spawnOwnedCodexProcess({ executable: process.execPath, arguments: [] }, {
-    platform: "win32", spawnProcess: forbiddenSpawn,
-    createJobObject: () => { throw new Error("Job unavailable"); },
-  }), /Job unavailable/);
+  const forbiddenSpawn = (() => {
+    launched = true;
+    throw new Error("Unexpected spawn");
+  }) as typeof spawn;
+  assert.throws(
+    () =>
+      spawnOwnedCodexProcess(
+        { executable: process.execPath, arguments: [] },
+        {
+          platform: "win32",
+          spawnProcess: forbiddenSpawn,
+          /** 所有権の取得そのものが失敗するWindows Jobの動作を再現する。 */
+          createJobObject: () => {
+            throw new Error("Job unavailable");
+          },
+        },
+      ),
+    /Job unavailable/,
+  );
   assert.equal(launched, false);
 });
 
-function cleanupFaultTransport(fault: "terminate" | "exit" | "release" | "none") {
+/** 合成stdioと所有プロセスを使い、終了・exit待ち・解放それぞれの失敗を独立して注入できるようにする。 */
+function cleanupFaultTransport(
+  fault: "terminate" | "exit" | "release" | "none",
+) {
   const child = new ChildProcess();
   const stdout = new PassThrough();
   const stderr = new PassThrough();
-  const stdin = new Writable({ write(chunk, _encoding, callback) {
-    const request = JSON.parse(String(chunk)) as { id?: number; method: string };
-    if (request.method === "initialize") stdout.write(`${JSON.stringify({ id: request.id,
-      result: { userAgent: "fixture", codexHome: process.cwd(), platformFamily: "fixture", platformOs: "fixture" } })}\n`);
-    callback();
-  } });
+  const stdin = new Writable({
+    /** stdioに書かれた要求を読み取り、初期化と試験用のRPCへの応答を合成する。 */
+    write(chunk, _encoding, callback) {
+      const request = JSON.parse(String(chunk)) as {
+        id?: number;
+        method: string;
+      };
+      if (request.method === "initialize")
+        stdout.write(
+          `${JSON.stringify({
+            id: request.id,
+            result: {
+              userAgent: "fixture",
+              codexHome: process.cwd(),
+              platformFamily: "fixture",
+              platformOs: "fixture",
+            },
+          })}\n`,
+        );
+      callback();
+    },
+  });
   child.stdin = stdin;
   child.stdout = stdout;
   child.stderr = stderr;
   const calls = { terminate: 0, release: 0 };
-  const sut = new CodexAppServerTransport({ executable: "owned-fixture", clientInfo: { name: "test", version: "1" }, closeTimeoutMs: fault === "none" ? 1000 : 10 }, {
-    spawnOwnedProcess: () => ({ child: child as ChildProcessWithoutNullStreams, ready: Promise.resolve(),
-      terminate() {
-        calls.terminate++;
-        if (fault === "terminate") throw new Error("Injected terminate failure");
-        if (fault === "release") setImmediate(() => child.emit("close", 0, null));
-      },
-      release() {
-        calls.release++;
-        if (fault === "release" && calls.release === 1) throw new Error("Injected release failure");
-        if (fault !== "exit") setImmediate(() => child.emit("close", 0, null));
-      },
-    }),
-  });
+  const sut = new CodexAppServerTransport(
+    {
+      executable: "owned-fixture",
+      clientInfo: { name: "test", version: "1" },
+      closeTimeoutMs: fault === "none" ? 1000 : 10,
+    },
+    {
+      /** 実プロセスを使わずに終了・所有権解放を観測できる所有プロセスを返す。 */
+      spawnOwnedProcess: () => ({
+        child: child as ChildProcessWithoutNullStreams,
+        ready: Promise.resolve(),
+        /** 終了要求を数え、指定した失敗を投げるか、ケースに応じてcloseをエミュレートする。 */
+        terminate() {
+          calls.terminate++;
+          if (fault === "terminate")
+            throw new Error("Injected terminate failure");
+          if (fault === "release")
+            setImmediate(() => child.emit("close", 0, null));
+        },
+        /** 解放要求を数え、解放失敗シナリオでは初回だけ例外を返す。 */
+        release() {
+          calls.release++;
+          if (fault === "release" && calls.release === 1)
+            throw new Error("Injected release failure");
+          if (fault !== "exit")
+            setImmediate(() => child.emit("close", 0, null));
+        },
+      }),
+    },
+  );
   return { sut, calls, child, stdout, streams: [stdin, stdout, stderr] };
 }
 
@@ -263,35 +375,74 @@ function cleanupFaultTransport(fault: "terminate" | "exit" | "release" | "none")
 // impact = "通常turnの本文・承認・質問・完了が欠落して中断することを防ぐ"
 // distinction = "既存相関testは小さいburstの滞留を確認しない;短いin-memory streamで全件と制御イベントを確認する"
 // @end-test-value
+/** 8,192件の小さな通知が未消費でもRPCを完了し、通知の順序と後続の承認・質問・完了を保つ。 */
 test("notification bursts preserve order, control events and RPC responses", async () => {
   const { sut, stdout } = cleanupFaultTransport("none");
   const count = 8192;
-  const params = (index: number) => ({ itemId: "answer", delta: `${index}:${"日本語".repeat(12)}` });
+  /** 受信時に各通知の順序とマルチバイト本文を照合できる連番付きデータを作る。 */
+  const params = (index: number) => ({
+    itemId: "answer",
+    delta: `${index}:${"日本語".repeat(12)}`,
+  });
   const controls = [
-    { id: 77, method: "item/commandExecution/requestApproval", params: { command: "echo" } },
-    { id: "question", method: "item/tool/requestUserInput", params: { questions: [] } },
+    {
+      id: 77,
+      method: "item/commandExecution/requestApproval",
+      params: { command: "echo" },
+    },
+    {
+      id: "question",
+      method: "item/tool/requestUserInput",
+      params: { questions: [] },
+    },
   ];
-  const terminal = { method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } };
+  const terminal = {
+    method: "turn/completed",
+    params: { turn: { id: "turn", status: "completed" } },
+  };
   try {
     await sut.start();
     const response = sut.request("never");
-    const frames = Array.from({ length: count }, (_, index) => ({ method: "item/agentMessage/delta", params: params(index) }));
-    stdout.write([...frames, ...controls, terminal, { id: 2, result: "ack" }].map(frame => JSON.stringify(frame) + "\n").join(""));
+    const frames = Array.from({ length: count }, (_, index) => ({
+      method: "item/agentMessage/delta",
+      params: params(index),
+    }));
+    stdout.write(
+      [...frames, ...controls, terminal, { id: 2, result: "ack" }]
+        .map((frame) => JSON.stringify(frame) + "\n")
+        .join(""),
+    );
     assert.equal(await response, "ack");
     assert.equal(sut.state, "ready");
     for (let index = 0; index < count; index++) {
-      assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "item/agentMessage/delta", params: params(index) });
+      assert.deepEqual(await sut.nextEvent(), {
+        kind: "notification",
+        method: "item/agentMessage/delta",
+        params: params(index),
+      });
     }
     for (const control of controls) {
       const event = await sut.nextEvent();
       assert.equal(event.kind, "serverRequest");
-      if (event.kind !== "serverRequest") throw new Error("Expected server request");
-      assert.deepEqual({ id: event.id, method: event.method, params: event.params }, control);
+      if (event.kind !== "serverRequest")
+        throw new Error("Expected server request");
+      assert.deepEqual(
+        { id: event.id, method: event.method, params: event.params },
+        control,
+      );
       await event.respond({ accepted: true });
-      await assert.rejects(event.respond({ accepted: true }), /already resolved/);
+      await assert.rejects(
+        event.respond({ accepted: true }),
+        /already resolved/,
+      );
     }
-    assert.deepEqual(await sut.nextEvent(), { kind: "notification", ...terminal });
-  } finally { await sut.close(); }
+    assert.deepEqual(await sut.nextEvent(), {
+      kind: "notification",
+      ...terminal,
+    });
+  } finally {
+    await sut.close();
+  }
 });
 
 // @test-value v2
@@ -306,24 +457,53 @@ test("notification bursts preserve order, control events and RPC responses", asy
 // impact = "長いツール結果や集中した出力を人工的な容量超過で失わない"
 // distinction = "小delta burstでは単一frameと合計容量の境界を通らない;実プロトコルで36 MiBの受信本文を使用する"
 // @end-test-value
+/** 大きな正常フレームが複数滞留してもRPCは待たされず、通知と終端を到着順に取得できる。 */
 test("large valid frames drain in order without blocking RPC or terminal", async () => {
   const { sut, stdout } = cleanupFaultTransport("none");
   const delta = "日".repeat(6 * 1024 * 1024);
-  const frame = JSON.stringify({ method: "item/agentMessage/delta", params: { delta } });
+  const frame = JSON.stringify({
+    method: "item/agentMessage/delta",
+    params: { delta },
+  });
   try {
     await sut.start();
     const response = sut.request("never", { delta });
     for (let index = 0; index < 2; index++) stdout.write(frame + "\n");
     stdout.write(JSON.stringify({ id: 2, result: "ack" }) + "\n");
     assert.equal(await response, "ack");
-    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "item/agentMessage/delta", params: { delta } });
-    stdout.write(JSON.stringify({ method: "extra", params: { index: 2 } }) + "\n");
-    stdout.write(JSON.stringify({ method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } }) + "\n");
+    assert.deepEqual(await sut.nextEvent(), {
+      kind: "notification",
+      method: "item/agentMessage/delta",
+      params: { delta },
+    });
+    stdout.write(
+      JSON.stringify({ method: "extra", params: { index: 2 } }) + "\n",
+    );
+    stdout.write(
+      JSON.stringify({
+        method: "turn/completed",
+        params: { turn: { id: "turn", status: "completed" } },
+      }) + "\n",
+    );
     assert.equal(sut.state, "ready");
-    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "item/agentMessage/delta", params: { delta } });
-    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "extra", params: { index: 2 } });
-    assert.deepEqual(await sut.nextEvent(), { kind: "notification", method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } });
-  } finally { await sut.close(); }
+    assert.deepEqual(await sut.nextEvent(), {
+      kind: "notification",
+      method: "item/agentMessage/delta",
+      params: { delta },
+    });
+    assert.deepEqual(await sut.nextEvent(), {
+      kind: "notification",
+      method: "extra",
+      params: { index: 2 },
+    });
+    assert.deepEqual(await sut.nextEvent(), {
+      kind: "notification",
+      method: "turn/completed",
+      params: { turn: { id: "turn", status: "completed" } },
+    });
+  } finally {
+    await sut.close();
+  }
 });
 
 // @test-value v2
@@ -338,21 +518,43 @@ test("large valid frames drain in order without blocking RPC or terminal", async
 // impact = "providerが既に完了したturnを失敗へ変更し最終itemを失う"
 // distinction = "既存切断testは通知の消費待ちとの競合を作らない;in-memory streamでEOFとexitを決定論的に再現する"
 // @end-test-value
+/** EOFやプロセス終了でRPCを失敗させても、先に受信したイベントは破棄せず順に取り出せる。 */
 test("received events drain in order before EOF or exit rejects event consumers", async () => {
   for (const disconnect of ["eof", "exit"]) {
     for (const completed of [false, true]) {
       const { sut, child, stdout } = cleanupFaultTransport("exit");
       await sut.start();
-      const pending = assert.rejects(sut.request("never"), /stdout disconnected|process exited/);
-      const events: CodexProtocolEvent[] = [{ kind: "notification", method: "item/completed", params: { item: { id: "final-item" } } }];
-      if (completed) events.push({ kind: "notification", method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } });
-      for (const event of events) stdout.write(`${JSON.stringify({ method: event.method, params: event.params })}\n`);
+      const pending = assert.rejects(
+        sut.request("never"),
+        /stdout disconnected|process exited/,
+      );
+      const events: CodexProtocolEvent[] = [
+        {
+          kind: "notification",
+          method: "item/completed",
+          params: { item: { id: "final-item" } },
+        },
+      ];
+      if (completed)
+        events.push({
+          kind: "notification",
+          method: "turn/completed",
+          params: { turn: { id: "turn", status: "completed" } },
+        });
+      for (const event of events)
+        stdout.write(
+          `${JSON.stringify({ method: event.method, params: event.params })}\n`,
+        );
       if (disconnect === "eof") stdout.end();
       else child.emit("exit", 0, null);
       await pending;
       child.emit("close", 0, null);
-      for (const event of events) assert.deepEqual(await sut.nextEvent(), event);
-      await assert.rejects(sut.nextEvent(), /stdout disconnected|process exited/);
+      for (const event of events)
+        assert.deepEqual(await sut.nextEvent(), event);
+      await assert.rejects(
+        sut.nextEvent(),
+        /stdout disconnected|process exited/,
+      );
       await sut.close();
       await sut.whenClosed();
     }
@@ -371,18 +573,28 @@ test("received events drain in order before EOF or exit rejects event consumers"
 // impact = "OS終了API失敗時にresourceが残留する、または未終了processと次turnが競合する"
 // distinction = "成功系の実OS testでは終了API例外後のresource解放を確認できない;小さい所有境界fixtureで検出"
 // @end-test-value
+/** 終了処理の例外後も所有権とストリームの解放を試み、closeや終了確認を成功扱いにしない。 */
 test("terminate failure still releases ownership and streams while reporting failure", async () => {
   const { sut, calls, streams } = cleanupFaultTransport("terminate");
   await sut.start();
   let confirmedClosed = false;
-  void sut.whenClosed().then(() => { confirmedClosed = true; });
-  await assert.rejects(sut.close(), error => error instanceof AggregateError && error.errors.some((cause: Error) => cause.message === "Injected terminate failure"));
+  void sut.whenClosed().then(() => {
+    confirmedClosed = true;
+  });
+  await assert.rejects(
+    sut.close(),
+    (error) =>
+      error instanceof AggregateError &&
+      error.errors.some(
+        (cause: Error) => cause.message === "Injected terminate failure",
+      ),
+  );
   assert.deepEqual(calls, { terminate: 1, release: 1 });
-  assert.ok(streams.every(stream => stream.destroyed));
+  assert.ok(streams.every((stream) => stream.destroyed));
   assert.equal(sut.state, "failed");
   await assert.rejects(sut.close(), /cleanup failed/);
   assert.deepEqual(calls, { terminate: 1, release: 1 });
-  await new Promise<void>(resolve => setImmediate(resolve));
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(confirmedClosed, false);
 });
 
@@ -398,14 +610,22 @@ test("terminate failure still releases ownership and streams while reporting fai
 // impact = "終了待ち失敗でresourceが残る、次turnが未終了processと競合する、または終了後も再送を拒否する"
 // distinction = "実OS成功系はprocess-close通知欠落を発生させない;10ms deadlineの小さいfixtureを使用"
 // @end-test-value
+/** exit待ちが期限切れでも解放を済ませてエラーを返し、遅れてcloseが来るまで終了確認は保留する。 */
 test("exit timeout releases ownership and streams and remains a cleanup failure", async () => {
   const { sut, calls, child, streams } = cleanupFaultTransport("exit");
   await sut.start();
   let confirmedClosed = false;
-  void sut.whenClosed().then(() => { confirmedClosed = true; });
-  await assert.rejects(sut.close(), error => error instanceof AggregateError && error.errors.some((cause: Error) => /timed out/.test(cause.message)));
+  void sut.whenClosed().then(() => {
+    confirmedClosed = true;
+  });
+  await assert.rejects(
+    sut.close(),
+    (error) =>
+      error instanceof AggregateError &&
+      error.errors.some((cause: Error) => /timed out/.test(cause.message)),
+  );
   assert.deepEqual(calls, { terminate: 1, release: 1 });
-  assert.ok(streams.every(stream => stream.destroyed));
+  assert.ok(streams.every((stream) => stream.destroyed));
   assert.equal(sut.state, "failed");
   assert.equal(confirmedClosed, false);
   child.emit("close", 0, null);
@@ -426,13 +646,22 @@ test("exit timeout releases ownership and streams and remains a cleanup failure"
 // impact = "一時的なCloseHandle失敗後にresourceが残る、または未解放processと次turnが競合し終了後も再送不能になる"
 // distinction = "terminate/timeout fixtureとは異なるnative handleの保持・明示再解放を確認する"
 // @end-test-value
+/** 所有権を解放できなければエラーにし、明示的にcloseをやり直して解放できた時点で終了を確認する。 */
 test("release failure is reported and an explicitly repeated close releases the retained owner", async () => {
   const { sut, calls, streams } = cleanupFaultTransport("release");
   await sut.start();
   let confirmedClosed = false;
-  void sut.whenClosed().then(() => { confirmedClosed = true; });
-  await assert.rejects(sut.close(), error => error instanceof AggregateError && error.errors.length === 1 && error.errors[0].message === "Injected release failure");
-  assert.ok(streams.every(stream => stream.destroyed));
+  void sut.whenClosed().then(() => {
+    confirmedClosed = true;
+  });
+  await assert.rejects(
+    sut.close(),
+    (error) =>
+      error instanceof AggregateError &&
+      error.errors.length === 1 &&
+      error.errors[0].message === "Injected release failure",
+  );
+  assert.ok(streams.every((stream) => stream.destroyed));
   assert.equal(sut.state, "failed");
   assert.equal(confirmedClosed, false);
   await sut.close();

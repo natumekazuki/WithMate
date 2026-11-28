@@ -1,6 +1,12 @@
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
-import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
-import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type {
+  ModelCatalogProvider,
+  ModelCatalogSnapshot,
+} from "../../src-shared/settings/model-catalog.js";
+import {
+  getProviderAppSettings,
+  type AppSettings,
+} from "../../src-shared/settings/provider-settings-state.js";
 import type { OpenSessionWindowIdsLoadStatus } from "../app/open-session-window-subscription.js";
 import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
@@ -17,8 +23,12 @@ import {
 } from "./home-launch-workspace.js";
 
 export { inferWorkspaceFromPath } from "./home-launch-workspace.js";
-export type { LaunchWorkspace, LaunchWorkspaceSelection } from "./home-launch-workspace.js";
+export type {
+  LaunchWorkspace,
+  LaunchWorkspaceSelection,
+} from "./home-launch-workspace.js";
 
+/** 起動フォームの有効な Provider と Character の候補、選択と取得の状態、および開始可否。 */
 export type HomeLaunchProjection = {
   enabledLaunchProviders: ModelCatalogProvider[];
   providerLoadStatus: ProviderLaunchLoadStatus;
@@ -38,6 +48,7 @@ export type HomeLaunchProjection = {
   canStartSession: boolean;
 };
 
+/** 入力と取得済みデータから候補と開始可否を計算する。ランダム選択では履歴とウィンドウ一覧も必要とする。 */
 export function buildHomeLaunchProjection({
   launchProviderId,
   launchTitle,
@@ -78,20 +89,36 @@ export function buildHomeLaunchProjection({
   const enabledLaunchProviders = (modelCatalog?.providers ?? []).filter(
     (provider) => getProviderAppSettings(appSettings, provider.id).enabled,
   );
-  const selectedLaunchProviderId = resolveSelectedLaunchProviderId(enabledLaunchProviders, launchProviderId);
-  const selectedLaunchProvider =
-    enabledLaunchProviders.find((provider) => provider.id === selectedLaunchProviderId) ?? null;
-  const activeCharacterEntries = characterEntries.filter((character) => character.state === "active");
-  const selectedCharacterId = resolveLaunchCharacterId(activeCharacterEntries, launchCharacterId);
-  const selectedCharacter = launchCharacterSelectionMode === "random"
-    ? null
-    : activeCharacterEntries.find((character) => character.id === selectedCharacterId) ?? null;
-  const validCharacterSelection = launchCharacterSelectionMode === "random" || selectedCharacter !== null;
-  const randomSelectionReady = launchCharacterSelectionMode !== "random" || (
-    sessionCharacterUsageLoadStatus === "loaded" && openSessionWindowIdsLoadStatus === "loaded"
+  const selectedLaunchProviderId = resolveSelectedLaunchProviderId(
+    enabledLaunchProviders,
+    launchProviderId,
   );
+  const selectedLaunchProvider =
+    enabledLaunchProviders.find(
+      (provider) => provider.id === selectedLaunchProviderId,
+    ) ?? null;
+  const activeCharacterEntries = characterEntries.filter(
+    (character) => character.state === "active",
+  );
+  const selectedCharacterId = resolveLaunchCharacterId(
+    activeCharacterEntries,
+    launchCharacterId,
+  );
+  const selectedCharacter =
+    launchCharacterSelectionMode === "random"
+      ? null
+      : (activeCharacterEntries.find(
+          (character) => character.id === selectedCharacterId,
+        ) ?? null);
+  const validCharacterSelection =
+    launchCharacterSelectionMode === "random" || selectedCharacter !== null;
+  const randomSelectionReady =
+    launchCharacterSelectionMode !== "random" ||
+    (sessionCharacterUsageLoadStatus === "loaded" &&
+      openSessionWindowIdsLoadStatus === "loaded");
   const sessionFolderSelected = isSessionFolderLaunchWorkspace(launchWorkspace);
-  const resolvedCharacterLoadStatus = characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
+  const resolvedCharacterLoadStatus =
+    characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
   const resolvedProviderLoadStatus = providerLoadStatus ?? "loaded";
 
   return {
@@ -106,7 +133,7 @@ export function buildHomeLaunchProjection({
     characterLoadStatus: resolvedCharacterLoadStatus,
     launchWorkspacePathLabel: sessionFolderSelected
       ? "Session Folder"
-      : launchWorkspace?.path ?? "workspace",
+      : (launchWorkspace?.path ?? "workspace"),
     workspacePathInput,
     workspaceValidation,
     workspaceValidationMessage,

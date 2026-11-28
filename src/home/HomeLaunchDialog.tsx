@@ -1,10 +1,16 @@
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { focusRovingItemByKey, useDialogA11y } from "../ui/a11y.js";
-import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
+import {
+  LaunchDialogFooter,
+  LaunchDialogShell,
+} from "../launch/launch-dialog-shell.js";
 import { DirectoryPathField } from "../launch/directory-path-field.js";
 import type { DirectoryPathValidationState } from "../launch/directory-path-validation.js";
-import { ProviderLaunchField, type ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
+import {
+  ProviderLaunchField,
+  type ProviderLaunchLoadStatus,
+} from "../launch/provider-launch-picker.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
@@ -14,6 +20,7 @@ import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import { ErrorDetailsButton } from "../ui/error-details.js";
 import type { resolveRandomHomeLaunchReadiness } from "./home-launch-actions.js";
 
+/** 起動の下書きと候補の取得状態、結果確認用の通知、および所有元で実行する入力・開始操作。 */
 export type HomeLaunchDialogProps = {
   open: boolean;
   title: string;
@@ -48,6 +55,7 @@ export type HomeLaunchDialogProps = {
   onStartSession: () => void;
 };
 
+/** Session の起動条件を入力するモーダル。候補未取得、検証中、作成結果不明を別々に表示する。 */
 export function HomeLaunchDialog({
   open,
   title,
@@ -97,10 +105,17 @@ export function HomeLaunchDialog({
     return null;
   }
 
-  const resolvedCharacterLoadStatus = characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
+  const resolvedCharacterLoadStatus =
+    characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
   const providerLoadReady = providerLoadStatus === "loaded";
-  const readiness = !launchStarting && !launchCreationError && !launchFeedback
-    && providerLoadReady && resolvedCharacterLoadStatus === "loaded" ? randomLaunchReadiness : null;
+  const readiness =
+    !launchStarting &&
+    !launchCreationError &&
+    !launchFeedback &&
+    providerLoadReady &&
+    resolvedCharacterLoadStatus === "loaded"
+      ? randomLaunchReadiness
+      : null;
 
   return (
     <LaunchDialogShell
@@ -113,22 +128,42 @@ export function HomeLaunchDialog({
       dialogClassName="home-launch-dialog"
       footer={
         <>
-          <div className="home-launch-feedback" aria-busy={readiness?.kind === "loading" || undefined}>
-            {!launchStarting && (launchCreationError
-              ? <div className="home-launch-error" key={launchCreationError}>
-                  <ErrorDetailsButton message={launchCreationError} label="Session Creation Error Details" />
-                  <span role="alert">Check Recent Sessions before trying again.</span>
+          <div
+            className="home-launch-feedback"
+            aria-busy={readiness?.kind === "loading" || undefined}
+          >
+            {!launchStarting &&
+              (launchCreationError ? (
+                <div className="home-launch-error" key={launchCreationError}>
+                  <ErrorDetailsButton
+                    message={launchCreationError}
+                    label="Session Creation Error Details"
+                  />
+                  <span role="alert">
+                    Check Recent Sessions before trying again.
+                  </span>
                 </div>
-              : launchFeedback ? <p className="launch-feedback" role="status">{launchFeedback}</p>
-              : readiness?.kind === "error" ? <p className="launch-feedback" role="alert">{readiness.message}</p>
-              : readiness?.kind === "loading" ? <LoadingIndicator label={readiness.message} inline />
-              : null)}
+              ) : launchFeedback ? (
+                <p className="launch-feedback" role="status">
+                  {launchFeedback}
+                </p>
+              ) : readiness?.kind === "error" ? (
+                <p className="launch-feedback" role="alert">
+                  {readiness.message}
+                </p>
+              ) : readiness?.kind === "loading" ? (
+                <LoadingIndicator label={readiness.message} inline />
+              ) : null)}
           </div>
           <LaunchDialogFooter
             feedback=""
             startButtonLabel={startLabel}
-            startButtonDisabled={!canStartSession || !providerLoadReady || launchStarting}
-            startButtonAriaDisabled={!canStartSession || !providerLoadReady || launchStarting}
+            startButtonDisabled={
+              !canStartSession || !providerLoadReady || launchStarting
+            }
+            startButtonAriaDisabled={
+              !canStartSession || !providerLoadReady || launchStarting
+            }
             startButtonBusy={launchStarting}
             startButtonLoadingText="Starting session"
             cancelButtonLabel="Cancel"
@@ -140,13 +175,21 @@ export function HomeLaunchDialog({
     >
       <section className="launch-section minimal">
         <div className="launch-field">
-          <label className="launch-field-label" htmlFor="launch-session-role">Role</label>
+          <label className="launch-field-label" htmlFor="launch-session-role">
+            Role
+          </label>
           <select
             id="launch-session-role"
             className="launch-field-input"
             value={sessionRole}
             disabled={launchStarting}
-            onChange={(event) => onSelectRole(event.target.value === "overall-coordinator" ? "overall-coordinator" : "standalone")}
+            onChange={(event) =>
+              onSelectRole(
+                event.target.value === "overall-coordinator"
+                  ? "overall-coordinator"
+                  : "standalone",
+              )
+            }
           >
             <option value="standalone">Standalone</option>
             <option value="overall-coordinator">Overall Coordinator</option>
@@ -182,7 +225,11 @@ export function HomeLaunchDialog({
           onChange={onChangeWorkspacePath}
         />
         <div className="section-head compact-actions workspace-picker-actions">
-          <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
+          <button
+            className="browse-button"
+            type="button"
+            onClick={onBrowseWorkspace}
+          >
             Browse
           </button>
           <button
@@ -214,7 +261,9 @@ export function HomeLaunchDialog({
             </div>
           ) : resolvedCharacterLoadStatus === "error" ? (
             <div className="launch-character-neutral" role="status">
-              <span className="character-avatar tiny" aria-hidden="true">W</span>
+              <span className="character-avatar tiny" aria-hidden="true">
+                W
+              </span>
               <div className="launch-character-copy">
                 <strong>Unavailable</strong>
                 <span>Could not load characters.</span>
@@ -222,7 +271,9 @@ export function HomeLaunchDialog({
             </div>
           ) : characterOptions.length === 0 ? (
             <div className="launch-character-neutral">
-              <span className="character-avatar tiny" aria-hidden="true">W</span>
+              <span className="character-avatar tiny" aria-hidden="true">
+                W
+              </span>
               <div className="launch-character-copy">
                 <strong>WithMate</strong>
                 <span>Neutral</span>
@@ -234,7 +285,10 @@ export function HomeLaunchDialog({
               role="radiogroup"
               aria-label="Character"
               onKeyDown={(event) => {
-                focusRovingItemByKey(event, { orientation: "vertical", activateOnFocus: true });
+                focusRovingItemByKey(event, {
+                  orientation: "vertical",
+                  activateOnFocus: true,
+                });
               }}
             >
               <button
@@ -246,7 +300,9 @@ export function HomeLaunchDialog({
                 style={buildCharacterThemeStyle(DEFAULT_CHARACTER_THEME_COLORS)}
                 onClick={onSelectRandomCharacter}
               >
-                <span className="character-avatar tiny" aria-hidden="true">R</span>
+                <span className="character-avatar tiny" aria-hidden="true">
+                  R
+                </span>
                 <span className="launch-character-copy">
                   <strong>Random</strong>
                 </span>
@@ -263,7 +319,10 @@ export function HomeLaunchDialog({
                   onClick={() => onSelectCharacter(character.id)}
                 >
                   <CharacterAvatar
-                    character={{ name: character.name, iconPath: character.iconFilePath }}
+                    character={{
+                      name: character.name,
+                      iconPath: character.iconFilePath,
+                    }}
                     size="tiny"
                   />
                   <span className="launch-character-copy">

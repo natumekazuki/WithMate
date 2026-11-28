@@ -9,13 +9,21 @@ import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { SessionStorage } from "../../src-electron/session/session-storage.js";
 
-async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promise<void> {
+/** 一時DBディレクトリーの削除を共有違反などに限り再試行し、他のエラーや再試行上限で停止する。 */
+async function removeDirectoryWithRetry(
+  targetPath: string,
+  attempts = 5,
+): Promise<void> {
   for (let index = 0; index < attempts; index += 1) {
     try {
       await rm(targetPath, { recursive: true, force: true });
       return;
     } catch (error) {
-      const isBusyError = typeof error === "object" && error !== null && "code" in error && error.code === "EBUSY";
+      const isBusyError =
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "EBUSY";
       if (!isBusyError || index === attempts - 1) {
         throw error;
       }
@@ -25,7 +33,13 @@ async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promi
   }
 }
 
-function createSession(taskTitle: string, workspaceLabel: string, characterId: string, character: string) {
+/** タイトルとワークスペースを指定し、残りは固定値で比較用のSessionを組み立てる。 */
+function createSession(
+  taskTitle: string,
+  workspaceLabel: string,
+  characterId: string,
+  character: string,
+) {
   const session = buildNewSession({
     taskTitle,
     workspaceLabel,
@@ -43,6 +57,7 @@ function createSession(taskTitle: string, workspaceLabel: string, characterId: s
   };
 }
 
+/** 一時DBの読み書きで、SessionのCRUD、要約の投影、破損レコードの扱いを確認する。 */
 describe("SessionStorage", () => {
   // @test-value v2
   // kind = "invariant"
@@ -56,8 +71,11 @@ describe("SessionStorage", () => {
   // impact = "既存Sessionの本文・workspaceが別createで失われる"
   // distinction = "同一IDをinsertし、collision errorと既存rowの値を確認する"
   // @end-test-value
+  /** 同じIDによる新規作成は競合を返し、既存のタイトルとワークスペースを上書きしない。 */
   it("insertSession は同一 ID create を拒否して既存 Session を保持する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -66,29 +84,41 @@ describe("SessionStorage", () => {
       storage.insertSession(original);
 
       assert.throws(
-        () => storage.insertSession({
-          ...original,
-          taskTitle: "second",
-          workspacePath: "C:/workspace-b",
-        }),
+        () =>
+          storage.insertSession({
+            ...original,
+            taskTitle: "second",
+            workspacePath: "C:/workspace-b",
+          }),
         /A Session with the same ID already exists/,
       );
       assert.equal(storage.getSession(original.id)?.taskTitle, "first");
-      assert.equal(storage.getSession(original.id)?.workspacePath, original.workspacePath);
+      assert.equal(
+        storage.getSession(original.id)?.workspacePath,
+        original.workspacePath,
+      );
       storage.close();
     } finally {
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
 
+  /** 全置換後の一覧に新しい集合だけが含まれ、以前のレコードは残らない。 */
   it("replaceSessions で一覧をまとめて置き換えられる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
       const storage = new SessionStorage(dbPath);
       const firstSession = createSession("first", "workspace-a", "char-a", "A");
-      const secondSession = createSession("second", "workspace-b", "char-b", "B");
+      const secondSession = createSession(
+        "second",
+        "workspace-b",
+        "char-b",
+        "B",
+      );
 
       storage.upsertSession(firstSession);
       storage.upsertSession(secondSession);
@@ -101,7 +131,9 @@ describe("SessionStorage", () => {
       storage.replaceSessions([replacement]);
 
       assert.deepEqual(
-        storage.listSessions().map((session) => ({ id: session.id, taskTitle: session.taskTitle })),
+        storage
+          .listSessions()
+          .map((session) => ({ id: session.id, taskTitle: session.taskTitle })),
         [{ id: replacement.id, taskTitle: "second-updated" }],
       );
 
@@ -111,14 +143,21 @@ describe("SessionStorage", () => {
     }
   });
 
+  /** 保存済みSessionが複数ある状態で全削除すると一覧が空になる。 */
   it("clearSessions で全 session を削除できる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
       const storage = new SessionStorage(dbPath);
-      storage.upsertSession(createSession("first", "workspace-a", "char-a", "A"));
-      storage.upsertSession(createSession("second", "workspace-b", "char-b", "B"));
+      storage.upsertSession(
+        createSession("first", "workspace-a", "char-a", "A"),
+      );
+      storage.upsertSession(
+        createSession("second", "workspace-b", "char-b", "B"),
+      );
 
       storage.clearSessions();
 
@@ -129,20 +168,38 @@ describe("SessionStorage", () => {
     }
   });
 
+  /** 最終アクティブ時刻がcutoffより前のIDを取得し、複数削除しても対象外のSessionを残す。 */
   it("last_active_at が cutoff より前の session id を列挙し、複数削除できる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
       const storage = new SessionStorage(dbPath);
-      const oldSession = storage.upsertSession(createSession("old", "workspace-old", "char-a", "A"));
-      const cutoffSession = storage.upsertSession(createSession("cutoff", "workspace-cutoff", "char-b", "B"));
-      const recentSession = storage.upsertSession(createSession("recent", "workspace-recent", "char-c", "C"));
+      const oldSession = storage.upsertSession(
+        createSession("old", "workspace-old", "char-a", "A"),
+      );
+      const cutoffSession = storage.upsertSession(
+        createSession("cutoff", "workspace-cutoff", "char-b", "B"),
+      );
+      const recentSession = storage.upsertSession(
+        createSession("recent", "workspace-recent", "char-c", "C"),
+      );
 
       const db = new DatabaseSync(dbPath);
-      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(100, oldSession.id);
-      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(200, cutoffSession.id);
-      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(300, recentSession.id);
+      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(
+        100,
+        oldSession.id,
+      );
+      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(
+        200,
+        cutoffSession.id,
+      );
+      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(
+        300,
+        recentSession.id,
+      );
       db.close();
 
       assert.deepEqual(
@@ -156,15 +213,21 @@ describe("SessionStorage", () => {
 
       storage.deleteSessions([oldSession.id, recentSession.id]);
 
-      assert.deepEqual(storage.listSessions().map((session) => session.id), [cutoffSession.id]);
+      assert.deepEqual(
+        storage.listSessions().map((session) => session.id),
+        [cutoffSession.id],
+      );
       storage.close();
     } finally {
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
 
+  /** カスタムエージェント名と追加ディレクトリーが保存・再読込で維持される。 */
   it("customAgentName を保存して読み戻せる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -181,14 +244,19 @@ describe("SessionStorage", () => {
 
       assert.ok(loaded);
       assert.equal(loaded.customAgentName, "reviewer");
-      assert.deepEqual(loaded.allowedAdditionalDirectories, ["C:/shared/reference"]);
+      assert.deepEqual(loaded.allowedAdditionalDirectories, [
+        "C:/shared/reference",
+      ]);
     } finally {
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
 
+  /** 旧Provider表記を含む保存行でもCodexの最新1件を要約として取得し、不明または空のProviderではnullを返す。 */
   it("getLatestSessionSummaryForProvider は legacy provider 表記を正規化して最新一件だけを返す", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -214,10 +282,17 @@ describe("SessionStorage", () => {
       });
 
       const db = new DatabaseSync(dbPath);
-      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(100, olderCodex.id);
-      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(300, copilot.id);
-      db.prepare("UPDATE sessions SET provider = ?, last_active_at = ? WHERE id = ?")
-        .run("\t\nCodex\u00a0", 200, latestCodex.id);
+      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(
+        100,
+        olderCodex.id,
+      );
+      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(
+        300,
+        copilot.id,
+      );
+      db.prepare(
+        "UPDATE sessions SET provider = ?, last_active_at = ? WHERE id = ?",
+      ).run("\t\nCodex\u00a0", 200, latestCodex.id);
       db.close();
 
       const latest = storage.getLatestSessionSummaryForProvider("codex");
@@ -236,14 +311,22 @@ describe("SessionStorage", () => {
     }
   });
 
+  /** 人格作成用Sessionを保存し、再読込後にも通常Sessionと区別する種別が残る。 */
   it("character-authoring sessionKind を含む session を保存して読み戻せる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
       const storage = new SessionStorage(dbPath);
       const session = storage.upsertSession({
-        ...createSession("character authoring", "workspace-character", "char-a", "A"),
+        ...createSession(
+          "character authoring",
+          "workspace-character",
+          "char-a",
+          "A",
+        ),
         sessionKind: "character-authoring",
       });
 
@@ -267,8 +350,11 @@ describe("SessionStorage", () => {
   // scope = "session-storage-summary"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 詳細JSONが読めない行でも要約は正常に取得でき、欠落したメタデータには既定値が使われる。 */
   it("listSessionSummaries は detail JSON が壊れていても summary だけ返せる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
     const originalConsoleError = console.error;
     const errors: unknown[][] = [];
@@ -285,7 +371,9 @@ describe("SessionStorage", () => {
       storage.close();
 
       const db = new DatabaseSync(dbPath);
-      db.prepare("UPDATE sessions SET messages_json = ?, stream_json = ? WHERE id = ?").run("{", "{", session.id);
+      db.prepare(
+        "UPDATE sessions SET messages_json = ?, stream_json = ? WHERE id = ?",
+      ).run("{", "{", session.id);
       db.close();
 
       const reopened = new SessionStorage(dbPath);
@@ -335,8 +423,11 @@ describe("SessionStorage", () => {
     }
   });
 
+  /** Home向けページの件数・カーソルと返却キーを確認し、ProviderやthreadIdのような詳細を投影から除く。 */
   it("listSessionSummaryPage は Home 用の bounded projection だけを返す", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -348,14 +439,24 @@ describe("SessionStorage", () => {
         threadId: "hidden-thread",
         allowedAdditionalDirectories: ["C:/hidden"],
       });
-      const secondSession = storage.upsertSession(createSession("another page", "workspace-another", "char-another", "Another"));
+      const secondSession = storage.upsertSession(
+        createSession(
+          "another page",
+          "workspace-another",
+          "char-another",
+          "Another",
+        ),
+      );
 
       const page = storage.listSessionSummaryPage({
         scope: "open",
         sessionIds: [session.id, "missing", secondSession.id, session.id],
         searchText: "",
       });
-      assert.deepEqual(page.entries.map((entry) => entry.id).sort(), [session.id, secondSession.id].sort());
+      assert.deepEqual(
+        page.entries.map((entry) => entry.id).sort(),
+        [session.id, secondSession.id].sort(),
+      );
       assert.equal(page.entries.length, 2);
       assert.equal(page.hasMore, false);
       assert.equal(page.nextCursor, null);
@@ -384,8 +485,11 @@ describe("SessionStorage", () => {
     }
   });
 
+  /** 一覧は破損JSONの行だけをスキップして一度記録し、正常行を引き続き返す。 */
   it("破損 JSON を含む row は listSessions で skip しつつ正常 row を返す", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
     const originalConsoleError = console.error;
     const errors: unknown[][] = [];
@@ -395,19 +499,29 @@ describe("SessionStorage", () => {
 
     try {
       const storage = new SessionStorage(dbPath);
-      const healthy = storage.upsertSession(createSession("healthy", "workspace-healthy", "char-a", "A"));
-      const corrupted = storage.upsertSession(createSession("corrupted", "workspace-corrupted", "char-b", "B"));
+      const healthy = storage.upsertSession(
+        createSession("healthy", "workspace-healthy", "char-a", "A"),
+      );
+      const corrupted = storage.upsertSession(
+        createSession("corrupted", "workspace-corrupted", "char-b", "B"),
+      );
       storage.close();
 
       const db = new DatabaseSync(dbPath);
-      db.prepare("UPDATE sessions SET messages_json = ? WHERE id = ?").run("{", corrupted.id);
+      db.prepare("UPDATE sessions SET messages_json = ? WHERE id = ?").run(
+        "{",
+        corrupted.id,
+      );
       db.close();
 
       const reopened = new SessionStorage(dbPath);
       const sessions = reopened.listSessions();
       reopened.close();
 
-      assert.deepEqual(sessions.map((session) => session.id), [healthy.id]);
+      assert.deepEqual(
+        sessions.map((session) => session.id),
+        [healthy.id],
+      );
       assert.equal(errors.length, 1);
       assert.equal(errors[0]?.[0], "stored session JSON parse failed");
     } finally {
@@ -416,8 +530,11 @@ describe("SessionStorage", () => {
     }
   });
 
+  /** 単一Sessionの読込では破損行を黙って捨てず、例外にして解析失敗を記録する。 */
   it("破損 JSON を含む row は getSession で throw する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
     const originalConsoleError = console.error;
     const errors: unknown[][] = [];
@@ -427,15 +544,23 @@ describe("SessionStorage", () => {
 
     try {
       const storage = new SessionStorage(dbPath);
-      const session = storage.upsertSession(createSession("broken", "workspace-broken", "char-a", "A"));
+      const session = storage.upsertSession(
+        createSession("broken", "workspace-broken", "char-a", "A"),
+      );
       storage.close();
 
       const db = new DatabaseSync(dbPath);
-      db.prepare("UPDATE sessions SET stream_json = ? WHERE id = ?").run("{", session.id);
+      db.prepare("UPDATE sessions SET stream_json = ? WHERE id = ?").run(
+        "{",
+        session.id,
+      );
       db.close();
 
       const reopened = new SessionStorage(dbPath);
-      assert.throws(() => reopened.getSession(session.id), /stream_json が壊れている/);
+      assert.throws(
+        () => reopened.getSession(session.id),
+        /stream_json が壊れている/,
+      );
       reopened.close();
 
       assert.equal(errors.length, 1);
@@ -446,4 +571,3 @@ describe("SessionStorage", () => {
     }
   });
 });
-

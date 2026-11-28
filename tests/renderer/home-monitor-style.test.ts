@@ -8,15 +8,23 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 
+/** 同じセレクターの全ルールから宣言部分を抽出し、後続ルールの上書きも調べられるようにする。 */
 function readCssRules(stylesSource: string, selector: string): string[] {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return Array.from(stylesSource.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "g")), (match) => match[1]!);
+  return Array.from(
+    stylesSource.matchAll(
+      new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "g"),
+    ),
+    (match) => match[1]!,
+  );
 }
 
+/** 指定セレクターに最初に一致する宣言を返し、ルールの欠落は空文字で表す。 */
 function readCssRule(stylesSource: string, selector: string): string {
   return readCssRules(stylesSource, selector)[0] ?? "";
 }
 
+/** 波括弧の深さを数え、子ルールを含む指定のat-ruleを取り出す。 */
 function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
   const blocks: string[] = [];
   let searchStart = 0;
@@ -57,53 +65,110 @@ function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
 // impact = "10〜20親の状態を件数の偏りに応じて連続して確認でき、Homeでも実際のMonitor幅に合う密度を使える"
 // distinction = "初回SSRの件数枠とCSS宣言を確認する。確定0・失敗・境界操作は動的component test、実寸法と列の整列はbrowserで確認する"
 // @end-test-value
+/** MonitorのSSRが4分類と件数枠を保ち、未取得の相談には0を出さないことを確認する。一覧の縦スクロールとコンテナー幅740pxでの列切替はCSS宣言で検査する。 */
 test("Monitorは上段左右分割と分類内scrollと内容幅に応じた列数を宣言する", async () => {
   const stylesSource = await readStylesheet();
   for (const auxiliaryDataState of ["loading", "ready"] as const) {
-    const html = renderToStaticMarkup(createElement(HomeMonitorContent, {
-      approvalEntries: [],
-      runningEntries: [],
-      nonRunningEntries: [],
-      auxiliaryDataState,
-      onOpenSession: () => {},
-      onShowContextMenu: () => {},
-    }));
+    const html = renderToStaticMarkup(
+      createElement(HomeMonitorContent, {
+        approvalEntries: [],
+        runningEntries: [],
+        nonRunningEntries: [],
+        auxiliaryDataState,
+        /** 静的な表示を検査するためSessionの起動操作は行わない。 */
+        onOpenSession: () => {},
+        /** 分類のレイアウト確認ではメニューを開かない。 */
+        onShowContextMenu: () => {},
+      }),
+    );
     const document = new JSDOM(html).window.document;
     const sections = document.querySelector(".home-monitor-sections");
 
     assert.deepEqual(
-      [...(sections?.children ?? [])].map((section) => section.getAttribute("aria-labelledby") ?? section.getAttribute("role")),
-      [null, "separator", "home-monitor-running", "separator", "home-monitor-inactive"],
+      [...(sections?.children ?? [])].map(
+        (section) =>
+          section.getAttribute("aria-labelledby") ??
+          section.getAttribute("role"),
+      ),
+      [
+        null,
+        "separator",
+        "home-monitor-running",
+        "separator",
+        "home-monitor-inactive",
+      ],
     );
     const topRow = sections?.querySelector(".home-monitor-top-row");
     assert.ok(topRow);
-    assert.deepEqual([...topRow.children].map((section) => section.getAttribute("aria-labelledby") ?? section.getAttribute("role")),
-      ["home-monitor-approval", null, "home-monitor-coordination"]);
+    assert.deepEqual(
+      [...topRow.children].map(
+        (section) =>
+          section.getAttribute("aria-labelledby") ??
+          section.getAttribute("role"),
+      ),
+      ["home-monitor-approval", null, "home-monitor-coordination"],
+    );
     assert.ok(topRow.querySelector(".home-monitor-top-divider"));
-    assert.deepEqual([...document.querySelectorAll(".home-monitor-section-head h3")].map((heading) => heading.textContent), ["Attention", "Coordination", "Running", "Stopped"]);
-    const headings = [...document.querySelectorAll(".home-monitor-section-head")];
+    assert.deepEqual(
+      [...document.querySelectorAll(".home-monitor-section-head h3")].map(
+        (heading) => heading.textContent,
+      ),
+      ["Attention", "Coordination", "Running", "Stopped"],
+    );
+    const headings = [
+      ...document.querySelectorAll(".home-monitor-section-head"),
+    ];
     assert.equal(headings.length, 4);
-    const [attention, coordination, running, stopped] = headings.map((heading) => {
-      const slots = heading.querySelectorAll(".home-monitor-count");
-      assert.equal(slots.length, 1);
-      return slots[0]!;
-    });
-    assert.deepEqual([attention, running, stopped].map((count) => count?.textContent), ["0", "0", "0"]);
+    const [attention, coordination, running, stopped] = headings.map(
+      (heading) => {
+        const slots = heading.querySelectorAll(".home-monitor-count");
+        assert.equal(slots.length, 1);
+        return slots[0]!;
+      },
+    );
+    assert.deepEqual(
+      [attention, running, stopped].map((count) => count?.textContent),
+      ["0", "0", "0"],
+    );
     assert.ok(coordination);
     assert.equal(coordination.textContent?.trim(), "");
     assert.equal(coordination.hasAttribute("aria-label"), false);
   }
-  const sectionRule = readCssRule(stylesSource, ".home-page .home-monitor-sections .home-monitor-section");
+  const sectionRule = readCssRule(
+    stylesSource,
+    ".home-page .home-monitor-sections .home-monitor-section",
+  );
   assert.match(sectionRule, /display:\s*flex;\s*flex-direction:\s*column;/);
-  const sectionsRule = readCssRule(stylesSource, ".home-page .home-monitor-sections");
+  const sectionsRule = readCssRule(
+    stylesSource,
+    ".home-page .home-monitor-sections",
+  );
   assert.match(sectionsRule, /overflow:\s*hidden;/);
-  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-list"), /overflow-y:\s*auto;/);
+  assert.match(
+    readCssRule(stylesSource, ".home-page .home-monitor-list"),
+    /overflow-y:\s*auto;/,
+  );
   assert.match(sectionRule, /container:\s*monitor-section \/ inline-size;/);
-  const columns = readCssAtRuleBlocks(stylesSource, "@container monitor-section (min-width: 740px)")[0];
+  const columns = readCssAtRuleBlocks(
+    stylesSource,
+    "@container monitor-section (min-width: 740px)",
+  )[0];
   assert.ok(columns);
-  assert.match(readCssRule(columns, ".home-page .home-monitor-list-items"), /--home-monitor-columns:\s*2;/);
-  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-list-items"), /--home-monitor-columns:\s*1;/);
-  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-body > .home-session-list-load-status"), /position:\s*absolute;/);
+  assert.match(
+    readCssRule(columns, ".home-page .home-monitor-list-items"),
+    /--home-monitor-columns:\s*2;/,
+  );
+  assert.match(
+    readCssRule(stylesSource, ".home-page .home-monitor-list-items"),
+    /--home-monitor-columns:\s*1;/,
+  );
+  assert.match(
+    readCssRule(
+      stylesSource,
+      ".home-page .home-monitor-body > .home-session-list-load-status",
+    ),
+    /position:\s*absolute;/,
+  );
 });
 
 // @test-value v2
@@ -118,13 +183,11 @@ test("Monitorは上段左右分割と分類内scrollと内容幅に応じた列�
 // impact = "動きや色に頼らず、実行中を承認待ち・失敗・待機・終了から見分けられる"
 // distinction = "CSSが宣言するマーク形状を確認する。状態判定・件数・操作はcomponent test、実描画とフレームはbrowser測定で確認する"
 // @end-test-value
+/** 実行中の静止した右向き三角が、承認・エラー・待機や終了の形状と区別されることをCSS宣言で確認する。 */
 test("Home Monitor の status icon は状態ごとの形とmotion制御で styling される", async () => {
   const stylesSource = await readStylesheet();
 
-  assert.match(
-    stylesSource,
-    /\.home-page \.home-monitor-status-icon\s*{/,
-  );
+  assert.match(stylesSource, /\.home-page \.home-monitor-status-icon\s*{/);
   assert.match(
     stylesSource,
     /\.home-page \.home-session-chip-status,\s*\.home-page \.home-session-status,\s*\.home-page \.session-mode-badge\s*{/,
@@ -139,38 +202,74 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
     );
   }
 
-  assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.running"), "");
-  const approvalRule = readCssRule(stylesSource, ".home-page .home-monitor-status-icon.approval .home-monitor-status-icon-mark");
+  assert.notEqual(
+    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.running"),
+    "",
+  );
+  const approvalRule = readCssRule(
+    stylesSource,
+    ".home-page .home-monitor-status-icon.approval .home-monitor-status-icon-mark",
+  );
   assert.match(approvalRule, /border: 1\.5px solid currentColor;/);
   assert.match(approvalRule, /border-radius: 50%;/);
-  assert.match(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.approval .home-monitor-status-icon-mark::before"), /content: "!";/);
+  assert.match(
+    readCssRule(
+      stylesSource,
+      ".home-page .home-monitor-status-icon.approval .home-monitor-status-icon-mark::before",
+    ),
+    /content: "!";/,
+  );
   assert.doesNotMatch(approvalRule, /animation:/);
-  assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.error"), "");
-  assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.neutral"), "");
-  const runningRules = readCssRules(stylesSource, ".home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark");
+  assert.notEqual(
+    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.error"),
+    "",
+  );
+  assert.notEqual(
+    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.neutral"),
+    "",
+  );
+  const runningRules = readCssRules(
+    stylesSource,
+    ".home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark",
+  );
   const runningRule = runningRules.find((rule) => rule.includes("clip-path"));
   assert.ok(runningRule);
   assert.match(runningRule, /background: currentColor;/);
-  const triangle = runningRule.match(/clip-path:\s*polygon\(\s*([\d.]+)%?\s+([\d.]+)%?\s*,\s*([\d.]+)%?\s+([\d.]+)%?\s*,\s*([\d.]+)%?\s+([\d.]+)%?\s*\)/);
+  const triangle = runningRule.match(
+    /clip-path:\s*polygon\(\s*([\d.]+)%?\s+([\d.]+)%?\s*,\s*([\d.]+)%?\s+([\d.]+)%?\s*,\s*([\d.]+)%?\s+([\d.]+)%?\s*\)/,
+  );
   assert.ok(triangle);
-  const [topX, topY, tipX, tipY, bottomX, bottomY] = triangle.slice(1).map(Number);
+  const [topX, topY, tipX, tipY, bottomX, bottomY] = triangle
+    .slice(1)
+    .map(Number);
   assert.equal(topX, bottomX);
   assert.ok(tipX! > topX! && topY! < tipY! && tipY! < bottomY!);
   for (const rule of runningRules) {
-    for (const declaration of rule.matchAll(/(?:^|;)\s*animation(?:-name)?:\s*([^;]+)/g)) {
+    for (const declaration of rule.matchAll(
+      /(?:^|;)\s*animation(?:-name)?:\s*([^;]+)/g,
+    )) {
       assert.match(declaration[1]!, /^none(?:\s+!important)?\s*$/);
     }
   }
   assert.match(
-    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.error .home-monitor-status-icon-mark"),
+    readCssRule(
+      stylesSource,
+      ".home-page .home-monitor-status-icon.error .home-monitor-status-icon-mark",
+    ),
     /clip-path: polygon\(50% 0, 100% 100%, 0 100%\);/,
   );
   assert.match(
-    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.neutral .home-monitor-status-icon-mark"),
+    readCssRule(
+      stylesSource,
+      ".home-page .home-monitor-status-icon.neutral .home-monitor-status-icon-mark",
+    ),
     /border: 1\.5px solid currentColor;/,
   );
   assert.match(
-    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.neutral .home-monitor-status-icon-mark"),
+    readCssRule(
+      stylesSource,
+      ".home-page .home-monitor-status-icon.neutral .home-monitor-status-icon-mark",
+    ),
     /border-radius: 50%;/,
   );
 });
@@ -187,29 +286,44 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
 // impact = "長いCharacter一覧でも作成へ到達でき、下端の項目も操作できる"
 // distinction = "source文字列の存在ではなく描画DOMへのselector適用を確認する。実レイアウトのscroll寸法や操作はJSDOMでは測定しない"
 // @end-test-value
+/** Character一覧だけが縦スクロールを持ち、作成ボタンがその外側に保たれることをDOMと適用済みスタイルで確認する。 */
 test("Home Characters は一覧をscroll ownerにするDOMとCSSを適用する", async () => {
   const stylesSource = await readStylesheet();
+  /** 静的描画のため、作成・編集・Session操作に副作用を持たせない。 */
   const noOp = () => {};
-  const html = renderToStaticMarkup(createElement(HomeRightPane, {
-    rightPaneView: "characters",
-    searchText: "",
-    approvalMonitorEntries: [],
-    runningMonitorEntries: [],
-    nonRunningMonitorEntries: [],
-    auxiliaryDataState: "ready",
-    characterEntries: [{
-      id: "character-1", name: "Mia", description: "", iconFilePath: "",
-      theme: { main: "#3b82f6", sub: "#1d4ed8" }, state: "active",
-      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", archivedAt: null,
-    }],
-    onCreateCharacter: noOp,
-    onEditCharacter: noOp,
-    onOpenSession: noOp,
-    onShowSessionMonitorContextMenu: noOp,
-  }));
-  const dom = new JSDOM(`<style>${stylesSource}</style><div class="home-page">${html}</div>`, {
-    url: "https://withmate.invalid/",
-  });
+  const html = renderToStaticMarkup(
+    createElement(HomeRightPane, {
+      rightPaneView: "characters",
+      searchText: "",
+      approvalMonitorEntries: [],
+      runningMonitorEntries: [],
+      nonRunningMonitorEntries: [],
+      auxiliaryDataState: "ready",
+      characterEntries: [
+        {
+          id: "character-1",
+          name: "Mia",
+          description: "",
+          iconFilePath: "",
+          theme: { main: "#3b82f6", sub: "#1d4ed8" },
+          state: "active",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          archivedAt: null,
+        },
+      ],
+      onCreateCharacter: noOp,
+      onEditCharacter: noOp,
+      onOpenSession: noOp,
+      onShowSessionMonitorContextMenu: noOp,
+    }),
+  );
+  const dom = new JSDOM(
+    `<style>${stylesSource}</style><div class="home-page">${html}</div>`,
+    {
+      url: "https://withmate.invalid/",
+    },
+  );
   const document = dom.window.document;
   const panel = document.querySelector(".home-characters-panel");
   const body = panel?.querySelector(".home-monitor-body");
@@ -228,7 +342,10 @@ test("Home Characters は一覧をscroll ownerにするDOMとCSSを適用する"
   assert.equal(dom.window.getComputedStyle(list).overflowY, "auto");
   assert.equal(dom.window.getComputedStyle(list).minHeight, "0px");
   assert.equal(dom.window.getComputedStyle(head).flex, "0 0 auto");
-  const sectionRule = readCssRule(stylesSource, ".home-page .home-characters-panel .home-monitor-section");
+  const sectionRule = readCssRule(
+    stylesSource,
+    ".home-page .home-characters-panel .home-monitor-section",
+  );
   assert.match(sectionRule, /flex:\s*1 1 auto;/);
   assert.match(sectionRule, /min-height:\s*0;/);
   const listRule = readCssRule(stylesSource, ".home-page .home-character-list");

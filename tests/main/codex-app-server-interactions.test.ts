@@ -1,19 +1,52 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { setImmediate } from "node:timers/promises";
-import { CodexTurnInteractions, type CodexInteractionRequest } from "../../src-electron/providers/codex/codex-app-server-interactions.js";
+import {
+  CodexTurnInteractions,
+  type CodexInteractionRequest,
+} from "../../src-electron/providers/codex/codex-app-server-interactions.js";
 import { SessionElicitationService } from "../../src-electron/session/session-elicitation-service.js";
-import type { LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type {
+  LiveElicitationRequest,
+  LiveElicitationResponse,
+  LiveSessionRunState,
+} from "../../src-shared/session/runtime-state.js";
 
+/** 成功とエラーの送信先を別々に記録できる、識別子付きの RPC 要求を組み立てる。 */
 function request(id: string | number, method: string, params: unknown) {
   const results: unknown[] = [];
   const errors: unknown[] = [];
-  const wire: CodexInteractionRequest = { id, method, params, respond: async (result) => { results.push(result); }, reject: async (error) => { errors.push(error); } };
+  const wire: CodexInteractionRequest = {
+    id,
+    method,
+    params,
+    /** 成功の返信先と内容を要求ごとに記録する。 */
+    respond: async (result) => {
+      results.push(result);
+    },
+    /** RPC エラーを成功応答とは別に記録する。 */
+    reject: async (error) => {
+      errors.push(error);
+    },
+  };
   return { wire, results, errors };
 }
 
-function question(id: string, options: unknown = null, isOther = false, isSecret = false) {
-  return { id, header: id, question: `Answer ${id}`, options, isOther, isSecret };
+/** 選択肢、自由入力、機密入力を個別に切り替えるネイティブ質問を作る。 */
+function question(
+  id: string,
+  options: unknown = null,
+  isOther = false,
+  isSecret = false,
+) {
+  return {
+    id,
+    header: id,
+    question: `Answer ${id}`,
+    options,
+    isOther,
+    isSecret,
+  };
 }
 
 const command = "item/commandExecution/requestApproval";
@@ -32,35 +65,65 @@ const mcpMethod = "mcpServer/elicitation/request";
 // impact = "利用者が値を訂正できず進行中turnを失敗させる"
 // distinction = "Provider単体testは不正値での終端拒否だけを確認し、受付が同じformを維持することは検証しない"
 // @end-test-value
+/** 不正な MCP 回答を受付で拒否しても同じフォームと返信口を維持し、有効な回答でだけ成功を一度返す。 */
 test("Codex MCP keeps its response port open after an invalid answer at admission", async () => {
   let state: LiveSessionRunState = {
-    sessionId: "session", threadId: "thread", assistantText: "", steps: [], backgroundTasks: [],
-    usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
+    sessionId: "session",
+    threadId: "thread",
+    assistantText: "",
+    steps: [],
+    backgroundTasks: [],
+    usage: null,
+    errorMessage: "",
+    approvalRequest: null,
+    elicitationRequest: null,
   };
-  const service = new SessionElicitationService({ updateLiveSessionRun: (_id, recipe) => (state = recipe(state)) });
+  const service = new SessionElicitationService({
+    /** 応答待ちサービスが更新したフォームと履歴を保持する。 */
+    updateLiveSessionRun: (_id, recipe) => (state = recipe(state)),
+  });
   const helper = new CodexTurnInteractions({
-    onElicitationRequest: (form, signal) => service.waitForLiveElicitationResponse("session", form, signal!),
+    /** 表示要求を実際の応答待ちサービスに接続し、受付条件を通して返信できるようにする。 */
+    onElicitationRequest: (form, signal) =>
+      service.waitForLiveElicitationResponse("session", form, signal!),
   });
   const call = request("rpc", mcpMethod, {
-    mode: "form", message: "Provide a contact", serverName: "fixture",
-    requestedSchema: { type: "object", properties: { email: { type: "string", format: "email" } }, required: ["email"] },
+    mode: "form",
+    message: "Provide a contact",
+    serverName: "fixture",
+    requestedSchema: {
+      type: "object",
+      properties: { email: { type: "string", format: "email" } },
+      required: ["email"],
+    },
   });
   try {
     helper.accept(call.wire);
     await setImmediate();
     const form = state.elicitationRequest;
     assert.ok(form);
-    assert.throws(() => service.resolveLiveElicitation("session", form.requestId,
-      { action: "accept", content: { email: "contact@example" } }), /Correct the answers/);
+    assert.throws(
+      () =>
+        service.resolveLiveElicitation("session", form.requestId, {
+          action: "accept",
+          content: { email: "contact@example" },
+        }),
+      /Correct the answers/,
+    );
     await setImmediate();
     assert.equal(state.elicitationRequest?.requestId, form.requestId);
     assert.equal(state.elicitationRecords?.[0]?.status, "pending");
     assert.deepEqual(call.results, []);
     assert.deepEqual(call.errors, []);
-    service.resolveLiveElicitation("session", form.requestId, { action: "accept", content: { email: "contact@example.test" } });
+    service.resolveLiveElicitation("session", form.requestId, {
+      action: "accept",
+      content: { email: "contact@example.test" },
+    });
     await setImmediate();
     assert.equal(state.elicitationRequest, null);
-    assert.deepEqual(call.results, [{ action: "accept", content: { email: "contact@example.test" } }]);
+    assert.deepEqual(call.results, [
+      { action: "accept", content: { email: "contact@example.test" } },
+    ]);
     assert.deepEqual(call.errors, []);
   } finally {
     helper.close();
@@ -79,27 +142,48 @@ test("Codex MCP keeps its response port open after an invalid answer at admissio
 // impact = "質問を閉じただけで実行中turnが失敗する"
 // distinction = "turn abortのtestではユーザーのClose後に同じturnが継続できることを確認できない"
 // @end-test-value
+/** ブロッキングの有無にかかわらず、閉じた質問には空回答を返し、続く質問は受け付けてそれぞれの表示位置を維持する。 */
 test("native Close returns empty answers and continues serving requests", async () => {
   for (const blocking of [true, false]) {
     let count = 0;
     const failures: unknown[] = [];
     const positions: Array<number | undefined> = [];
-    const helper = new CodexTurnInteractions({ onElicitationRequest: (ui) => {
-      positions.push(ui.textPosition);
-      return ++count === 1 ? { action: "cancel" } : { action: "accept", content: { q: "continue" } };
-    } }, undefined, error => failures.push(error));
-    const closed = request(1, inputMethod, { isBlocking: blocking, questions: [question("q")] });
-    const next = request(2, inputMethod, { isBlocking: blocking, questions: [question("q")] });
+    const helper = new CodexTurnInteractions(
+      {
+        /** 最初だけ閉じて次を回答し、両方の表示位置を記録する。 */
+        onElicitationRequest: (ui) => {
+          positions.push(ui.textPosition);
+          return ++count === 1
+            ? { action: "cancel" }
+            : { action: "accept", content: { q: "continue" } };
+        },
+      },
+      undefined,
+      (error) => failures.push(error),
+    );
+    const closed = request(1, inputMethod, {
+      isBlocking: blocking,
+      questions: [question("q")],
+    });
+    const next = request(2, inputMethod, {
+      isBlocking: blocking,
+      questions: [question("q")],
+    });
     closed.wire.textPosition = 12;
     next.wire.textPosition = 80_000;
     try {
-      helper.accept(closed.wire); helper.accept(next.wire);
+      helper.accept(closed.wire);
+      helper.accept(next.wire);
       await setImmediate();
       assert.deepEqual(closed.results, [{ answers: {} }]);
-      assert.deepEqual(JSON.parse(JSON.stringify(next.results)), [{ answers: { q: { answers: ["continue"] } } }]);
+      assert.deepEqual(JSON.parse(JSON.stringify(next.results)), [
+        { answers: { q: { answers: ["continue"] } } },
+      ]);
       assert.deepEqual([...closed.errors, ...next.errors, ...failures], []);
       assert.deepEqual(positions, [12, 80_000]);
-    } finally { helper.close(); }
+    } finally {
+      helper.close();
+    }
   }
 });
 
@@ -115,29 +199,57 @@ test("native Close returns empty answers and continues serving requests", async 
 // impact = "質問の到着通知を失うかMCP入力要求をCodex質問と誤通知する"
 // distinction = "native RPCから共通UIへの種別投影は型検査や通知service単体では検出できない"
 // @end-test-value
+/** ネイティブ質問と MCP フォームを区別して表示し、各要求に一度だけ応答し、ネイティブ質問の配信を通知する。 */
 test("distinguishes native questions from MCP input requests", async () => {
   const displayed: LiveElicitationRequest[] = [];
   const delivered: string[] = [];
-  const helper = new CodexTurnInteractions({ onElicitationRequest: (ui) => {
-    displayed.push(ui);
-    return { action: "accept", content: { q: "answer" } };
-  }, onElicitationDelivered: (id) => { delivered.push(id); } });
+  const helper = new CodexTurnInteractions({
+    /** 表示用に変換された要求を記録して回答する。 */
+    onElicitationRequest: (ui) => {
+      displayed.push(ui);
+      return { action: "accept", content: { q: "answer" } };
+    },
+    /** 配信を完了した要求の識別子を記録する。 */
+    onElicitationDelivered: (id) => {
+      delivered.push(id);
+    },
+  });
   const requests = [
     request(1, inputMethod, { isBlocking: true, questions: [question("q")] }),
     request(2, inputMethod, { isBlocking: false, questions: [question("q")] }),
-    request(3, mcpMethod, { mode: "form", serverName: "MCP", message: "Input", requestedSchema: {
-      type: "object", properties: { q: { type: "string" } }, required: ["q"],
-    } }),
+    request(3, mcpMethod, {
+      mode: "form",
+      serverName: "MCP",
+      message: "Input",
+      requestedSchema: {
+        type: "object",
+        properties: { q: { type: "string" } },
+        required: ["q"],
+      },
+    }),
   ];
   for (const entry of requests) helper.accept(entry.wire);
   await setImmediate();
-  assert.deepEqual(displayed.map(({ kind, blocking }) => ({ kind, blocking })), [
-    { kind: "question", blocking: true },
-    { kind: "question", blocking: false },
-    { kind: undefined, blocking: undefined },
-  ]);
-  assert.deepEqual(requests.map(({ results, errors }) => [results.length, errors.length]), [[1, 0], [1, 0], [1, 0]]);
-  assert.deepEqual(delivered, displayed.slice(0, 2).map((item) => item.requestId));
+  assert.deepEqual(
+    displayed.map(({ kind, blocking }) => ({ kind, blocking })),
+    [
+      { kind: "question", blocking: true },
+      { kind: "question", blocking: false },
+      { kind: undefined, blocking: undefined },
+    ],
+  );
+  assert.deepEqual(
+    requests.map(({ results, errors }) => [results.length, errors.length]),
+    [
+      [1, 0],
+      [1, 0],
+      [1, 0],
+    ],
+  );
+  assert.deepEqual(
+    delivered,
+    displayed.slice(0, 2).map((item) => item.requestId),
+  );
   helper.close();
 });
 
@@ -153,25 +265,57 @@ test("distinguishes native questions from MCP input requests", async () => {
 // impact = "利用者が別の操作を誤承認する"
 // distinction = "型検査では非同期callback競合を検出できない"
 // @end-test-value
+/** 承認を保留している間は次の二要求を表示せず、解除後はネイティブ質問と MCP の順に処理して元の返信口へ返す。 */
 test("serializes approval, native question and MCP with original response ports", async () => {
   const shown: string[] = [];
   let release!: (value: "approve") => void;
   const helper = new CodexTurnInteractions({
-    onApprovalRequest: () => { shown.push("approval"); return new Promise((resolve) => { release = resolve; }); },
-    onElicitationRequest: (ui): LiveElicitationResponse => { shown.push(ui.source ?? "question"); return { action: "accept", content: ui.source ? { count: 2 } : { q: "yes" } }; },
+    /** 最初の承認を表示し、テストが解放するまで応答を待つ。 */
+    onApprovalRequest: () => {
+      shown.push("approval");
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    },
+    /** 要求の種別と表示順を記録し、各種別に合う回答を返す。 */
+    onElicitationRequest: (ui): LiveElicitationResponse => {
+      shown.push(ui.source ?? "question");
+      return {
+        action: "accept",
+        content: ui.source ? { count: 2 } : { q: "yes" },
+      };
+    },
   });
   const first = request(1, command, { command: "echo test" });
-  const second = request("1", inputMethod, { isBlocking: false, questions: [question("q")] });
-  const third = request(2, mcpMethod, { mode: "form", serverName: "MCP", message: "Count", requestedSchema: { type: "object", properties: { count: { type: "integer", minimum: 1 } }, required: ["count"] } });
-  helper.accept(first.wire); helper.accept(second.wire); helper.accept(third.wire);
+  const second = request("1", inputMethod, {
+    isBlocking: false,
+    questions: [question("q")],
+  });
+  const third = request(2, mcpMethod, {
+    mode: "form",
+    serverName: "MCP",
+    message: "Count",
+    requestedSchema: {
+      type: "object",
+      properties: { count: { type: "integer", minimum: 1 } },
+      required: ["count"],
+    },
+  });
+  helper.accept(first.wire);
+  helper.accept(second.wire);
+  helper.accept(third.wire);
   await setImmediate();
   assert.deepEqual(shown, ["approval"]);
   release("approve");
   await setImmediate();
   assert.deepEqual(shown, ["approval", "question", "MCP"]);
   assert.deepEqual(first.results, [{ decision: "accept" }]);
-  assert.deepEqual(JSON.parse(JSON.stringify(second.results)), [{ answers: { q: { answers: ["yes"] } } }]);
-  assert.deepEqual(third.results, [{ action: "accept", content: { count: 2 } }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(second.results)), [
+    { answers: { q: { answers: ["yes"] } } },
+  ]);
+  assert.deepEqual(third.results, [
+    { action: "accept", content: { count: 2 } },
+  ]);
   helper.close();
 });
 
@@ -187,25 +331,35 @@ test("serializes approval, native question and MCP with original response ports"
 // impact = "解決済み承認画面が残りturnが進まない"
 // distinction = "callbackがabortを無視する場合の進行はruntime検証が必要"
 // @end-test-value
+/** 表示中と待機中の要求をネイティブ側から解決し、数値と文字列の ID を区別して、遅い旧承認では返信しない。 */
 test("resolves visible and queued requests without stale response or numeric/string ID mixup", async () => {
   const signals: AbortSignal[] = [];
   const releases: ((value: "approve") => void)[] = [];
-  const helper = new CodexTurnInteractions({ onApprovalRequest: (_ui, signal) => {
-    signals.push(signal!); return new Promise((resolve) => releases.push(resolve));
-  } });
+  const helper = new CodexTurnInteractions({
+    /** 中断通知を観測し、古い承認結果を後から返せるようにする。 */
+    onApprovalRequest: (_ui, signal) => {
+      signals.push(signal!);
+      return new Promise((resolve) => releases.push(resolve));
+    },
+  });
   const first = request(1, command, {});
   const queued = request(2, command, {});
   const next = request("1", command, {});
-  helper.accept(first.wire); helper.accept(queued.wire); helper.accept(next.wire);
+  helper.accept(first.wire);
+  helper.accept(queued.wire);
+  helper.accept(next.wire);
   await setImmediate();
-  helper.resolve(2); helper.resolve(1);
+  helper.resolve(2);
+  helper.resolve(1);
   await setImmediate();
   assert.equal(signals.length, 2);
   assert.equal(signals[0].aborted, true);
   assert.equal(signals[1].aborted, false);
-  releases[0]("approve"); releases[1]("approve");
+  releases[0]("approve");
+  releases[1]("approve");
   await setImmediate();
-  assert.deepEqual(first.results, []); assert.deepEqual(queued.results, []);
+  assert.deepEqual(first.results, []);
+  assert.deepEqual(queued.results, []);
   assert.deepEqual(next.results, [{ decision: "accept" }]);
   helper.close();
 });
@@ -222,24 +376,45 @@ test("resolves visible and queued requests without stale response or numeric/str
 // impact = "別turnへの古い回答混入と表示残留"
 // distinction = "型とschemaでは終了と回答の競合を検出できない"
 // @end-test-value
+/** ターン中断と明示終了のどちらでも表示中の待機に中断を通知し、待機列と遅い回答から返信しない。 */
 test("turn abort and close abort visible request and drop the queue", async () => {
   for (const abortTurn of [true, false]) {
     const turn = new AbortController();
     let uiSignal: AbortSignal | undefined;
     let release!: (response: LiveElicitationResponse) => void;
     let calls = 0;
-    const helper = new CodexTurnInteractions({ signal: turn.signal, onElicitationRequest: (_ui, signal) => {
-      calls++; uiSignal = signal; return new Promise((resolve) => { release = resolve; });
-    } });
-    const first = request(1, inputMethod, { isBlocking: true, questions: [question("q")] });
-    const second = request(2, inputMethod, { isBlocking: true, questions: [question("q")] });
-    helper.accept(first.wire); helper.accept(second.wire);
+    const helper = new CodexTurnInteractions({
+      signal: turn.signal,
+      /** 表示回数と中断シグナルを記録し、終了後まで回答を保留する。 */
+      onElicitationRequest: (_ui, signal) => {
+        calls++;
+        uiSignal = signal;
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      },
+    });
+    const first = request(1, inputMethod, {
+      isBlocking: true,
+      questions: [question("q")],
+    });
+    const second = request(2, inputMethod, {
+      isBlocking: true,
+      questions: [question("q")],
+    });
+    helper.accept(first.wire);
+    helper.accept(second.wire);
     await setImmediate();
-    if (abortTurn) turn.abort(); else helper.close();
+    if (abortTurn) turn.abort();
+    else helper.close();
     release({ action: "accept", content: { q: "late" } });
     await setImmediate();
-    assert.equal(uiSignal?.aborted, true); assert.equal(calls, 1);
-    assert.deepEqual(first.results, []); assert.deepEqual(first.errors, []); assert.deepEqual(second.results, []); assert.deepEqual(second.errors, []);
+    assert.equal(uiSignal?.aborted, true);
+    assert.equal(calls, 1);
+    assert.deepEqual(first.results, []);
+    assert.deepEqual(first.errors, []);
+    assert.deepEqual(second.results, []);
+    assert.deepEqual(second.errors, []);
   }
 });
 
@@ -255,27 +430,73 @@ test("turn abort and close abort visible request and drop the queue", async () =
 // impact = "利用者入力が欠落し秘密が表示される"
 // distinction = "schema型だけではUI投影と回答制約を確認できない"
 // @end-test-value
+/** 任意の選択肢、秘匿入力、単一選択肢を UI に区別して投影し、自動回答せず、不正な選択を拒否する。 */
 test("projects nullable questions, secret input and one-option choices without auto answering", async () => {
   let ui!: LiveElicitationRequest;
   let release!: (response: LiveElicitationResponse) => void;
-  const helper = new CodexTurnInteractions({ onElicitationRequest: (value) => { ui = value; return new Promise((resolve) => { release = resolve; }); } });
-  const pending = request(3, inputMethod, { isBlocking: false, autoResolutionMs: 0, questions: [
-    question("text"), question("secret", null, false, true), question("single", [{ label: "Only", description: "one" }]), question("other", [{ label: "Option", description: "" }], true),
-  ] });
+  const helper = new CodexTurnInteractions({
+    /** 自動回答の有無と項目の投影を確認するまで応答を保留する。 */
+    onElicitationRequest: (value) => {
+      ui = value;
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    },
+  });
+  const pending = request(3, inputMethod, {
+    isBlocking: false,
+    autoResolutionMs: 0,
+    questions: [
+      question("text"),
+      question("secret", null, false, true),
+      question("single", [{ label: "Only", description: "one" }]),
+      question("other", [{ label: "Option", description: "" }], true),
+    ],
+  });
   helper.accept(pending.wire);
   await setImmediate();
   assert.equal(ui.blocking, false);
   assert.equal(ui.fields[0].type, "text");
   assert.equal(ui.fields[1].type === "text" && ui.fields[1].secret, true);
-  assert.equal(ui.fields[2].type === "select" && ui.fields[2].options.length, 1);
-  assert.equal(ui.fields[3].type === "select" && ui.fields[3].allowFreeText, true);
+  assert.equal(
+    ui.fields[2].type === "select" && ui.fields[2].options.length,
+    1,
+  );
+  assert.equal(
+    ui.fields[3].type === "select" && ui.fields[3].allowFreeText,
+    true,
+  );
   assert.deepEqual(pending.results, []);
-  release({ action: "accept", content: { text: "typed", secret: "hidden", single: "Only", other: "custom" } });
+  release({
+    action: "accept",
+    content: {
+      text: "typed",
+      secret: "hidden",
+      single: "Only",
+      other: "custom",
+    },
+  });
   await setImmediate();
-  assert.deepEqual(JSON.parse(JSON.stringify(pending.results)), [{ answers: { text: { answers: ["typed"] }, secret: { answers: ["hidden"] }, single: { answers: ["Only"] }, other: { answers: ["custom"] } } }]);
-  const invalid = request(4, inputMethod, { isBlocking: true, questions: [question("single", [{ label: "Only", description: "" }])] });
-  helper.accept(invalid.wire); await setImmediate(); release({ action: "accept", content: { single: "invalid" } }); await setImmediate();
-  assert.equal(invalid.errors.length, 1); assert.deepEqual(invalid.results, []);
+  assert.deepEqual(JSON.parse(JSON.stringify(pending.results)), [
+    {
+      answers: {
+        text: { answers: ["typed"] },
+        secret: { answers: ["hidden"] },
+        single: { answers: ["Only"] },
+        other: { answers: ["custom"] },
+      },
+    },
+  ]);
+  const invalid = request(4, inputMethod, {
+    isBlocking: true,
+    questions: [question("single", [{ label: "Only", description: "" }])],
+  });
+  helper.accept(invalid.wire);
+  await setImmediate();
+  release({ action: "accept", content: { single: "invalid" } });
+  await setImmediate();
+  assert.equal(invalid.errors.length, 1);
+  assert.deepEqual(invalid.results, []);
   helper.close();
 });
 
@@ -292,24 +513,50 @@ test("projects nullable questions, secret input and one-option choices without a
 // impact = "要求外のコマンド実行やfilesystem権限が許可される"
 // distinction = "response schemaではrequested subsetと利用者承認を保証できない"
 // @end-test-value
+/** 許可されていない決定を送らず、要求された権限だけをターンに付与し、確認手段がない場合は権限や回答を与えない。 */
 test("helper honors available decisions, grants requested turn permissions and rejects requests without callbacks", async () => {
   let calls = 0;
-  const helper = new CodexTurnInteractions({ onApprovalRequest: () => { calls++; return "approve"; } });
-  const restricted = request(1, command, { availableDecisions: ["acceptForSession", "cancel"] });
-  const permissions = { network: { enabled: true }, fileSystem: { read: ["C:/work"], write: ["C:/work/tmp"] } };
+  const helper = new CodexTurnInteractions({
+    /** 許容される決定とは独立に承認を返し、ヘルパーの選別を試す。 */
+    onApprovalRequest: () => {
+      calls++;
+      return "approve";
+    },
+  });
+  const restricted = request(1, command, {
+    availableDecisions: ["acceptForSession", "cancel"],
+  });
+  const permissions = {
+    network: { enabled: true },
+    fileSystem: { read: ["C:/work"], write: ["C:/work/tmp"] },
+  };
   const grant = request(2, "item/permissions/requestApproval", { permissions });
-  helper.accept(restricted.wire); helper.accept(grant.wire); await setImmediate();
-  assert.deepEqual(restricted.results, [{ decision: "cancel" }]); assert.equal(calls, 1);
+  helper.accept(restricted.wire);
+  helper.accept(grant.wire);
+  await setImmediate();
+  assert.deepEqual(restricted.results, [{ decision: "cancel" }]);
+  assert.equal(calls, 1);
   assert.deepEqual(grant.results, [{ permissions, scope: "turn" }]);
   helper.close();
   const unattended = new CodexTurnInteractions({});
   const deniedCommand = request(1, command, {});
-  const deniedPermissions = request(2, "item/permissions/requestApproval", { permissions });
-  const noQuestionUi = request(3, inputMethod, { isBlocking: true, questions: [question("q")] });
-  unattended.accept(deniedCommand.wire); unattended.accept(deniedPermissions.wire); unattended.accept(noQuestionUi.wire); await setImmediate();
+  const deniedPermissions = request(2, "item/permissions/requestApproval", {
+    permissions,
+  });
+  const noQuestionUi = request(3, inputMethod, {
+    isBlocking: true,
+    questions: [question("q")],
+  });
+  unattended.accept(deniedCommand.wire);
+  unattended.accept(deniedPermissions.wire);
+  unattended.accept(noQuestionUi.wire);
+  await setImmediate();
   assert.deepEqual(deniedCommand.results, [{ decision: "decline" }]);
-  assert.deepEqual(deniedPermissions.results, [{ permissions: {}, scope: "turn" }]);
-  assert.equal(noQuestionUi.errors.length, 1); unattended.close();
+  assert.deepEqual(deniedPermissions.results, [
+    { permissions: {}, scope: "turn" },
+  ]);
+  assert.equal(noQuestionUi.errors.length, 1);
+  unattended.close();
 });
 
 // @test-value v2
@@ -324,26 +571,67 @@ test("helper honors available decisions, grants requested turn permissions and r
 // impact = "MCP serverへ利用者が承認していない不正入力が送られる"
 // distinction = "UI validatorを通らないcallbackでもwire前の検査が必要"
 // @end-test-value
+/** MCP フォームの数値制約と非対応スキーマを返信前に検証し、URL モードの承認は本文なしで返す。 */
 test("validates MCP form constraints, unsupported shapes and URL mode", async () => {
   const modes: string[] = [];
   let value = 0;
-  const helper = new CodexTurnInteractions({ onElicitationRequest: (ui) => { modes.push(ui.mode); return { action: "accept", content: ui.mode === "url" ? undefined : { value } }; } });
+  const helper = new CodexTurnInteractions({
+    /** 表示モードを記録し、フォームでは現在の候補値を返す。 */
+    onElicitationRequest: (ui) => {
+      modes.push(ui.mode);
+      return {
+        action: "accept",
+        content: ui.mode === "url" ? undefined : { value },
+      };
+    },
+  });
   for (const [index, candidate] of [2.5, 1, 5, 2].entries()) {
     value = candidate;
-    const numeric = request(index, mcpMethod, { mode: "form", serverName: "s", message: "m", requestedSchema: { type: "object", properties: { value: { type: "integer", minimum: 2, maximum: 4 } }, required: ["value"] } });
-    helper.accept(numeric.wire); await setImmediate();
+    const numeric = request(index, mcpMethod, {
+      mode: "form",
+      serverName: "s",
+      message: "m",
+      requestedSchema: {
+        type: "object",
+        properties: { value: { type: "integer", minimum: 2, maximum: 4 } },
+        required: ["value"],
+      },
+    });
+    helper.accept(numeric.wire);
+    await setImmediate();
     if (candidate === 2) {
-      assert.deepEqual(numeric.results, [{ action: "accept", content: { value: 2 } }]);
+      assert.deepEqual(numeric.results, [
+        { action: "accept", content: { value: 2 } },
+      ]);
       assert.deepEqual(numeric.errors, []);
     } else {
-      assert.equal(numeric.errors.length, 1, `reject ${candidate}`); assert.deepEqual(numeric.results, []);
+      assert.equal(numeric.errors.length, 1, `reject ${candidate}`);
+      assert.deepEqual(numeric.results, []);
     }
   }
-  const unsupported = request(4, mcpMethod, { mode: "form", serverName: "s", message: "m", requestedSchema: { type: "object", properties: { value: { type: "string", pattern: "x" } } } });
-  const url = request(5, mcpMethod, { mode: "url", serverName: "s", message: "login", url: "https://example.test/verify" });
-  helper.accept(unsupported.wire); helper.accept(url.wire); await setImmediate();
-  assert.equal(unsupported.errors.length, 1); assert.deepEqual(unsupported.results, []);
-  assert.deepEqual(modes, ["form", "form", "form", "form", "url"]); assert.deepEqual(url.results, [{ action: "accept", content: null }]); helper.close();
+  const unsupported = request(4, mcpMethod, {
+    mode: "form",
+    serverName: "s",
+    message: "m",
+    requestedSchema: {
+      type: "object",
+      properties: { value: { type: "string", pattern: "x" } },
+    },
+  });
+  const url = request(5, mcpMethod, {
+    mode: "url",
+    serverName: "s",
+    message: "login",
+    url: "https://example.test/verify",
+  });
+  helper.accept(unsupported.wire);
+  helper.accept(url.wire);
+  await setImmediate();
+  assert.equal(unsupported.errors.length, 1);
+  assert.deepEqual(unsupported.results, []);
+  assert.deepEqual(modes, ["form", "form", "form", "form", "url"]);
+  assert.deepEqual(url.results, [{ action: "accept", content: null }]);
+  helper.close();
 });
 
 // @test-value v2
@@ -358,8 +646,13 @@ test("validates MCP form constraints, unsupported shapes and URL mode", async ()
 // impact = "MCP serverへ存在しない日付や曖昧な時刻が送信される"
 // distinction = "callbackはbrowser inputを迂回できるためwire境界の暦日検査が必要"
 // @end-test-value
+/** MCP への回答境界で暦上存在する日付とタイムゾーン付き日時を受理し、不正値を返信せずに拒否する。 */
 test("validates MCP calendar dates and timezone-qualified datetimes at the reply boundary", async () => {
-  const cases: { format: "date" | "date-time"; value: string; valid: boolean }[] = [
+  const cases: {
+    format: "date" | "date-time";
+    value: string;
+    valid: boolean;
+  }[] = [
     { format: "date", value: "2025-02-31", valid: false },
     { format: "date", value: "2025-02-29", valid: false },
     { format: "date", value: "1900-02-29", valid: false },
@@ -380,16 +673,40 @@ test("validates MCP calendar dates and timezone-qualified datetimes at the reply
     { format: "date-time", value: "2024-02-29T12:30:00+24:00", valid: false },
     { format: "date-time", value: "2024-02-29T12:30:00+09:60", valid: false },
     { format: "date-time", value: "2024-02-29T12:30:00Z", valid: true },
-    { format: "date-time", value: "2000-02-29T12:30:00.123456+09:00", valid: true },
+    {
+      format: "date-time",
+      value: "2000-02-29T12:30:00.123456+09:00",
+      valid: true,
+    },
     { format: "date-time", value: "2025-04-30T12:30:00-05:30", valid: true },
     { format: "date-time", value: "2024-02-29t12:30:00z", valid: true },
   ];
   for (const [id, candidate] of cases.entries()) {
-    const helper = new CodexTurnInteractions({ onElicitationRequest: () => ({ action: "accept", content: { value: candidate.value } }) });
-    const pending = request(id, mcpMethod, { mode: "form", serverName: "s", message: "Date", requestedSchema: { type: "object", properties: { value: { type: "string", format: candidate.format } }, required: ["value"] } });
-    helper.accept(pending.wire); await setImmediate();
+    const helper = new CodexTurnInteractions({
+      /** 表示側の検証を介さず、生の日付候補を返信境界に渡す。 */
+      onElicitationRequest: () => ({
+        action: "accept",
+        content: { value: candidate.value },
+      }),
+    });
+    const pending = request(id, mcpMethod, {
+      mode: "form",
+      serverName: "s",
+      message: "Date",
+      requestedSchema: {
+        type: "object",
+        properties: { value: { type: "string", format: candidate.format } },
+        required: ["value"],
+      },
+    });
+    helper.accept(pending.wire);
+    await setImmediate();
     if (candidate.valid) {
-      assert.deepEqual(pending.results, [{ action: "accept", content: { value: candidate.value } }], candidate.value);
+      assert.deepEqual(
+        pending.results,
+        [{ action: "accept", content: { value: candidate.value } }],
+        candidate.value,
+      );
       assert.deepEqual(pending.errors, [], candidate.value);
     } else {
       assert.deepEqual(pending.results, [], candidate.value);
@@ -411,13 +728,32 @@ test("validates MCP calendar dates and timezone-qualified datetimes at the reply
 // impact = "切断を成功と誤認または二重応答によるprotocol不整合"
 // distinction = "transport failure after response reservation is an asynchronous boundary"
 // @end-test-value
+/** 予約した応答の書き込みが失敗しても、失敗を一度通知し、別の RPC 拒否応答を書き込まない。 */
 test("reports response write failure without duplicate response", async () => {
   const failure = new Error("write failed");
   const errors: unknown[] = [];
   let writes = 0;
   let rejects = 0;
-  const helper = new CodexTurnInteractions({}, undefined, (error) => errors.push(error));
-  helper.accept({ id: 1, method: command, params: {}, respond: async () => { writes++; throw failure; }, reject: async () => { rejects++; } });
+  const helper = new CodexTurnInteractions({}, undefined, (error) =>
+    errors.push(error),
+  );
+  helper.accept({
+    id: 1,
+    method: command,
+    params: {},
+    /** 成功応答の書き込みを一度数えてから失敗させる。 */
+    respond: async () => {
+      writes++;
+      throw failure;
+    },
+    /** 書き込み失敗に続く二重応答があれば記録する。 */
+    reject: async () => {
+      rejects++;
+    },
+  });
   await setImmediate();
-  assert.equal(writes, 1); assert.equal(rejects, 0); assert.deepEqual(errors, [failure]); helper.close();
+  assert.equal(writes, 1);
+  assert.equal(rejects, 0);
+  assert.deepEqual(errors, [failure]);
+  helper.close();
 });

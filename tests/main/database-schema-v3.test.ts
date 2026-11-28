@@ -16,6 +16,7 @@ import {
   isValidV3Database,
 } from "../../src-electron/storage/database-schema-v3.js";
 
+/** SQLite のスキーマ照会結果から、名前だけを取り出すための行型。 */
 type TableInfoRow = {
   name: string;
 };
@@ -42,6 +43,7 @@ const FORBIDDEN_HEAVY_COLUMNS = [
   "changed_files_json",
 ] as const;
 
+/** 外部キーを有効化した DB に V3 の定義を適用する。 */
 function createV3Schema(dbPath = ":memory:"): DatabaseSync {
   const db = new DatabaseSync(dbPath);
   db.exec("PRAGMA foreign_keys = ON;");
@@ -51,16 +53,27 @@ function createV3Schema(dbPath = ":memory:"): DatabaseSync {
   return db;
 }
 
+/** SQLite 自身の管理テーブルを除き、作成済みテーブルを名前順に列挙する。 */
 function tableNames(db: DatabaseSync): string[] {
-  return (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all() as TableInfoRow[])
+  return (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+      )
+      .all() as TableInfoRow[]
+  )
     .map((row) => row.name)
     .filter((name) => !name.startsWith("sqlite_"));
 }
 
+/** 指定テーブルの物理的な列名を SQLite のメタ情報から得る。 */
 function columnNames(db: DatabaseSync, tableName: string): string[] {
-  return (db.prepare(`PRAGMA table_info(${tableName})`).all() as TableInfoRow[]).map((row) => row.name);
+  return (
+    db.prepare(`PRAGMA table_info(${tableName})`).all() as TableInfoRow[]
+  ).map((row) => row.name);
 }
 
+/** V3 の識別条件と、重いデータを持たせない保存境界を検証する。 */
 describe("database-schema-v3", () => {
   // @test-value v2
   // kind = "contract"
@@ -72,6 +85,7 @@ describe("database-schema-v3", () => {
   // scope = "database schema v3 table contract"
   // lifecycle = "permanent"
   // @end-test-value
+  /** ファイル名とバージョンだけでなく、定義を適用した実 DB に必要なテーブルが揃うことを確かめる。 */
   it("withmate-v3.db 用の schema constants と required tables を固定する", () => {
     assert.equal(APP_DATABASE_V3_FILENAME, "withmate-v3.db");
     assert.equal(APP_DATABASE_V3_SCHEMA_VERSION, 3);
@@ -90,7 +104,10 @@ describe("database-schema-v3", () => {
         "session_messages",
         "sessions",
       ]);
-      assert.deepEqual(REQUIRED_V3_TABLES.filter((tableName) => !names.includes(tableName)), []);
+      assert.deepEqual(
+        REQUIRED_V3_TABLES.filter((tableName) => !names.includes(tableName)),
+        [],
+      );
     } finally {
       db.close();
     }
@@ -106,6 +123,7 @@ describe("database-schema-v3", () => {
   // scope = "database schema v3 validation"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 名前違い、版違い、空ファイルのどれも有効な V3 DB と判定しない。 */
   it("isValidV3Database は filename と schema version を検証する", () => {
     const dirPath = mkdtempSync(join(tmpdir(), "withmate-v3-schema-"));
     try {
@@ -115,7 +133,10 @@ describe("database-schema-v3", () => {
 
       const wrongVersionDirPath = join(dirPath, "wrong-version");
       mkdirSync(wrongVersionDirPath);
-      const wrongVersionDbPath = join(wrongVersionDirPath, APP_DATABASE_V3_FILENAME);
+      const wrongVersionDbPath = join(
+        wrongVersionDirPath,
+        APP_DATABASE_V3_FILENAME,
+      );
       const wrongVersionDb = createV3Schema(wrongVersionDbPath);
       try {
         wrongVersionDb.exec("PRAGMA user_version = 2;");
@@ -152,6 +173,7 @@ describe("database-schema-v3", () => {
   // scope = "database schema v3 payload boundary"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 全テーブルの実列を見て、旧形式の大きな本文や診断の列が戻っていないことを確かめる。 */
   it("V3 schema は V2/V1 の heavy payload column 名を持たない", () => {
     const db = createV3Schema();
     try {
@@ -180,13 +202,17 @@ describe("database-schema-v3", () => {
   // scope = "database schema v3 preview limits"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 軽量な抜粋と要約の上限が、定数だけでなく SQL の制約にも現れることを確かめる。 */
   it("preview と summary は DB に重い payload を戻せないよう上限を持つ", () => {
     const schemaSql = CREATE_V3_SCHEMA_SQL.join("\n");
 
     assert.equal(V3_TEXT_PREVIEW_MAX_LENGTH, 500);
     assert.equal(V3_SUMMARY_JSON_MAX_LENGTH, 8192);
     assert.match(schemaSql, /CHECK \(length\(text_preview\) <= 500\)/);
-    assert.match(schemaSql, /CHECK \(length\(artifact_summary_json\) <= 8192\)/);
+    assert.match(
+      schemaSql,
+      /CHECK \(length\(artifact_summary_json\) <= 8192\)/,
+    );
     assert.doesNotMatch(schemaSql, /\bchanged_files_json\b/);
     assert.doesNotMatch(schemaSql, /\bsibling_warnings_json\b/);
   });

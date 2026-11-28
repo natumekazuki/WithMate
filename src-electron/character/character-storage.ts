@@ -1,5 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, copyFile, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  copyFile,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -66,6 +73,7 @@ const CREATE_CHARACTER_TABLE_SQL = `
     ON characters(state, updated_at DESC);
 `;
 
+/** Character カタログの SQLite 行。定義とノートの本文はこの行に含まれない。 */
 type CharacterRow = {
   id: string;
   name: string;
@@ -79,18 +87,22 @@ type CharacterRow = {
   archived_at: string | null;
 };
 
+/** 登録・更新・スナップショットの時刻を同じ ISO 形式で記録する。 */
 function nowIso(): string {
   return new Date().toISOString();
 }
 
+/** 定義本文の UTF-8 表現を SHA-256 の16進文字列で識別する。 */
 function sha256Hex(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
+/** 定義本文のサイズを保存データと同じ UTF-8 バイト数で数える。 */
 function byteSize(content: string): number {
   return Buffer.byteLength(content, "utf8");
 }
 
+/** 名前の余分な空白を詰め、文字列でない値と空の名前を拒否する。 */
 function normalizeName(value: unknown): string {
   if (typeof value !== "string") {
     throw new Error("Character name must be a string.");
@@ -103,6 +115,7 @@ function normalizeName(value: unknown): string {
   return normalized;
 }
 
+/** 説明の空白を整える。未指定や文字列以外の場合は指定された代替を使う。 */
 function normalizeDescription(value: unknown, fallback = ""): string {
   if (value === undefined || value === null) {
     return fallback;
@@ -113,7 +126,11 @@ function normalizeDescription(value: unknown, fallback = ""): string {
   return value.trim().replace(/\s+/g, " ");
 }
 
-function normalizeCharacterIconPathInput(value: unknown, fallback = ""): string {
+/** アイコン指定を空白除去した文字列として扱う。未指定は代替を使い、明示した非文字列は拒否する。 */
+function normalizeCharacterIconPathInput(
+  value: unknown,
+  fallback = "",
+): string {
   if (value === undefined) {
     return fallback;
   }
@@ -123,19 +140,29 @@ function normalizeCharacterIconPathInput(value: unknown, fallback = ""): string 
   return value.trim();
 }
 
+/** DB の相対パスで使う区切り文字をスラッシュに統一する。 */
 function normalizeDbRelativePath(value: string): string {
   return value.replace(/\\/g, "/");
 }
 
-export function materializeCharacterIconFilePath(userDataPath: string, filePath: string): string {
+/** 保存済みの相対アイコンパスを userData から解決する。絶対パス・スキーム付き参照は変換しない。 */
+export function materializeCharacterIconFilePath(
+  userDataPath: string,
+  filePath: string,
+): string {
   const trimmed = filePath.trim();
-  if (!trimmed || path.isAbsolute(trimmed) || hasCharacterIconPathScheme(trimmed)) {
+  if (
+    !trimmed ||
+    path.isAbsolute(trimmed) ||
+    hasCharacterIconPathScheme(trimmed)
+  ) {
     return trimmed;
   }
 
   return path.join(userDataPath, trimmed);
 }
 
+/** アイコンの拡張子を小文字で取得する。絶対パスなら通常ファイルであることと容量上限も確認する。 */
 async function safeIconExtension(sourcePath: string): Promise<string> {
   const extension = path.extname(sourcePath).toLowerCase();
   if (!path.isAbsolute(sourcePath)) {
@@ -147,12 +174,15 @@ async function safeIconExtension(sourcePath: string): Promise<string> {
     throw new Error("Character icon must be a regular file.");
   }
   if (stats.size > CHARACTER_ICON_MAX_BYTE_SIZE) {
-    throw new Error("Character icon must be an image file no larger than 10 MiB.");
+    throw new Error(
+      "Character icon must be an image file no larger than 10 MiB.",
+    );
   }
 
   return extension;
 }
 
+/** 有効な6桁の16進色を小文字にそろえ、形式違反は代替色に置き換える。 */
 function normalizeHexColor(value: unknown, fallback: string): string {
   if (typeof value !== "string") {
     return fallback;
@@ -165,13 +195,18 @@ function normalizeHexColor(value: unknown, fallback: string): string {
   return normalized.toLowerCase();
 }
 
-function normalizeTheme(value: Partial<CharacterTheme> | undefined, fallback = DEFAULT_CHARACTER_THEME): CharacterTheme {
+/** テーマの主色・副色を別々に検証し、不足や不正な色を既定の組で補う。 */
+function normalizeTheme(
+  value: Partial<CharacterTheme> | undefined,
+  fallback = DEFAULT_CHARACTER_THEME,
+): CharacterTheme {
   return {
     main: normalizeHexColor(value?.main, fallback.main),
     sub: normalizeHexColor(value?.sub, fallback.sub),
   };
 }
 
+/** Character 名を保存ディレクトリにも使える短い ASCII スラッグに寄せる。 */
 function slugifyCharacterId(name: string): string {
   const normalized = name
     .normalize("NFKD")
@@ -183,11 +218,13 @@ function slugifyCharacterId(name: string): string {
   return normalized || "character";
 }
 
+/** カタログを SQLite に、定義・ノート・管理アイコンを Character 別のワークスペースに保存する。 */
 export class CharacterStorage {
   private readonly db: DatabaseSync;
   private readonly userDataPath: string;
   private readonly characterRootPath: string;
 
+  /** 対応データベースを検証して接続を開き、カタログスキーマとファイルの基準パスを用意する。 */
   constructor(dbPath: string, userDataPath: string) {
     assertV4SchemaInitializationAllowed(dbPath, "CharacterStorage");
     this.db = openAppDatabase(dbPath);
@@ -196,10 +233,12 @@ export class CharacterStorage {
     this.ensureSchema();
   }
 
+  /** 既存のカタログ行を維持したまま、必要なテーブルと索引を作る。 */
   private ensureSchema(): void {
     this.db.exec(CREATE_CHARACTER_TABLE_SQL);
   }
 
+  /** 識別子が単一の許可済みパス要素か検証し、Character の専用パスを求める。 */
   private characterDirectory(characterId: string): string {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(characterId)) {
       throw new Error("Character ID is invalid.");
@@ -207,58 +246,93 @@ export class CharacterStorage {
     return path.join(this.characterRootPath, characterId);
   }
 
+  /** 指定 Character のワークスペースパスを返す。ディレクトリの作成は行わない。 */
   getCharacterDirectory(characterId: string): string {
     return this.characterDirectory(characterId);
   }
 
+  /** Character の専用ディレクトリから、内部で扱う任意の資材ファイルのパスを組み立てる。 */
   private characterFilePath(characterId: string, fileName: string): string {
     return path.join(this.characterDirectory(characterId), fileName);
   }
 
-  private characterIconRelativePath(characterId: string, extension: string): string {
-    return normalizeDbRelativePath(path.join(CHARACTER_ROOT_DIRECTORY, characterId, `${CHARACTER_ICON_FILE_BASE}${extension}`));
+  /** 管理アイコンを保存するための、拡張子を含む userData 相対パスを組み立てる。 */
+  private characterIconRelativePath(
+    characterId: string,
+    extension: string,
+  ): string {
+    return normalizeDbRelativePath(
+      path.join(
+        CHARACTER_ROOT_DIRECTORY,
+        characterId,
+        `${CHARACTER_ICON_FILE_BASE}${extension}`,
+      ),
+    );
   }
 
-  private maybeGetManagedIconRelativePath(characterId: string, iconFilePath: string): string | null {
+  /** 指定した絶対パスが同じ Character のディレクトリ内なら、DB に保存する相対参照へ変換する。 */
+  private maybeGetManagedIconRelativePath(
+    characterId: string,
+    iconFilePath: string,
+  ): string | null {
     const trimmed = iconFilePath.trim();
     if (!trimmed || !path.isAbsolute(trimmed)) {
       return null;
     }
 
-    const characterDirectoryPath = path.resolve(this.characterDirectory(characterId));
+    const characterDirectoryPath = path.resolve(
+      this.characterDirectory(characterId),
+    );
     const resolvedIconPath = path.resolve(trimmed);
-    const relativePath = path.relative(characterDirectoryPath, resolvedIconPath);
+    const relativePath = path.relative(
+      characterDirectoryPath,
+      resolvedIconPath,
+    );
     if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
       return null;
     }
 
-    return normalizeDbRelativePath(path.join(CHARACTER_ROOT_DIRECTORY, characterId, relativePath));
+    return normalizeDbRelativePath(
+      path.join(CHARACTER_ROOT_DIRECTORY, characterId, relativePath),
+    );
   }
 
+  /** このストレージの userData を使い、DB のアイコン参照を公開用パスへ変換する。 */
   private materializeIconFilePath(iconFilePath: string): string {
     return materializeCharacterIconFilePath(this.userDataPath, iconFilePath);
   }
 
-  private getManagedIconAbsolutePath(characterId: string, iconFilePath: string): string | null {
+  /** 置き換え時に削除してよい候補を、Character 内の管理用アイコン名を持つ相対参照に限る。 */
+  private getManagedIconAbsolutePath(
+    characterId: string,
+    iconFilePath: string,
+  ): string | null {
     const rawPath = iconFilePath.trim();
-    const trimmed = process.platform === "win32"
-      ? normalizeDbRelativePath(rawPath)
-      : rawPath;
-    if (!trimmed || path.isAbsolute(trimmed) || hasCharacterIconPathScheme(trimmed)) {
+    const trimmed =
+      process.platform === "win32" ? normalizeDbRelativePath(rawPath) : rawPath;
+    if (
+      !trimmed ||
+      path.isAbsolute(trimmed) ||
+      hasCharacterIconPathScheme(trimmed)
+    ) {
       return null;
     }
 
     const resolvedIconPath = path.resolve(this.userDataPath, trimmed);
     const basename = path.basename(resolvedIconPath);
-    const comparableBasename = process.platform === "win32"
-      ? basename.toLowerCase()
-      : basename;
+    const comparableBasename =
+      process.platform === "win32" ? basename.toLowerCase() : basename;
     if (!/^icon\.[a-z0-9]+$/.test(comparableBasename)) {
       return null;
     }
 
-    const characterDirectoryPath = path.resolve(this.characterDirectory(characterId));
-    const relativePath = path.relative(characterDirectoryPath, resolvedIconPath);
+    const characterDirectoryPath = path.resolve(
+      this.characterDirectory(characterId),
+    );
+    const relativePath = path.relative(
+      characterDirectoryPath,
+      resolvedIconPath,
+    );
     if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
       return null;
     }
@@ -266,23 +340,36 @@ export class CharacterStorage {
     return resolvedIconPath;
   }
 
-  private async cleanupReplacedManagedIcon(characterId: string, previousIconFilePath: string, nextIconFilePath: string): Promise<void> {
-    if (areCharacterIconPathReferencesEquivalent(
-      previousIconFilePath,
-      nextIconFilePath,
-      { fileSystemStyle: process.platform === "win32" ? "windows" : "posix" },
-    )) {
+  /** 参照が実際に変わった管理アイコンだけを削除する。削除に失敗してもカタログ更新は取り消さない。 */
+  private async cleanupReplacedManagedIcon(
+    characterId: string,
+    previousIconFilePath: string,
+    nextIconFilePath: string,
+  ): Promise<void> {
+    if (
+      areCharacterIconPathReferencesEquivalent(
+        previousIconFilePath,
+        nextIconFilePath,
+        { fileSystemStyle: process.platform === "win32" ? "windows" : "posix" },
+      )
+    ) {
       return;
     }
 
-    const previousIconAbsolutePath = this.getManagedIconAbsolutePath(characterId, previousIconFilePath);
+    const previousIconAbsolutePath = this.getManagedIconAbsolutePath(
+      characterId,
+      previousIconFilePath,
+    );
     if (!previousIconAbsolutePath) {
       return;
     }
-    const nextIconAbsolutePath = this.getManagedIconAbsolutePath(characterId, nextIconFilePath);
+    const nextIconAbsolutePath = this.getManagedIconAbsolutePath(
+      characterId,
+      nextIconFilePath,
+    );
     if (
-      nextIconAbsolutePath
-      && areCharacterIconPathReferencesEquivalent(
+      nextIconAbsolutePath &&
+      areCharacterIconPathReferencesEquivalent(
         previousIconAbsolutePath,
         nextIconAbsolutePath,
         { fileSystemStyle: process.platform === "win32" ? "windows" : "posix" },
@@ -302,6 +389,7 @@ export class CharacterStorage {
     }
   }
 
+  /** 直接参照・管理領域への相対化・絶対化のいずれでも同じアイコンを指すか照合する。 */
   private isCurrentIconReference(
     currentIconFilePath: string,
     sourceIconFilePath: string,
@@ -314,26 +402,27 @@ export class CharacterStorage {
     const comparisonOptions = {
       fileSystemStyle: process.platform === "win32" ? "windows" : "posix",
     } as const;
-    return areCharacterIconPathReferencesEquivalent(
-      sourceIconFilePath,
-      currentIconFilePath,
-      comparisonOptions,
-    )
-      || (
-        managedRelativePath !== null
-        && areCharacterIconPathReferencesEquivalent(
+    return (
+      areCharacterIconPathReferencesEquivalent(
+        sourceIconFilePath,
+        currentIconFilePath,
+        comparisonOptions,
+      ) ||
+      (managedRelativePath !== null &&
+        areCharacterIconPathReferencesEquivalent(
           managedRelativePath,
           currentIconFilePath,
           comparisonOptions,
-        )
-      )
-      || areCharacterIconPathReferencesEquivalent(
+        )) ||
+      areCharacterIconPathReferencesEquivalent(
         sourceIconFilePath,
         this.materializeIconFilePath(currentIconFilePath),
         comparisonOptions,
-      );
+      )
+    );
   }
 
+  /** 同じ参照は再利用する。新しいアイコン指定は検証し、外部の絶対ファイルが必要なら管理領域へコピーする。 */
   private async copyIconFromSourcePath(
     characterId: string,
     sourceIconFilePath: string,
@@ -343,11 +432,21 @@ export class CharacterStorage {
       return "";
     }
 
-    const managedRelativePath = this.maybeGetManagedIconRelativePath(characterId, sourceIconFilePath);
-    if (this.isCurrentIconReference(currentIconFilePath, sourceIconFilePath, managedRelativePath)) {
+    const managedRelativePath = this.maybeGetManagedIconRelativePath(
+      characterId,
+      sourceIconFilePath,
+    );
+    if (
+      this.isCurrentIconReference(
+        currentIconFilePath,
+        sourceIconFilePath,
+        managedRelativePath,
+      )
+    ) {
       return currentIconFilePath;
     }
-    const registrationPathError = validateCharacterIconRegistrationPath(sourceIconFilePath);
+    const registrationPathError =
+      validateCharacterIconRegistrationPath(sourceIconFilePath);
     if (registrationPathError) {
       throw new Error(registrationPathError);
     }
@@ -360,13 +459,17 @@ export class CharacterStorage {
       return managedRelativePath;
     }
 
-    const relativeIconPath = this.characterIconRelativePath(characterId, extension);
+    const relativeIconPath = this.characterIconRelativePath(
+      characterId,
+      extension,
+    );
     const destinationPath = path.join(this.userDataPath, relativeIconPath);
     await mkdir(path.dirname(destinationPath), { recursive: true });
     await copyFile(sourceIconFilePath, destinationPath);
     return relativeIconPath;
   }
 
+  /** カタログ行を公開用の項目に変換し、アイコンの参照も表示時に使える形へ解決する。 */
   private toEntry(row: CharacterRow): CharacterCatalogEntry {
     return {
       id: row.id,
@@ -384,47 +487,81 @@ export class CharacterStorage {
     };
   }
 
+  /** 指定 ID に該当するカタログ行を取得し、未登録なら null とする。 */
   private readCharacterRow(characterId: string): CharacterRow | null {
-    return this.db.prepare(`
+    return (
+      (this.db
+        .prepare(
+          `
       SELECT id, name, description, icon_file_path, theme_main, theme_sub, state,
         created_at, updated_at, archived_at
       FROM characters
       WHERE id = ?
-    `).get(characterId) as CharacterRow | undefined ?? null;
+    `,
+        )
+        .get(characterId) as CharacterRow | undefined) ?? null
+    );
   }
 
+  /** 必須の定義ファイルを UTF-8 として読む。読み取りエラーは呼び出し側に伝える。 */
   private async readDefinitionMarkdown(characterId: string): Promise<string> {
-    return await readFile(this.characterFilePath(characterId, CHARACTER_DEFINITION_FILE), "utf8");
+    return await readFile(
+      this.characterFilePath(characterId, CHARACTER_DEFINITION_FILE),
+      "utf8",
+    );
   }
 
+  /** 任意の補助ノートを UTF-8 として読む。読み取れない場合は空の本文を返す。 */
   private async readNotesMarkdown(characterId: string): Promise<string> {
     try {
-      return await readFile(this.characterFilePath(characterId, CHARACTER_NOTES_FILE), "utf8");
+      return await readFile(
+        this.characterFilePath(characterId, CHARACTER_NOTES_FILE),
+        "utf8",
+      );
     } catch {
       return "";
     }
   }
 
-  private async writeDefinitionFiles(characterId: string, definitionMarkdown: string, notesMarkdown?: string): Promise<void> {
-    const definitionResult = parseCharacterDefinitionMarkdown(definitionMarkdown);
+  /** 定義と指定されたノートを先に検証し、定義を保存する。ノートが未指定なら既存ファイルを更新しない。 */
+  private async writeDefinitionFiles(
+    characterId: string,
+    definitionMarkdown: string,
+    notesMarkdown?: string,
+  ): Promise<void> {
+    const definitionResult =
+      parseCharacterDefinitionMarkdown(definitionMarkdown);
     if (!definitionResult.ok) {
-      throw new Error(`character.md validation failed: ${definitionResult.issues.map((issue) => issue.code).join(", ")}`);
+      throw new Error(
+        `character.md validation failed: ${definitionResult.issues.map((issue) => issue.code).join(", ")}`,
+      );
     }
 
     if (notesMarkdown !== undefined) {
       const notesIssues = validateCharacterNotesMarkdown(notesMarkdown);
       if (notesIssues.length > 0) {
-        throw new Error(`character-notes.md validation failed: ${notesIssues.map((issue) => issue.code).join(", ")}`);
+        throw new Error(
+          `character-notes.md validation failed: ${notesIssues.map((issue) => issue.code).join(", ")}`,
+        );
       }
     }
 
     await mkdir(this.characterDirectory(characterId), { recursive: true });
-    await writeFile(this.characterFilePath(characterId, CHARACTER_DEFINITION_FILE), definitionMarkdown, "utf8");
+    await writeFile(
+      this.characterFilePath(characterId, CHARACTER_DEFINITION_FILE),
+      definitionMarkdown,
+      "utf8",
+    );
     if (notesMarkdown !== undefined) {
-      await writeFile(this.characterFilePath(characterId, CHARACTER_NOTES_FILE), notesMarkdown, "utf8");
+      await writeFile(
+        this.characterFilePath(characterId, CHARACTER_NOTES_FILE),
+        notesMarkdown,
+        "utf8",
+      );
     }
   }
 
+  /** 名前をもとに未使用の ID を探し、通常の番号候補を使い切った場合は乱数を含む候補を返す。 */
   private createUniqueCharacterId(name: string): string {
     const baseId = slugifyCharacterId(name);
     if (!this.readCharacterRow(baseId)) {
@@ -441,30 +578,43 @@ export class CharacterStorage {
     return `${baseId}-${randomUUID().slice(0, 8)}`;
   }
 
-  listCharacters(options: { includeArchived?: boolean } = {}): CharacterCatalogEntry[] {
+  /** 有効な Character を新しい更新順に返す。アーカイブを含める場合は状態別にまとめる。 */
+  listCharacters(
+    options: { includeArchived?: boolean } = {},
+  ): CharacterCatalogEntry[] {
     const rows = options.includeArchived
-      ? this.db.prepare(`
+      ? (this.db
+          .prepare(
+            `
         SELECT id, name, description, icon_file_path, theme_main, theme_sub, state,
           created_at, updated_at, archived_at
         FROM characters
         ORDER BY state ASC, updated_at DESC, name ASC
-      `).all() as CharacterRow[]
-      : this.db.prepare(`
+      `,
+          )
+          .all() as CharacterRow[])
+      : (this.db
+          .prepare(
+            `
         SELECT id, name, description, icon_file_path, theme_main, theme_sub, state,
           created_at, updated_at, archived_at
         FROM characters
         WHERE state = 'active'
         ORDER BY updated_at DESC, name ASC
-      `).all() as CharacterRow[];
+      `,
+          )
+          .all() as CharacterRow[]);
 
     return rows.map((row) => this.toEntry(row));
   }
 
+  /** 指定 ID の表示用カタログ項目だけを返す。定義ファイルは読まない。 */
   getCharacterCatalogEntry(characterId: string): CharacterCatalogEntry | null {
     const row = this.readCharacterRow(characterId);
     return row ? this.toEntry(row) : null;
   }
 
+  /** カタログ項目に定義とノートを添えて返す。該当行がなければ null。 */
   async getCharacter(characterId: string): Promise<CharacterDetail | null> {
     const row = this.readCharacterRow(characterId);
     if (!row) {
@@ -478,14 +628,19 @@ export class CharacterStorage {
     };
   }
 
+  /** 初期ファイルを用意してからカタログ行を確定し、失敗時は今回新たに作ったディレクトリを片付ける。 */
   async createCharacter(input: CreateCharacterInput): Promise<CharacterDetail> {
     const name = normalizeName(input.name);
     const description = normalizeDescription(input.description);
     const theme = normalizeTheme(input.theme);
     const characterId = this.createUniqueCharacterId(name);
-    const sourceIconFilePath = normalizeCharacterIconPathInput(input.iconFilePath);
+    const sourceIconFilePath = normalizeCharacterIconPathInput(
+      input.iconFilePath,
+    );
     const createdAt = nowIso();
-    const definitionMarkdown = input.definitionMarkdown ?? buildDefaultCharacterDefinition(name, description);
+    const definitionMarkdown =
+      input.definitionMarkdown ??
+      buildDefaultCharacterDefinition(name, description);
     const notesMarkdown = input.notesMarkdown ?? buildDefaultCharacterNotes();
     let transactionStarted = false;
     let characterDirectoryCreated = false;
@@ -499,32 +654,46 @@ export class CharacterStorage {
         await mkdir(this.characterDirectory(characterId), { recursive: true });
         characterDirectoryCreated = true;
       }
-      const iconFilePath = await this.copyIconFromSourcePath(characterId, sourceIconFilePath);
-      await this.writeDefinitionFiles(characterId, definitionMarkdown, notesMarkdown);
+      const iconFilePath = await this.copyIconFromSourcePath(
+        characterId,
+        sourceIconFilePath,
+      );
+      await this.writeDefinitionFiles(
+        characterId,
+        definitionMarkdown,
+        notesMarkdown,
+      );
       this.db.exec("BEGIN IMMEDIATE TRANSACTION");
       transactionStarted = true;
-      this.db.prepare(`
+      this.db
+        .prepare(
+          `
         INSERT INTO characters (
           id, name, description, icon_file_path, theme_main, theme_sub,
           state, created_at, updated_at, archived_at
         ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)
-      `).run(
-        characterId,
-        name,
-        description,
-        iconFilePath,
-        theme.main,
-        theme.sub,
-        createdAt,
-        createdAt,
-      );
+      `,
+        )
+        .run(
+          characterId,
+          name,
+          description,
+          iconFilePath,
+          theme.main,
+          theme.sub,
+          createdAt,
+          createdAt,
+        );
       this.db.exec("COMMIT");
     } catch (error) {
       if (transactionStarted) {
         this.db.exec("ROLLBACK");
       }
       if (characterDirectoryCreated) {
-        await rm(this.characterDirectory(characterId), { recursive: true, force: true });
+        await rm(this.characterDirectory(characterId), {
+          recursive: true,
+          force: true,
+        });
       }
       throw error;
     }
@@ -536,7 +705,10 @@ export class CharacterStorage {
     return created;
   }
 
-  async updateCharacterMetadata(input: UpdateCharacterMetadataInput): Promise<CharacterDetail> {
+  /** 未指定の項目を保持し、メタデータを更新してから不要になった管理アイコンを片付ける。 */
+  async updateCharacterMetadata(
+    input: UpdateCharacterMetadataInput,
+  ): Promise<CharacterDetail> {
     const current = await this.getCharacter(input.characterId);
     if (!current) {
       throw new Error("The Character could not be found.");
@@ -546,26 +718,45 @@ export class CharacterStorage {
       throw new Error("The Character could not be found.");
     }
 
-    const name = input.name === undefined ? current.name : normalizeName(input.name);
-    const description = input.description === undefined
-      ? current.description
-      : normalizeDescription(input.description);
-    const iconFilePath = input.iconFilePath === undefined
-      ? currentRow.icon_file_path
-      : await this.copyIconFromSourcePath(
-          input.characterId,
-          normalizeCharacterIconPathInput(input.iconFilePath),
-          currentRow.icon_file_path,
-        );
+    const name =
+      input.name === undefined ? current.name : normalizeName(input.name);
+    const description =
+      input.description === undefined
+        ? current.description
+        : normalizeDescription(input.description);
+    const iconFilePath =
+      input.iconFilePath === undefined
+        ? currentRow.icon_file_path
+        : await this.copyIconFromSourcePath(
+            input.characterId,
+            normalizeCharacterIconPathInput(input.iconFilePath),
+            currentRow.icon_file_path,
+          );
     const theme = normalizeTheme(input.theme, current.theme);
     const updatedAt = nowIso();
 
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE characters
       SET name = ?, description = ?, icon_file_path = ?, theme_main = ?, theme_sub = ?, updated_at = ?
       WHERE id = ?
-    `).run(name, description, iconFilePath, theme.main, theme.sub, updatedAt, input.characterId);
-    await this.cleanupReplacedManagedIcon(input.characterId, currentRow.icon_file_path, iconFilePath);
+    `,
+      )
+      .run(
+        name,
+        description,
+        iconFilePath,
+        theme.main,
+        theme.sub,
+        updatedAt,
+        input.characterId,
+      );
+    await this.cleanupReplacedManagedIcon(
+      input.characterId,
+      currentRow.icon_file_path,
+      iconFilePath,
+    );
 
     const updated = await this.getCharacter(input.characterId);
     if (!updated) {
@@ -574,14 +765,23 @@ export class CharacterStorage {
     return updated;
   }
 
-  async updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Promise<CharacterDetail> {
+  /** 定義ファイルを検証して更新し、カタログの更新日時も進めた状態を返す。 */
+  async updateCharacterDefinition(
+    input: UpdateCharacterDefinitionInput,
+  ): Promise<CharacterDetail> {
     const current = await this.getCharacter(input.characterId);
     if (!current) {
       throw new Error("The Character could not be found.");
     }
 
-    await this.writeDefinitionFiles(input.characterId, input.definitionMarkdown, input.notesMarkdown);
-    this.db.prepare("UPDATE characters SET updated_at = ? WHERE id = ?").run(nowIso(), input.characterId);
+    await this.writeDefinitionFiles(
+      input.characterId,
+      input.definitionMarkdown,
+      input.notesMarkdown,
+    );
+    this.db
+      .prepare("UPDATE characters SET updated_at = ? WHERE id = ?")
+      .run(nowIso(), input.characterId);
 
     const updated = await this.getCharacter(input.characterId);
     if (!updated) {
@@ -590,6 +790,7 @@ export class CharacterStorage {
     return updated;
   }
 
+  /** 定義ファイルを削除せず、カタログから新規起動に選べない状態へ移す。 */
   async archiveCharacter(characterId: string): Promise<CharacterCatalogEntry> {
     const current = await this.getCharacter(characterId);
     if (!current) {
@@ -597,11 +798,15 @@ export class CharacterStorage {
     }
 
     const archivedAt = nowIso();
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE characters
       SET state = 'archived', archived_at = ?, updated_at = ?
       WHERE id = ?
-    `).run(archivedAt, archivedAt, characterId);
+    `,
+      )
+      .run(archivedAt, archivedAt, characterId);
 
     const archived = this.readCharacterRow(characterId);
     if (!archived) {
@@ -610,7 +815,10 @@ export class CharacterStorage {
     return this.toEntry(archived);
   }
 
-  async resolveLaunchCharacter(input: ResolveLaunchCharacterInput = {}): Promise<CharacterDetail | null> {
+  /** 明示された Character が有効な場合だけ起動対象として返し、別の Character で代用しない。 */
+  async resolveLaunchCharacter(
+    input: ResolveLaunchCharacterInput = {},
+  ): Promise<CharacterDetail | null> {
     if (!input.characterId) {
       return null;
     }
@@ -619,7 +827,10 @@ export class CharacterStorage {
     return preferred?.state === "active" ? preferred : null;
   }
 
-  async createRuntimeSnapshot(characterId: string): Promise<CharacterRuntimeSnapshot | null> {
+  /** 利用できる有効な定義を取り込み、本文の識別値とサイズを記録する。無効な定義では null。 */
+  async createRuntimeSnapshot(
+    characterId: string,
+  ): Promise<CharacterRuntimeSnapshot | null> {
     if (isUnknownCharacterOwnerId(characterId)) {
       return null;
     }
@@ -652,6 +863,7 @@ export class CharacterStorage {
     };
   }
 
+  /** 所有者を照合し、アーカイブ時や本文変更がない場合は既存のスナップショットを使う。 */
   async refreshRuntimeSnapshot(
     characterId: string,
     previousSnapshot: CharacterRuntimeSnapshot | null,
@@ -668,7 +880,9 @@ export class CharacterStorage {
     }
     if (row.state === "archived") {
       if (!previousSnapshot) {
-        throw new Error("The archived Character has no saved runtime snapshot.");
+        throw new Error(
+          "The archived Character has no saved runtime snapshot.",
+        );
       }
       return previousSnapshot;
     }
@@ -677,9 +891,12 @@ export class CharacterStorage {
     if (previousSnapshot?.definitionMarkdown === definitionMarkdown) {
       return previousSnapshot;
     }
-    const definitionResult = parseCharacterDefinitionMarkdown(definitionMarkdown);
+    const definitionResult =
+      parseCharacterDefinitionMarkdown(definitionMarkdown);
     if (!definitionResult.ok) {
-      throw new Error(`character.md validation failed: ${definitionResult.issues.map((issue) => issue.code).join(", ")}`);
+      throw new Error(
+        `character.md validation failed: ${definitionResult.issues.map((issue) => issue.code).join(", ")}`,
+      );
     }
     const entry = this.toEntry(row);
     return {
@@ -697,16 +914,19 @@ export class CharacterStorage {
     };
   }
 
+  /** Character の全ファイルを削除し、空の基準ディレクトリを作り直す。 */
   async deleteCharacterRootDirectory(): Promise<void> {
     await rm(this.characterRootPath, { recursive: true, force: true });
     await mkdir(this.characterRootPath, { recursive: true });
   }
 
+  /** カタログの SQLite 接続を閉じる。ワークスペースは保持する。 */
   close(): void {
     this.db.close();
   }
 }
 
+/** ファイル名から、このスキーマの初期化対象となる V4 データベースか判定する。 */
 export function isCharacterStorageSupportedDatabase(dbPath: string): boolean {
   return path.basename(dbPath) === APP_DATABASE_V4_FILENAME;
 }

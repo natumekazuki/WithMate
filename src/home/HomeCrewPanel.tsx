@@ -7,10 +7,16 @@ import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { LoadError } from "../ui/load-error.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { HomeSessionCard, MonitorStatusIcon } from "./HomeSessionCard.js";
-import { buildHomeCrewTree, filterHomeCrewTree, getHomeCrewDisplayCounts, type HomeCrewBranch } from "./home-crew-projection.js";
+import {
+  buildHomeCrewTree,
+  filterHomeCrewTree,
+  getHomeCrewDisplayCounts,
+  type HomeCrewBranch,
+} from "./home-crew-projection.js";
 import { openSessionWindow } from "./home-launch-commands.js";
 import { useHomeCrew } from "./use-home-crew.js";
 
+/** 指定の展開キーだけを反転し、元の集合を変更しない。 */
 function toggleKey(keys: ReadonlySet<string>, key: string) {
   const next = new Set(keys);
   if (next.has(key)) next.delete(key);
@@ -18,6 +24,7 @@ function toggleKey(keys: ReadonlySet<string>, key: string) {
   return next;
 }
 
+/** 表示する枝と Main・Auxiliary の展開状態、階層の深さ、各メンバーの操作。 */
 type CrewBranchProps = {
   branch: HomeCrewBranch;
   mainKeys: ReadonlySet<string>;
@@ -26,10 +33,14 @@ type CrewBranchProps = {
   onToggleMain: (key: string) => void;
   onToggleAuxiliary: (key: string) => void;
   onOpen: (member: HomeCrewMember, auxiliarySessionId?: string) => void;
-  onMenu: (member: HomeCrewMember, point: SessionMonitorContextMenuPoint) => void;
+  onMenu: (
+    member: HomeCrewMember,
+    point: SessionMonitorContextMenuPoint,
+  ) => void;
   depth: number;
 };
 
+/** Main と子孫の状態を表示し、検索中の枝の開き方を通常時の展開設定と分ける。 */
 function CrewBranch({ branch, ...props }: CrewBranchProps) {
   const { node, children } = branch;
   const { member } = node;
@@ -41,7 +52,9 @@ function CrewBranch({ branch, ...props }: CrewBranchProps) {
   const action = `${expanded ? "Hide" : "Show"} Children of ${title}`;
   const details = [
     `${openCount} descendant ${node.openDescendants === 1 ? "window" : "windows"} open`,
-    ...node.descendantStates.map(({ label, count }) => `${label}: ${count.toLocaleString("en-US")}`),
+    ...node.descendantStates.map(
+      ({ label, count }) => `${label}: ${count.toLocaleString("en-US")}`,
+    ),
     ...(node.hasUnreadDescendant ? ["Unread Result"] : []),
   ].join("; ");
   const mainDisclosure = hasChildren ? (
@@ -57,7 +70,13 @@ function CrewBranch({ branch, ...props }: CrewBranchProps) {
       <ComposerIcon name="main" />
       <span className="home-monitor-status-cluster">
         {getHomeCrewDisplayCounts(node.descendantStates).map((state) => (
-          <MonitorStatusIcon key={state.label} kind={state.kind} label={state.label} count={state.count} description={state.description} />
+          <MonitorStatusIcon
+            key={state.label}
+            kind={state.kind}
+            label={state.label}
+            count={state.count}
+            description={state.description}
+          />
         ))}
       </span>
       <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
@@ -79,47 +98,102 @@ function CrewBranch({ branch, ...props }: CrewBranchProps) {
         onShowContextMenu={(point) => props.onMenu(member, point)}
       />
       {hasChildren && expanded ? (
-        <ul id={childListId} className={`home-crew-tree home-crew-children${props.depth >= 5 ? " home-crew-deep-children" : ""}`} aria-label={`Children of ${title}`}>
-          {children.map((child) => <CrewBranch key={child.node.key} branch={child} {...props} depth={props.depth + 1} />)}
+        <ul
+          id={childListId}
+          className={`home-crew-tree home-crew-children${props.depth >= 5 ? " home-crew-deep-children" : ""}`}
+          aria-label={`Children of ${title}`}
+        >
+          {children.map((child) => (
+            <CrewBranch
+              key={child.node.key}
+              branch={child}
+              {...props}
+              depth={props.depth + 1}
+            />
+          ))}
         </ul>
       ) : null}
     </li>
   );
 }
 
-export function HomeCrewPanel({ active, searchText }: { active: boolean; searchText: string }) {
+/** 有効なタブで Crew 一覧を取得し、検索中の絞り込みを解除しても通常の展開状態へ戻れるようにする。 */
+export function HomeCrewPanel({
+  active,
+  searchText,
+}: {
+  active: boolean;
+  searchText: string;
+}) {
   const api = getWithMateApi();
   const { snapshot, pending, error, refresh } = useHomeCrew(api, active);
-  const [manualMainKeys, setManualMainKeys] = useState<ReadonlySet<string>>(new Set());
-  const [auxiliaryKeys, setAuxiliaryKeys] = useState<ReadonlySet<string>>(new Set());
-  const [searchExpansion, setSearchExpansion] = useState<{ query: string; collapsed: ReadonlySet<string> }>({ query: "", collapsed: new Set() });
+  const [manualMainKeys, setManualMainKeys] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const [auxiliaryKeys, setAuxiliaryKeys] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const [searchExpansion, setSearchExpansion] = useState<{
+    query: string;
+    collapsed: ReadonlySet<string>;
+  }>({ query: "", collapsed: new Set() });
   const [actionError, setActionError] = useState("");
   const menuPending = useRef(false);
   const query = searchText.trim().toLocaleLowerCase();
-  if (searchExpansion.query !== query) setSearchExpansion({ query, collapsed: new Set() });
-  const tree = useMemo(() => snapshot ? buildHomeCrewTree(snapshot.entries, snapshot.auxiliarySessions) : [], [snapshot]);
-  const filtered = useMemo(() => filterHomeCrewTree(tree, query), [tree, query]);
+  if (searchExpansion.query !== query)
+    setSearchExpansion({ query, collapsed: new Set() });
+  const tree = useMemo(
+    () =>
+      snapshot
+        ? buildHomeCrewTree(snapshot.entries, snapshot.auxiliarySessions)
+        : [],
+    [snapshot],
+  );
+  const filtered = useMemo(
+    () => filterHomeCrewTree(tree, query),
+    [tree, query],
+  );
 
   if (!active) return null;
 
-  const openMember = async (member: HomeCrewMember, auxiliarySessionId?: string) => {
+  /** 選んだ Main と任意の Auxiliary を開き、取得失敗とは別に操作の失敗を表示する。 */
+  const openMember = async (
+    member: HomeCrewMember,
+    auxiliarySessionId?: string,
+  ) => {
     setActionError("");
     try {
       await openSessionWindow(member.id, auxiliarySessionId);
     } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : "Could not open session window.");
+      setActionError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not open session window.",
+      );
     }
   };
-  const showMenu = async (member: HomeCrewMember, point: SessionMonitorContextMenuPoint) => {
+  /** 正確なメンバーへのメニューを一度に一件だけ開き、閉じる操作の結果が返れば一覧を読み直す。 */
+  const showMenu = async (
+    member: HomeCrewMember,
+    point: SessionMonitorContextMenuPoint,
+  ) => {
     if (!api || menuPending.current) return;
     menuPending.current = true;
     setActionError("");
     try {
-      const result = await api.showHomeCrewContextMenu({ sessionId: member.id, incarnationId: member.incarnationId, point });
+      const result = await api.showHomeCrewContextMenu({
+        sessionId: member.id,
+        incarnationId: member.incarnationId,
+        point,
+      });
       if (result.status === "failed") setActionError(result.message);
       if (result.status === "closed" || result.status === "failed") refresh();
     } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : "Could not complete Crew action.");
+      setActionError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not complete Crew action.",
+      );
       refresh();
     } finally {
       menuPending.current = false;
@@ -127,27 +201,56 @@ export function HomeCrewPanel({ active, searchText }: { active: boolean; searchT
   };
 
   return (
-    <section id="home-panel-crew" className="home-monitor-panel home-crew-panel" role="tabpanel" aria-label="Crew">
+    <section
+      id="home-panel-crew"
+      className="home-monitor-panel home-crew-panel"
+      role="tabpanel"
+      aria-label="Crew"
+    >
       <header className="home-monitor-section-head">
         <h3>Crews</h3>
-        {snapshot ? <span>{filtered.length.toLocaleString("en-US")}</span> : null}
+        {snapshot ? (
+          <span>{filtered.length.toLocaleString("en-US")}</span>
+        ) : null}
       </header>
-      {error ? <LoadError message={error} onRetry={refresh} retryBusy={pending} /> : null}
+      {error ? (
+        <LoadError message={error} onRetry={refresh} retryBusy={pending} />
+      ) : null}
       {actionError ? <LoadError message={actionError} /> : null}
       <div className="home-crew-body" aria-busy={pending}>
-        {!snapshot && pending ? <LoadingIndicator label="Loading Crews" /> : null}
+        {!snapshot && pending ? (
+          <LoadingIndicator label="Loading Crews" />
+        ) : null}
         {snapshot ? (
-          <ul className="home-crew-tree" aria-label={filtered.length ? "Crews With Open Session Windows" : query ? "No Matching Crews" : "No Crews With Open Session Windows"}>
+          <ul
+            className="home-crew-tree"
+            aria-label={
+              filtered.length
+                ? "Crews With Open Session Windows"
+                : query
+                  ? "No Matching Crews"
+                  : "No Crews With Open Session Windows"
+            }
+          >
             {filtered.map((branch) => (
-              <CrewBranch key={branch.node.key} branch={branch} depth={0}
+              <CrewBranch
+                key={branch.node.key}
+                branch={branch}
+                depth={0}
                 searching={Boolean(query)}
                 mainKeys={query ? searchExpansion.collapsed : manualMainKeys}
                 auxiliaryKeys={auxiliaryKeys}
                 onToggleMain={(key) => {
-                  if (query) setSearchExpansion((state) => ({ query, collapsed: toggleKey(state.collapsed, key) }));
+                  if (query)
+                    setSearchExpansion((state) => ({
+                      query,
+                      collapsed: toggleKey(state.collapsed, key),
+                    }));
                   else setManualMainKeys((keys) => toggleKey(keys, key));
                 }}
-                onToggleAuxiliary={(key) => setAuxiliaryKeys((keys) => toggleKey(keys, key))}
+                onToggleAuxiliary={(key) =>
+                  setAuxiliaryKeys((keys) => toggleKey(keys, key))
+                }
                 onOpen={openMember}
                 onMenu={showMenu}
               />

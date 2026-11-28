@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DEFAULT_CHARACTER_THEME, type CharacterDetail } from "../../src-shared/character/character-catalog.js";
+import {
+  DEFAULT_CHARACTER_THEME,
+  type CharacterDetail,
+} from "../../src-shared/character/character-catalog.js";
 import {
   CHARACTER_DEFINITION_MAX_CHARACTERS,
   countCharacterDefinitionCharacters,
@@ -22,6 +25,7 @@ import {
   updateCharacterEditorDraft,
 } from "../../src/character-editor/character-editor-state.js";
 
+/** Character Editor の下書き生成、読み込み、保存結果の適用、入力検証の境界を扱う。 */
 describe("Character editor state", () => {
   // @test-value v1
   // kind = "contract"
@@ -31,6 +35,7 @@ describe("Character editor state", () => {
   // scope = "character-editor-new-draft"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 新規定義と notes のひな形を生成し、定義が V5 の形式と文字数制限を満たしつつ旧来の例文セクションを含まないことを確認する。 */
   it("新規 draft は V5 character.md の初期本文を作る", () => {
     const draft = createNewCharacterEditorDraft("Mia");
 
@@ -42,8 +47,14 @@ describe("Character editor state", () => {
     assert.match(draft.definitionMarkdown, /## Experience Goal/);
     assert.match(draft.definitionMarkdown, /## Identity Core/);
     assert.match(draft.definitionMarkdown, /## Attention and Appraisal/);
-    assert.match(draft.definitionMarkdown, /## Social Intent \/ User Relationship/);
-    assert.match(draft.definitionMarkdown, /## Emotional Dynamics and Core Tensions/);
+    assert.match(
+      draft.definitionMarkdown,
+      /## Social Intent \/ User Relationship/,
+    );
+    assert.match(
+      draft.definitionMarkdown,
+      /## Emotional Dynamics and Core Tensions/,
+    );
     assert.match(draft.definitionMarkdown, /## Thinking and Action Style/);
     assert.match(draft.definitionMarkdown, /### Identity Invariants/);
     assert.match(draft.definitionMarkdown, /### Distributional Tendencies/);
@@ -55,9 +66,18 @@ describe("Character editor state", () => {
     assert.doesNotMatch(draft.definitionMarkdown, /## Coding Agent Behavior/);
     assert.doesNotMatch(draft.definitionMarkdown, /## Knowledge Policy/);
     assert.doesNotMatch(draft.definitionMarkdown, /## Runtime Notes/);
-    assert.deepEqual(validateCharacterDefinitionMarkdown(draft.definitionMarkdown), []);
-    assert.ok(countCharacterDefinitionCharacters(draft.definitionMarkdown) <= CHARACTER_DEFINITION_MAX_CHARACTERS);
-    assert.match(buildDefaultCharacterDefinition("   "), /name: "New Character"/);
+    assert.deepEqual(
+      validateCharacterDefinitionMarkdown(draft.definitionMarkdown),
+      [],
+    );
+    assert.ok(
+      countCharacterDefinitionCharacters(draft.definitionMarkdown) <=
+        CHARACTER_DEFINITION_MAX_CHARACTERS,
+    );
+    assert.match(
+      buildDefaultCharacterDefinition("   "),
+      /name: "New Character"/,
+    );
     assert.match(draft.notesMarkdown, /## Observation Log/);
     assert.match(draft.notesMarkdown, /## Revision Guardrails/);
     assert.match(draft.notesMarkdown, /## Validation Summary/);
@@ -72,6 +92,7 @@ describe("Character editor state", () => {
   // scope = "character-editor-draft-name-update"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 未編集の新規定義だけを改名に合わせて再生成する。本文にユーザー編集があれば、改名しても元の本文を保つ。 */
   it("未編集の新規 character.md だけ name 変更に追従する", () => {
     const draft = createNewCharacterEditorDraft();
     const renamed = updateCharacterEditorDraft(draft, { name: "Mia" });
@@ -83,7 +104,10 @@ describe("Character editor state", () => {
     assert.doesNotMatch(renamed.notesMarkdown, /New Character/);
 
     const edited = updateCharacterEditorDraft(
-      { ...draft, definitionMarkdown: `${draft.definitionMarkdown}\n## Custom\n` },
+      {
+        ...draft,
+        definitionMarkdown: `${draft.definitionMarkdown}\n## Custom\n`,
+      },
       { name: "Noa" },
     );
     assert.equal(edited.name, "Noa");
@@ -91,6 +115,7 @@ describe("Character editor state", () => {
     assert.match(edited.definitionMarkdown, /## Custom/);
   });
 
+  /** 永続化内容から作った下書きは未変更と見なし、説明や状態の変更と、保存先のない新規下書きだけを未保存と判定する。 */
   it("persisted detail から dirty 判定できる", () => {
     const detail: CharacterDetail = {
       id: "mia",
@@ -105,8 +130,8 @@ describe("Character editor state", () => {
       definitionMarkdown: [
         "---",
         "schema: withmate-character-v5",
-        "name: \"Mia\"",
-        "description: \"first\"",
+        'name: "Mia"',
+        'description: "first"',
         "---",
         "",
         "# Profile",
@@ -116,9 +141,18 @@ describe("Character editor state", () => {
     const draft = createCharacterEditorDraftFromDetail(detail);
 
     assert.equal(isCharacterEditorDraftDirty(draft, detail), false);
-    assert.equal(isCharacterEditorDraftDirty({ ...draft, description: "changed" }, detail), true);
-    assert.equal(isCharacterEditorDraftDirty({ ...draft, state: "archived" }, detail), true);
-    assert.equal(isCharacterEditorDraftDirty(createNewCharacterEditorDraft(), null), true);
+    assert.equal(
+      isCharacterEditorDraftDirty({ ...draft, description: "changed" }, detail),
+      true,
+    );
+    assert.equal(
+      isCharacterEditorDraftDirty({ ...draft, state: "archived" }, detail),
+      true,
+    );
+    assert.equal(
+      isCharacterEditorDraftDirty(createNewCharacterEditorDraft(), null),
+      true,
+    );
   });
 
   // @test-value v2
@@ -133,6 +167,7 @@ describe("Character editor state", () => {
   // impact = "新しい編集の消失と、次の保存を不要にする誤ったSaved状態を防ぐ"
   // distinction = "保存APIの型検査では検出できない、応答とローカルdraftの時間的競合を確認する"
   // @end-test-value
+  /** 保存開始後に加えた定義の編集は、保存済みデータが到着しても維持し、保存済み内容との差分として検出する。 */
   it("保存中に追加した編集を保存済みdraftで上書きしない", () => {
     const savedDetail: CharacterDetail = {
       id: "mia",
@@ -144,19 +179,28 @@ describe("Character editor state", () => {
       createdAt: "2026-06-14T00:00:00.000Z",
       updatedAt: "2026-06-14T00:00:00.000Z",
       archivedAt: null,
-      definitionMarkdown: "---\nschema: withmate-character-v5\nname: \"Mia\"\ndescription: \"saved\"\n---\n\n# Saved",
+      definitionMarkdown:
+        '---\nschema: withmate-character-v5\nname: "Mia"\ndescription: "saved"\n---\n\n# Saved',
       notesMarkdown: "# Saved notes",
     };
     const savedDraft = createCharacterEditorDraftFromDetail(savedDetail);
     const draftAtSave = { ...savedDraft, description: "before save" };
-    const currentDraft = { ...draftAtSave, definitionMarkdown: `${draftAtSave.definitionMarkdown}\n## New edit` };
+    const currentDraft = {
+      ...draftAtSave,
+      definitionMarkdown: `${draftAtSave.definitionMarkdown}\n## New edit`,
+    };
 
-    const reconciled = reconcileCharacterEditorDraftAfterSave(savedDraft, draftAtSave, currentDraft);
+    const reconciled = reconcileCharacterEditorDraftAfterSave(
+      savedDraft,
+      draftAtSave,
+      currentDraft,
+    );
 
     assert.equal(areCharacterEditorDraftsEqual(reconciled, currentDraft), true);
     assert.equal(isCharacterEditorDraftDirty(reconciled, savedDetail), true);
   });
 
+  /** 有効な定義の frontmatter を読み込み時の名前・説明に優先し、既存のカタログと値が異なるなら未保存の変更として扱う。 */
   it("persisted detail 読み込み時は character.md frontmatter の metadata を editor draft に反映する", () => {
     const detail: CharacterDetail = {
       id: "mia",
@@ -171,8 +215,8 @@ describe("Character editor state", () => {
       definitionMarkdown: [
         "---",
         "schema: withmate-character-v5",
-        "name: \"Frontmatter Mia\"",
-        "description: \"frontmatter description\"",
+        'name: "Frontmatter Mia"',
+        'description: "frontmatter description"',
         "---",
         "",
         "# Profile",
@@ -187,12 +231,13 @@ describe("Character editor state", () => {
     assert.equal(isCharacterEditorDraftDirty(draft, detail), true);
   });
 
+  /** 定義が文字数上限を超える場合はカタログの名前と説明を維持し、既存定義を読み込んだだけで未保存扱いにしない。 */
   it("上限超過の persisted character.md は catalog metadata を保ち Improve の dirty gate を開ける", () => {
     const definitionMarkdown = [
       "---",
       "schema: withmate-character-v5",
-      "name: \"Muse\"",
-      "description: \"stored description\"",
+      'name: "Muse"',
+      'description: "stored description"',
       "---",
       "",
       "# Profile",
@@ -212,7 +257,10 @@ describe("Character editor state", () => {
       notesMarkdown: "",
     };
 
-    assert.ok(countCharacterDefinitionCharacters(definitionMarkdown) > CHARACTER_DEFINITION_MAX_CHARACTERS);
+    assert.ok(
+      countCharacterDefinitionCharacters(definitionMarkdown) >
+        CHARACTER_DEFINITION_MAX_CHARACTERS,
+    );
 
     const draft = createCharacterEditorDraftFromDetail(detail);
 
@@ -221,11 +269,40 @@ describe("Character editor state", () => {
     assert.equal(isCharacterEditorDraftDirty(draft, detail), false);
   });
 
+  /** 未保存のまま離れる場合だけ確認を要求し、保存中、変更なし、閉じることを確認済みの場合には離脱を妨げない。 */
   it("close 確認済みの beforeunload は dirty draft でもブロックしない", () => {
-    assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: true, saving: false, confirmedClose: false }), true);
-    assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: true, saving: true, confirmedClose: false }), false);
-    assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: false, saving: false, confirmedClose: false }), false);
-    assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: true, saving: false, confirmedClose: true }), false);
+    assert.equal(
+      shouldBlockCharacterEditorBeforeUnload({
+        dirty: true,
+        saving: false,
+        confirmedClose: false,
+      }),
+      true,
+    );
+    assert.equal(
+      shouldBlockCharacterEditorBeforeUnload({
+        dirty: true,
+        saving: true,
+        confirmedClose: false,
+      }),
+      false,
+    );
+    assert.equal(
+      shouldBlockCharacterEditorBeforeUnload({
+        dirty: false,
+        saving: false,
+        confirmedClose: false,
+      }),
+      false,
+    );
+    assert.equal(
+      shouldBlockCharacterEditorBeforeUnload({
+        dirty: true,
+        saving: false,
+        confirmedClose: true,
+      }),
+      false,
+    );
   });
 
   // @test-value v2
@@ -240,11 +317,21 @@ describe("Character editor state", () => {
   // impact = "保存時のicon materialization境界を守り、ユーザーが不正入力の原因を判別して修正できる"
   // distinction = "拡張子だけでなく、既存iconの同値path・URI形式・大文字小文字を含むvalidation投影を確認する"
   // @end-test-value
+  /** 新規または置換するアイコンをローカル PNG/JPEG に絞り、同一参照なら既存の形式を許す。URI と形式のエラーは区別する。 */
   it("新規・置換 icon は PNG/JPEG の local path に制限し、既存 icon はそのまま許可する", () => {
     assert.equal(getCharacterIconDraftValidationMessage("", null), null);
-    assert.equal(getCharacterIconDraftValidationMessage("C:\\icons\\muse.PNG", null), null);
-    assert.equal(getCharacterIconDraftValidationMessage("/icons/muse.jpg", null), null);
-    assert.equal(getCharacterIconDraftValidationMessage("icons/muse.jpeg", null), null);
+    assert.equal(
+      getCharacterIconDraftValidationMessage("C:\\icons\\muse.PNG", null),
+      null,
+    );
+    assert.equal(
+      getCharacterIconDraftValidationMessage("/icons/muse.jpg", null),
+      null,
+    );
+    assert.equal(
+      getCharacterIconDraftValidationMessage("icons/muse.jpeg", null),
+      null,
+    );
     assert.equal(
       getCharacterIconDraftValidationMessage("file:///icons/muse.png", null),
       "Character icon must use a local file path.",
@@ -254,7 +341,10 @@ describe("Character editor state", () => {
       "Character icon must be a PNG, JPG, or JPEG image file.",
     );
     assert.equal(
-      getCharacterIconDraftValidationMessage("  /legacy/muse.webp  ", "/legacy/muse.webp"),
+      getCharacterIconDraftValidationMessage(
+        "  /legacy/muse.webp  ",
+        "/legacy/muse.webp",
+      ),
       null,
     );
     assert.equal(
@@ -272,7 +362,10 @@ describe("Character editor state", () => {
       null,
     );
     assert.equal(
-      getCharacterIconDraftValidationMessage("/legacy/Muse.webp", "/legacy/muse.webp"),
+      getCharacterIconDraftValidationMessage(
+        "/legacy/Muse.webp",
+        "/legacy/muse.webp",
+      ),
       "Character icon must be a PNG, JPG, or JPEG image file.",
     );
     assert.equal(
@@ -297,11 +390,15 @@ describe("Character editor state", () => {
       "Character icon must be a PNG, JPG, or JPEG image file.",
     );
     assert.equal(
-      getCharacterIconDraftValidationMessage("/legacy/other.gif", "/legacy/muse.webp"),
+      getCharacterIconDraftValidationMessage(
+        "/legacy/other.gif",
+        "/legacy/muse.webp",
+      ),
       "Character icon must be a PNG, JPG, or JPEG image file.",
     );
   });
 
+  /** 新規作成には表示情報と二つの Markdown 本文を渡すが、既定の Character に変更する指定は含めない。 */
   it("create payload はDefault指定を含めない", () => {
     const draft = createNewCharacterEditorDraft("Mia");
 
@@ -313,17 +410,21 @@ describe("Character editor state", () => {
       definitionMarkdown: draft.definitionMarkdown,
       notesMarkdown: draft.notesMarkdown,
     });
-    assert.equal("setDefault" in buildCreateCharacterInputFromDraft(draft), false);
+    assert.equal(
+      "setDefault" in buildCreateCharacterInputFromDraft(draft),
+      false,
+    );
   });
 
+  /** 作成時は下書きの名前欄よりも、有効な定義に書かれた名前と説明を保存用データとして優先する。 */
   it("create payload は character.md frontmatter の metadata を優先する", () => {
     const draft = {
       ...createNewCharacterEditorDraft("Mia"),
       definitionMarkdown: [
         "---",
         "schema: withmate-character-v5",
-        "name: \"Frontmatter Mia\"",
-        "description: \"frontmatter description\"",
+        'name: "Frontmatter Mia"',
+        'description: "frontmatter description"',
         "---",
         "",
         "# Profile",
@@ -336,22 +437,31 @@ describe("Character editor state", () => {
     assert.equal(input.description, "frontmatter description");
   });
 
+  /** 定義の入れ替えだけでは notes と表示名を変えず、インポートに表示情報を添えた場合にだけ名前と説明も置き換える。 */
   it("import / replace は character.md draft と任意 metadata を置き換える", () => {
     const draft = createNewCharacterEditorDraft("Mia");
-    const replaced = replaceCharacterDefinitionDraft(draft, "---\nschema: withmate-character-v5\nname: Noa\n---\n\n# Noa\n");
+    const replaced = replaceCharacterDefinitionDraft(
+      draft,
+      "---\nschema: withmate-character-v5\nname: Noa\n---\n\n# Noa\n",
+    );
 
     assert.match(replaced.definitionMarkdown, /name: Noa/);
     assert.equal(replaced.notesMarkdown, draft.notesMarkdown);
     assert.equal(replaced.name, "Mia");
 
-    const metadataReplaced = replaceCharacterDefinitionDraft(draft, replaced.definitionMarkdown, {
-      name: "Noa",
-      description: "Imported",
-    });
+    const metadataReplaced = replaceCharacterDefinitionDraft(
+      draft,
+      replaced.definitionMarkdown,
+      {
+        name: "Noa",
+        description: "Imported",
+      },
+    );
     assert.equal(metadataReplaced.name, "Noa");
     assert.equal(metadataReplaced.description, "Imported");
   });
 
+  /** 不正な定義と notes の問題をそれぞれ保持し、保存を止める問題一覧に双方を集約する。 */
   it("definition / notes validation issue を集約する", () => {
     const summary = buildCharacterEditorValidationSummary({
       ...createNewCharacterEditorDraft("Mia"),
@@ -361,6 +471,9 @@ describe("Character editor state", () => {
 
     assert.ok(summary.definitionIssues.length > 0);
     assert.ok(summary.notesIssues.length > 0);
-    assert.equal(summary.blockingIssues.length, summary.definitionIssues.length + summary.notesIssues.length);
+    assert.equal(
+      summary.blockingIssues.length,
+      summary.definitionIssues.length + summary.notesIssues.length,
+    );
   });
 });

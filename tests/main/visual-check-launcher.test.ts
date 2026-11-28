@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,15 +18,24 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
-const launcherPath = fileURLToPath(new URL("../../scripts/start-withmate-visual-check.ps1", import.meta.url));
-const harnessPath = fileURLToPath(new URL("../fixtures/visual-check-launcher.ps1", import.meta.url));
+const launcherPath = fileURLToPath(
+  new URL("../../scripts/start-withmate-visual-check.ps1", import.meta.url),
+);
+const harnessPath = fileURLToPath(
+  new URL("../fixtures/visual-check-launcher.ps1", import.meta.url),
+);
 const windowsOnly = { skip: process.platform !== "win32" };
 
+/** 起動ハーネスが返す処理順、起動引数と成功・失敗の観測結果。 */
 type LaunchReport = {
   result: { DataMode: string; Ready?: boolean; UserDataPath: string } | null;
   error: string | null;
   events: string[];
-  launch: { arguments: string[]; userDataPath: string; workingDirectory: string } | null;
+  launch: {
+    arguments: string[];
+    userDataPath: string;
+    workingDirectory: string;
+  } | null;
 };
 
 // @test-value v2
@@ -33,20 +50,35 @@ type LaunchReport = {
 // impact = "実rendererの確認を分離環境内で行い、通常起動にdebug引数を持ち込まない"
 // distinction = "PowerShellの引数組立てはTypeScriptやrenderer testでは検査できない。実OSプロセスを起動せず既存fixtureで境界を確認する"
 // @end-test-value
-test("visual-check enables explicit loopback browser inspection in its isolated launch", windowsOnly, async () => {
-  const fixture = await createFixture();
-  try {
-    await mkdir(fixture.target);
-    const report = await fixture.run("Reuse", "-RemoteDebuggingPort", "0");
-    assert.equal(report.error, null);
-    assert.equal(report.launch?.userDataPath, fixture.target);
-    assert.deepEqual(report.launch?.arguments, [
-      path.join(fixture.repository, "dist-electron", "src-electron", "main.js"),
-      "--withmate-visual-check", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
-    ]);
-  } finally { await fixture.dispose(); }
-});
+/** 明示的な検査ポートをループバックへ限定し、検証データと検証フラグを同じ起動へ渡す。 */
+test(
+  "visual-check enables explicit loopback browser inspection in its isolated launch",
+  windowsOnly,
+  async () => {
+    const fixture = await createFixture();
+    try {
+      await mkdir(fixture.target);
+      const report = await fixture.run("Reuse", "-RemoteDebuggingPort", "0");
+      assert.equal(report.error, null);
+      assert.equal(report.launch?.userDataPath, fixture.target);
+      assert.deepEqual(report.launch?.arguments, [
+        path.join(
+          fixture.repository,
+          "dist-electron",
+          "src-electron",
+          "main.js",
+        ),
+        "--withmate-visual-check",
+        "--remote-debugging-address=127.0.0.1",
+        "--remote-debugging-port=0",
+      ]);
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
 
+/** 本体のデータや起動を使わずに検証できるよう、一時領域へ偽の作業ツリーと保存先を作る。 */
 async function createFixture() {
   const root = await mkdtemp(path.join(tmpdir(), "withmate-visual-check-"));
   const repository = path.join(root, "worktree with spaces");
@@ -55,7 +87,9 @@ async function createFixture() {
   const source = path.join(dataRoot, "WithMate");
   const files: Record<string, string> = {
     "package.json": "{}",
-    "package-lock.json": JSON.stringify({ packages: { "node_modules/electron": { version: "1.2.3" } } }),
+    "package-lock.json": JSON.stringify({
+      packages: { "node_modules/electron": { version: "1.2.3" } },
+    }),
     "node_modules/electron/package.json": JSON.stringify({ version: "1.2.3" }),
     "node_modules/electron/dist/electron.exe": "",
     "dist-electron/src-electron/main.js": "",
@@ -70,17 +104,38 @@ async function createFixture() {
     await writeFile(filePath, contents);
   }
   return {
-    root, repository, dataRoot, target, source,
+    root,
+    repository,
+    dataRoot,
+    target,
+    source,
+    /** モードとオプションを非対話の PowerShell に渡し、ハーネスが出力した結果行を読む。 */
     async run(mode?: string, ...flags: string[]): Promise<LaunchReport> {
-      const { stdout } = await execute("pwsh.exe", [
-        "-NoProfile", "-NonInteractive", "-File", harnessPath,
-        "-LauncherPath", launcherPath, "-RepositoryPath", repository, "-DataRoot", dataRoot,
-        ...(mode ? ["-Mode", mode] : []), ...flags,
-      ], { timeout: 30_000, windowsHide: true });
-      const line = stdout.split(/\r?\n/).find((value) => value.startsWith("RESULT_JSON:"));
+      const { stdout } = await execute(
+        "pwsh.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-File",
+          harnessPath,
+          "-LauncherPath",
+          launcherPath,
+          "-RepositoryPath",
+          repository,
+          "-DataRoot",
+          dataRoot,
+          ...(mode ? ["-Mode", mode] : []),
+          ...flags,
+        ],
+        { timeout: 30_000, windowsHide: true },
+      );
+      const line = stdout
+        .split(/\r?\n/)
+        .find((value) => value.startsWith("RESULT_JSON:"));
       assert.ok(line, stdout);
       return JSON.parse(line.slice("RESULT_JSON:".length)) as LaunchReport;
     },
+    /** ケース専用の一時ルートを削除する。 */
     async dispose() {
       await rm(root, { recursive: true, force: true });
     },
@@ -99,26 +154,43 @@ async function createFixture() {
 // impact = "再利用する検証データの消失と意図しない本体データ使用を防ぐ"
 // distinction = "型検査やDB単体testでは検証scriptの既定modeと起動先を確認できない。Windows上で一時directoryだけを使用する"
 // @end-test-value
-test("visual-check defaults to Reuse and preserves data without a copy source", windowsOnly, async () => {
-  const fixture = await createFixture();
-  try {
-    await mkdir(fixture.target);
-    await writeFile(path.join(fixture.target, "retained.txt"), "retained");
-    const report = await fixture.run();
-    assert.equal(report.error, null);
-    assert.equal(report.result?.DataMode, "Reuse");
-    assert.equal(await readFile(path.join(fixture.target, "retained.txt"), "utf8"), "retained");
-    assert.equal(existsSync(fixture.source), false);
-    assert.equal(report.launch?.userDataPath, fixture.target);
-    assert.deepEqual(report.launch?.arguments, [
-      path.join(fixture.repository, "dist-electron", "src-electron", "main.js"),
-      "--withmate-visual-check",
-    ]);
-    assert.deepEqual(report.events, ["npm run build", "process-scan", "launch"]);
-  } finally {
-    await fixture.dispose();
-  }
-});
+/** モード省略時はコピー元がなくても再利用し、既存データの内容と起動先を保つ。 */
+test(
+  "visual-check defaults to Reuse and preserves data without a copy source",
+  windowsOnly,
+  async () => {
+    const fixture = await createFixture();
+    try {
+      await mkdir(fixture.target);
+      await writeFile(path.join(fixture.target, "retained.txt"), "retained");
+      const report = await fixture.run();
+      assert.equal(report.error, null);
+      assert.equal(report.result?.DataMode, "Reuse");
+      assert.equal(
+        await readFile(path.join(fixture.target, "retained.txt"), "utf8"),
+        "retained",
+      );
+      assert.equal(existsSync(fixture.source), false);
+      assert.equal(report.launch?.userDataPath, fixture.target);
+      assert.deepEqual(report.launch?.arguments, [
+        path.join(
+          fixture.repository,
+          "dist-electron",
+          "src-electron",
+          "main.js",
+        ),
+        "--withmate-visual-check",
+      ]);
+      assert.deepEqual(report.events, [
+        "npm run build",
+        "process-scan",
+        "launch",
+      ]);
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -130,22 +202,29 @@ test("visual-check defaults to Reuse and preserves data without a copy source", 
 // scope = "visual-check launcher Fresh"
 // lifecycle = "permanent"
 // @end-test-value
-test("Fresh launches with a missing or empty target and no source", windowsOnly, async () => {
-  for (const existing of [false, true]) {
-    const fixture = await createFixture();
-    try {
-      if (existing) await mkdir(fixture.target);
-      const report = await fixture.run("Fresh");
-      assert.equal(report.error, null);
-      assert.equal(report.result?.DataMode, "Fresh");
-      assert.equal(report.launch?.userDataPath, fixture.target);
-      assert.deepEqual(await readdir(fixture.target), ["visual-check-process.json"]);
-      assert.equal(existsSync(fixture.source), false);
-    } finally {
-      await fixture.dispose();
+/** 保存先が未作成または空なら、コピー元なしで検証用ディレクトリから起動する。 */
+test(
+  "Fresh launches with a missing or empty target and no source",
+  windowsOnly,
+  async () => {
+    for (const existing of [false, true]) {
+      const fixture = await createFixture();
+      try {
+        if (existing) await mkdir(fixture.target);
+        const report = await fixture.run("Fresh");
+        assert.equal(report.error, null);
+        assert.equal(report.result?.DataMode, "Fresh");
+        assert.equal(report.launch?.userDataPath, fixture.target);
+        assert.deepEqual(await readdir(fixture.target), [
+          "visual-check-process.json",
+        ]);
+        assert.equal(existsSync(fixture.source), false);
+      } finally {
+        await fixture.dispose();
+      }
     }
-  }
-});
+  },
+);
 
 // @test-value v2
 // kind = "invariant"
@@ -159,42 +238,58 @@ test("Fresh launches with a missing or empty target and no source", windowsOnly,
 // impact = "操作誤りによる既存データの消失や稼働中の検証processの不要な停止を防ぐ"
 // distinction = "PowerShellのmode別制御と隠しfile判定は型検査・DB testでは担保できない。小規模fixtureで各拒否境界を実行する"
 // @end-test-value
-test("invalid mode and unsafe data states fail before build or process control", windowsOnly, async () => {
-  const cases = [
-    { mode: "Unknown", state: "missing", error: /ValidateSet|validation|argument/i },
-    { mode: "Reuse", state: "missing", error: /Fresh.*Copy/ },
-    { mode: "Copy", state: "missing", error: /Source userData was not found/ },
-    { mode: "Fresh", state: "file", error: /must be a directory/ },
-    { mode: "Reuse", state: "file", error: /must be a directory/ },
-    { mode: "Copy", state: "file", error: /must be a directory/ },
-    { mode: "Fresh", state: "hidden", error: /requires an empty/ },
-    { mode: "Fresh", state: "contents", error: /requires an empty/ },
-  ];
-  for (const entry of cases) {
-    const fixture = await createFixture();
-    try {
-      let preservedPath: string | undefined;
-      if (entry.state === "file") {
-        preservedPath = fixture.target;
-      } else if (entry.state !== "missing") {
-        await mkdir(fixture.target);
-        preservedPath = path.join(fixture.target, "keep.txt");
-      }
-      if (preservedPath) {
-        await writeFile(preservedPath, "keep");
-        if (entry.state === "hidden") {
-          await execute("attrib.exe", ["+H", preservedPath], { windowsHide: true });
+/** 不正なモードと危険な保存先を事前に拒み、隠しファイルも空判定から漏らさない。 */
+test(
+  "invalid mode and unsafe data states fail before build or process control",
+  windowsOnly,
+  async () => {
+    const cases = [
+      {
+        mode: "Unknown",
+        state: "missing",
+        error: /ValidateSet|validation|argument/i,
+      },
+      { mode: "Reuse", state: "missing", error: /Fresh.*Copy/ },
+      {
+        mode: "Copy",
+        state: "missing",
+        error: /Source userData was not found/,
+      },
+      { mode: "Fresh", state: "file", error: /must be a directory/ },
+      { mode: "Reuse", state: "file", error: /must be a directory/ },
+      { mode: "Copy", state: "file", error: /must be a directory/ },
+      { mode: "Fresh", state: "hidden", error: /requires an empty/ },
+      { mode: "Fresh", state: "contents", error: /requires an empty/ },
+    ];
+    for (const entry of cases) {
+      const fixture = await createFixture();
+      try {
+        let preservedPath: string | undefined;
+        if (entry.state === "file") {
+          preservedPath = fixture.target;
+        } else if (entry.state !== "missing") {
+          await mkdir(fixture.target);
+          preservedPath = path.join(fixture.target, "keep.txt");
         }
+        if (preservedPath) {
+          await writeFile(preservedPath, "keep");
+          if (entry.state === "hidden") {
+            await execute("attrib.exe", ["+H", preservedPath], {
+              windowsHide: true,
+            });
+          }
+        }
+        const report = await fixture.run(entry.mode);
+        assert.match(report.error ?? "", entry.error);
+        assert.deepEqual(report.events, []);
+        if (preservedPath)
+          assert.equal(await readFile(preservedPath, "utf8"), "keep");
+      } finally {
+        await fixture.dispose();
       }
-      const report = await fixture.run(entry.mode);
-      assert.match(report.error ?? "", entry.error);
-      assert.deepEqual(report.events, []);
-      if (preservedPath) assert.equal(await readFile(preservedPath, "utf8"), "keep");
-    } finally {
-      await fixture.dispose();
     }
-  }
-});
+  },
+);
 
 // @test-value v2
 // kind = "invariant"
@@ -206,17 +301,28 @@ test("invalid mode and unsafe data states fail before build or process control",
 // scope = "visual-check Fresh post-build preflight"
 // lifecycle = "permanent"
 // @end-test-value
-test("Fresh rechecks data after the build before process control", windowsOnly, async () => {
-  const fixture = await createFixture();
-  try {
-    const report = await fixture.run("Fresh", "-SeedDuringBuild");
-    assert.match(report.error ?? "", /requires an empty/);
-    assert.deepEqual(report.events, ["npm run build"]);
-    assert.equal(await readFile(path.join(fixture.target, "arrived-during-build.txt"), "utf8"), "keep");
-  } finally {
-    await fixture.dispose();
-  }
-});
+/** ビルド中に保存先へ追加されたファイルを検知し、プロセスへ触れる前に停止する。 */
+test(
+  "Fresh rechecks data after the build before process control",
+  windowsOnly,
+  async () => {
+    const fixture = await createFixture();
+    try {
+      const report = await fixture.run("Fresh", "-SeedDuringBuild");
+      assert.match(report.error ?? "", /requires an empty/);
+      assert.deepEqual(report.events, ["npm run build"]);
+      assert.equal(
+        await readFile(
+          path.join(fixture.target, "arrived-during-build.txt"),
+          "utf8",
+        ),
+        "keep",
+      );
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -230,36 +336,65 @@ test("Fresh rechecks data after the build before process control", windowsOnly, 
 // impact = "コピー元の保護と再現用snapshotの一貫性を維持する"
 // distinction = "実robocopyとSQLite backupを一時fixtureへ実行する。mockしたコピー結果やbuildだけではデータ境界を確認できない"
 // @end-test-value
-test("Copy replaces target files and snapshots SQLite without changing the source", windowsOnly, async () => {
-  const fixture = await createFixture();
-  try {
-    await mkdir(fixture.source);
-    await mkdir(fixture.target);
-    await writeFile(path.join(fixture.source, "settings.json"), '{"value":"source"}');
-    await writeFile(path.join(fixture.target, "obsolete.txt"), "old");
-    const sourceDb = path.join(fixture.source, "withmate-v6.db");
-    const database = new DatabaseSync(sourceDb);
-    database.exec("CREATE TABLE retained(value TEXT); INSERT INTO retained VALUES ('source')");
-    database.close();
-    const sourceBytes = await readFile(sourceDb);
-    const report = await fixture.run("Copy");
-    assert.equal(report.error, null);
-    assert.equal(report.result?.DataMode, "Copy");
-    assert.equal(await readFile(path.join(fixture.target, "settings.json"), "utf8"), '{"value":"source"}');
-    assert.equal(existsSync(path.join(fixture.target, "obsolete.txt")), false);
-    const copiedDb = new DatabaseSync(path.join(fixture.target, "withmate-v6.db"), { readOnly: true });
+/** コピー先の古いデータを除き、元の通常ファイルと SQLite の実体を変更せず複製する。 */
+test(
+  "Copy replaces target files and snapshots SQLite without changing the source",
+  windowsOnly,
+  async () => {
+    const fixture = await createFixture();
     try {
-      assert.equal((copiedDb.prepare("SELECT value FROM retained").get() as { value: string }).value, "source");
+      await mkdir(fixture.source);
+      await mkdir(fixture.target);
+      await writeFile(
+        path.join(fixture.source, "settings.json"),
+        '{"value":"source"}',
+      );
+      await writeFile(path.join(fixture.target, "obsolete.txt"), "old");
+      const sourceDb = path.join(fixture.source, "withmate-v6.db");
+      const database = new DatabaseSync(sourceDb);
+      database.exec(
+        "CREATE TABLE retained(value TEXT); INSERT INTO retained VALUES ('source')",
+      );
+      database.close();
+      const sourceBytes = await readFile(sourceDb);
+      const report = await fixture.run("Copy");
+      assert.equal(report.error, null);
+      assert.equal(report.result?.DataMode, "Copy");
+      assert.equal(
+        await readFile(path.join(fixture.target, "settings.json"), "utf8"),
+        '{"value":"source"}',
+      );
+      assert.equal(
+        existsSync(path.join(fixture.target, "obsolete.txt")),
+        false,
+      );
+      const copiedDb = new DatabaseSync(
+        path.join(fixture.target, "withmate-v6.db"),
+        { readOnly: true },
+      );
+      try {
+        assert.equal(
+          (
+            copiedDb.prepare("SELECT value FROM retained").get() as {
+              value: string;
+            }
+          ).value,
+          "source",
+        );
+      } finally {
+        copiedDb.close();
+      }
+      assert.deepEqual(await readFile(sourceDb), sourceBytes);
+      assert.equal(
+        await readFile(path.join(fixture.source, "settings.json"), "utf8"),
+        '{"value":"source"}',
+      );
+      assert.equal(report.launch?.userDataPath, fixture.target);
     } finally {
-      copiedDb.close();
+      await fixture.dispose();
     }
-    assert.deepEqual(await readFile(sourceDb), sourceBytes);
-    assert.equal(await readFile(path.join(fixture.source, "settings.json"), "utf8"), '{"value":"source"}');
-    assert.equal(report.launch?.userDataPath, fixture.target);
-  } finally {
-    await fixture.dispose();
-  }
-});
+  },
+);
 
 // @test-value v2
 // kind = "invariant"
@@ -271,32 +406,40 @@ test("Copy replaces target files and snapshots SQLite without changing the sourc
 // scope = "visual-check ValidateOnly"
 // lifecycle = "permanent"
 // @end-test-value
-test("ValidateOnly builds without preparing data or controlling processes in all modes", windowsOnly, async () => {
-  for (const mode of ["Fresh", "Reuse", "Copy"]) {
-    const fixture = await createFixture();
-    try {
-      if (mode !== "Fresh") {
-        await mkdir(fixture.target);
-        await writeFile(path.join(fixture.target, "keep.txt"), "keep");
+/** 全データモードで検証だけならビルドで止まり、保存先の作成や置換は行わない。 */
+test(
+  "ValidateOnly builds without preparing data or controlling processes in all modes",
+  windowsOnly,
+  async () => {
+    for (const mode of ["Fresh", "Reuse", "Copy"]) {
+      const fixture = await createFixture();
+      try {
+        if (mode !== "Fresh") {
+          await mkdir(fixture.target);
+          await writeFile(path.join(fixture.target, "keep.txt"), "keep");
+        }
+        if (mode === "Copy") await mkdir(fixture.source);
+        const report = await fixture.run(mode, "-ValidateOnly");
+        assert.equal(report.error, null);
+        assert.equal(report.result?.Ready, true);
+        assert.equal(report.result?.DataMode, mode);
+        assert.deepEqual(report.events, ["npm run build"]);
+        assert.equal(report.launch, null);
+        if (mode === "Fresh") {
+          assert.equal(existsSync(fixture.target), false);
+        } else {
+          assert.deepEqual(await readdir(fixture.target), ["keep.txt"]);
+          assert.equal(
+            await readFile(path.join(fixture.target, "keep.txt"), "utf8"),
+            "keep",
+          );
+        }
+      } finally {
+        await fixture.dispose();
       }
-      if (mode === "Copy") await mkdir(fixture.source);
-      const report = await fixture.run(mode, "-ValidateOnly");
-      assert.equal(report.error, null);
-      assert.equal(report.result?.Ready, true);
-      assert.equal(report.result?.DataMode, mode);
-      assert.deepEqual(report.events, ["npm run build"]);
-      assert.equal(report.launch, null);
-      if (mode === "Fresh") {
-        assert.equal(existsSync(fixture.target), false);
-      } else {
-        assert.deepEqual(await readdir(fixture.target), ["keep.txt"]);
-        assert.equal(await readFile(path.join(fixture.target, "keep.txt"), "utf8"), "keep");
-      }
-    } finally {
-      await fixture.dispose();
     }
-  }
-});
+  },
+);
 
 // @test-value v2
 // kind = "invariant"
@@ -308,22 +451,30 @@ test("ValidateOnly builds without preparing data or controlling processes in all
 // scope = "visual-check target path protection"
 // lifecycle = "permanent"
 // @end-test-value
-test("all modes reject a junction target without touching its contents", windowsOnly, async () => {
-  for (const mode of ["Fresh", "Reuse", "Copy"]) {
-    const fixture = await createFixture();
-    try {
-      await mkdir(fixture.source);
-      await writeFile(path.join(fixture.source, "keep.txt"), "keep");
-      await symlink(fixture.source, fixture.target, "junction");
-      const report = await fixture.run(mode);
-      assert.match(report.error ?? "", /junction or symbolic link/);
-      assert.deepEqual(report.events, []);
-      assert.equal(await readFile(path.join(fixture.source, "keep.txt"), "utf8"), "keep");
-    } finally {
-      await fixture.dispose();
+/** モードを問わずジャンクションを保存先として拒み、リンク先のファイルを変更しない。 */
+test(
+  "all modes reject a junction target without touching its contents",
+  windowsOnly,
+  async () => {
+    for (const mode of ["Fresh", "Reuse", "Copy"]) {
+      const fixture = await createFixture();
+      try {
+        await mkdir(fixture.source);
+        await writeFile(path.join(fixture.source, "keep.txt"), "keep");
+        await symlink(fixture.source, fixture.target, "junction");
+        const report = await fixture.run(mode);
+        assert.match(report.error ?? "", /junction or symbolic link/);
+        assert.deepEqual(report.events, []);
+        assert.equal(
+          await readFile(path.join(fixture.source, "keep.txt"), "utf8"),
+          "keep",
+        );
+      } finally {
+        await fixture.dispose();
+      }
     }
-  }
-});
+  },
+);
 
 // @test-value v2
 // kind = "invariant"
@@ -337,19 +488,30 @@ test("all modes reject a junction target without touching its contents", windows
 // impact = "使用中の検証データへの多重起動と破損を防ぐ"
 // distinction = "reparse拒否やDB単体testとは独立した、既存directory再利用時のOS lock保護を実行する。既存10秒の待機上限を含む"
 // @end-test-value
-test("Reuse refuses an unidentified userData lock without deleting it", windowsOnly, async () => {
-  const fixture = await createFixture();
-  try {
-    await mkdir(fixture.target);
-    await writeFile(path.join(fixture.target, "lockfile"), "in use");
-    await writeFile(path.join(fixture.target, "keep.txt"), "keep");
-    const report = await fixture.run("Reuse");
-    assert.match(report.error ?? "", /remains locked/);
-    assert.deepEqual(report.events, ["npm run build", "process-scan"]);
-    assert.equal(report.launch, null);
-    assert.equal(await readFile(path.join(fixture.target, "lockfile"), "utf8"), "in use");
-    assert.equal(await readFile(path.join(fixture.target, "keep.txt"), "utf8"), "keep");
-  } finally {
-    await fixture.dispose();
-  }
-});
+/** 所有プロセスを特定できないロックは残し、同じ保存先への起動を見送る。 */
+test(
+  "Reuse refuses an unidentified userData lock without deleting it",
+  windowsOnly,
+  async () => {
+    const fixture = await createFixture();
+    try {
+      await mkdir(fixture.target);
+      await writeFile(path.join(fixture.target, "lockfile"), "in use");
+      await writeFile(path.join(fixture.target, "keep.txt"), "keep");
+      const report = await fixture.run("Reuse");
+      assert.match(report.error ?? "", /remains locked/);
+      assert.deepEqual(report.events, ["npm run build", "process-scan"]);
+      assert.equal(report.launch, null);
+      assert.equal(
+        await readFile(path.join(fixture.target, "lockfile"), "utf8"),
+        "in use",
+      );
+      assert.equal(
+        await readFile(path.join(fixture.target, "keep.txt"), "utf8"),
+        "keep",
+      );
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);

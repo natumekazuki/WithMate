@@ -2,6 +2,7 @@ import type { HomeLaunchDialogProps } from "./HomeLaunchDialog.js";
 import type { HomeLaunchProjection } from "./home-launch-projection.js";
 import type { HomeLaunchDraft } from "./home-launch-state.js";
 
+/** 起動欄の下書き・表示用の判定・機能の利用可否と、各入力や開始の操作。 */
 type HomeLaunchDialogPropsInput = {
   draft: HomeLaunchDraft;
   projection: HomeLaunchProjection;
@@ -22,6 +23,7 @@ type HomeLaunchDialogPropsInput = {
   onStartSession: () => void;
 };
 
+/** 起動欄の表示データをそろえ、起動条件だけでなく Home 側の機能利用可否も開始ボタンへ反映する。 */
 export function buildHomeLaunchDialogProps({
   draft,
   projection,

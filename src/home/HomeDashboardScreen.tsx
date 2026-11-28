@@ -1,17 +1,25 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { ConcurrentChatSplitter } from "../chat/chat-window.js";
 import type { HomeRightPaneView, homeRightPaneLabels } from "./HomeHeader.js";
 
+/** 通常の Home に配置するヘッダーと両ペイン、右側の現在の名称、起動ダイアログ。 */
 export type HomeDashboardScreenProps = {
   homePageClassName: string;
   header: ReactNode;
-  rightPaneLabel: typeof homeRightPaneLabels[HomeRightPaneView];
+  rightPaneLabel: (typeof homeRightPaneLabels)[HomeRightPaneView];
   recentSessionsPanel: ReactNode;
   rightPane: ReactNode;
   launchDialog: ReactNode;
 };
 
+/** 両ペインをスプリッターで配置し、折りたたまれた領域はキーボードや支援技術の対象から外す。 */
 export function HomeDashboardScreen({
   homePageClassName,
   header,
@@ -29,20 +37,38 @@ export function HomeDashboardScreen({
     const layout = layoutRef.current;
     const view = layout?.ownerDocument.defaultView;
     if (!layout || !view) return;
+    /** 利用可能な幅が変わったら開いているペインの割合を制約し、明示的な折りたたみは維持する。 */
     const update = () => {
-      const splitter = layout.querySelector<HTMLElement>(".concurrent-chat-splitter");
-      const width = layout.getBoundingClientRect().width - (splitter?.getBoundingClientRect().width ?? 0);
+      const splitter = layout.querySelector<HTMLElement>(
+        ".concurrent-chat-splitter",
+      );
+      const width =
+        layout.getBoundingClientRect().width -
+        (splitter?.getBoundingClientRect().width ?? 0);
+      /** 指定ペインに設定された最小幅を CSS から読み、見つからなければ制約なしとする。 */
       const minimum = (selector: string) => {
         const pane = layout.querySelector<HTMLElement>(selector);
-        return pane ? Number.parseFloat(view.getComputedStyle(pane).getPropertyValue("--session-region-min-width")) || 0 : 0;
+        return pane
+          ? Number.parseFloat(
+              view
+                .getComputedStyle(pane)
+                .getPropertyValue("--session-region-min-width"),
+            ) || 0
+          : 0;
       };
       const minRatio = minimum(".home-monitor-pane") / width;
       const maxRatio = 1 - minimum(".home-sessions-pane") / width;
       if (width <= 0 || minRatio > maxRatio) return;
-      setMonitorWidthRatio((ratio) => ratio <= 0 || ratio >= 1 ? ratio : Math.max(minRatio, Math.min(maxRatio, ratio)));
+      setMonitorWidthRatio((ratio) =>
+        ratio <= 0 || ratio >= 1
+          ? ratio
+          : Math.max(minRatio, Math.min(maxRatio, ratio)),
+      );
     };
     update();
-    const observer = view.ResizeObserver ? new view.ResizeObserver(update) : null;
+    const observer = view.ResizeObserver
+      ? new view.ResizeObserver(update)
+      : null;
     observer?.observe(layout);
     return () => observer?.disconnect();
   }, [monitorWidthRatio]);
@@ -53,7 +79,9 @@ export function HomeDashboardScreen({
       <main
         ref={layoutRef}
         className="home-layout home-dashboard-layout rise-2"
-        style={{ gridTemplateColumns: `minmax(0, ${1 - monitorWidthRatio}fr) var(--session-dock-splitter-size) minmax(0, ${monitorWidthRatio}fr)` }}
+        style={{
+          gridTemplateColumns: `minmax(0, ${1 - monitorWidthRatio}fr) var(--session-dock-splitter-size) minmax(0, ${monitorWidthRatio}fr)`,
+        }}
       >
         <div
           id={sessionsId}
@@ -66,8 +94,16 @@ export function HomeDashboardScreen({
         <ConcurrentChatSplitter
           widthRatio={monitorWidthRatio}
           onWidthRatioChange={setMonitorWidthRatio}
-          mainPane={{ selector: ".home-sessions-pane", id: sessionsId, label: "Sessions" }}
-          auxiliaryPane={{ selector: ".home-monitor-pane", id: monitorId, label: rightPaneLabel }}
+          mainPane={{
+            selector: ".home-sessions-pane",
+            id: sessionsId,
+            label: "Sessions",
+          }}
+          auxiliaryPane={{
+            selector: ".home-monitor-pane",
+            id: monitorId,
+            label: rightPaneLabel,
+          }}
         />
         <div
           id={monitorId}

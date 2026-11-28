@@ -3,28 +3,41 @@ import test from "node:test";
 
 import { MarkdownLinkContextMenuService } from "../../src-electron/windows/markdown-link-context-menu-service.js";
 
+/** Electron のメニューとクリップボードを置き換え、表示内容と選択の結果を観測できるようにする。 */
 function createHarness(
   writeText: (target: string) => void = () => undefined,
-  copyableFile: { sessionId: string; rootId: string; relativePath: string } | null = null,
+  copyableFile: {
+    sessionId: string;
+    rootId: string;
+    relativePath: string;
+  } | null = null,
 ) {
   let menuTemplate: Array<{ label?: string; click?: () => void }> = [];
-  let popupOptions: { callback?: () => void; x?: number; y?: number; window?: unknown } | undefined;
+  let popupOptions:
+    | { callback?: () => void; x?: number; y?: number; window?: unknown }
+    | undefined;
   const service = new MarkdownLinkContextMenuService({
+    /** メニュー項目を記録し、個々の選択を再現できるようにする。 */
     buildMenu(template) {
       menuTemplate = template as Array<{ label?: string; click?: () => void }>;
       return {
+        /** 表示位置と閉じるコールバックを保存する。 */
         popup(options) {
           popupOptions = options;
         },
       };
     },
     writeText,
+    /** リンクが実ファイルに解決された場合に使う試験用リソースを返す。 */
     resolveCopyableFile: async () => copyableFile,
+    /** 選択されたファイルをコピーできた場合の結果を返す。 */
     copyFile: async () => ({ status: "copied", message: "File copied." }),
   });
   return {
     service,
+    /** 最後に構築されたメニュー項目のラベルと選択処理を返す。 */
     getMenuTemplate: () => menuTemplate,
+    /** ポップアップの最新の位置指定と終了処理を返す。 */
     getPopupOptions: () => popupOptions,
   };
 }
@@ -41,6 +54,7 @@ function createHarness(
 // impact = "ユーザーが意図しないpathをclipboardへ受け取るか、link copy操作が重複する"
 // distinction = "menu表示時と選択action後を分けてclipboard side effectと結果を確認する"
 // @end-test-value
+/** 表示だけではクリップボードを変更せず、Copy Link の選択後にだけ空白を復号したパスを一度書き込むことを確かめる。 */
 test("Markdown link context menuは選択時だけ解決したtargetをclipboardへ渡す", async () => {
   const copied: string[] = [];
   const harness = createHarness((target) => copied.push(target));
@@ -64,6 +78,7 @@ test("Markdown link context menuは選択時だけ解決したtargetをclipboard
   assert.deepEqual(copied, ["docs/candidate-source final.json"]);
 });
 
+/** Windows のドライブと区切りを持つリンクをファイルシステムのパスに戻し、見出しの fragment を含めずにコピーすることを確認する。 */
 test("Markdown link context menuはpercent-encodedされたWindows pathをfilesystem pathとしてcopyする", async () => {
   const copied: string[] = [];
   const harness = createHarness((target) => copied.push(target));
@@ -91,6 +106,7 @@ test("Markdown link context menuはpercent-encodedされたWindows pathをfilesy
 // distinction = "percent-encoded control characterをdecodeした後の拒否とclipboard無副作用を確認する"
 // risk_tags = ["security"]
 // @end-test-value
+/** ローカルパスの復号結果に制御文字がある場合は、コピー失敗を返しクリップボードを変更しないことを確認する。 */
 test("Markdown link context menuはdecode後に制御文字を含むlocal pathをcopyしない", async () => {
   const copied: string[] = [];
   const harness = createHarness((target) => copied.push(target));
@@ -121,6 +137,7 @@ test("Markdown link context menuはdecode後に制御文字を含むlocal path�
 // distinction = "percent decodeを経ないraw URLでも制御文字拒否と無副作用を確認する"
 // risk_tags = ["security"]
 // @end-test-value
+/** 外部 URL の入力に制御文字がある場合も、コピー失敗を返しクリップボードに渡さないことを確かめる。 */
 test("Markdown link context menuはraw制御文字を含む外部URLをcopyしない", async () => {
   const copied: string[] = [];
   const harness = createHarness((target) => copied.push(target));
@@ -138,6 +155,7 @@ test("Markdown link context menuはraw制御文字を含む外部URLをcopyし�
   assert.deepEqual(copied, []);
 });
 
+/** メニューを閉じた後の選択は無視し、すでに選択した項目を再実行しても書込みは一回であることを確認する。 */
 test("Markdown link context menuはdismiss後のclickと選択後の再clickでclipboardを更新しない", async () => {
   const dismissedCopies: string[] = [];
   const dismissed = createHarness((target) => dismissedCopies.push(target));
@@ -174,8 +192,13 @@ test("Markdown link context menuはdismiss後のclickと選択後の再clickでc
 // impact = "ユーザーが存在しないpathをfile objectとしてcopyするか、file copy導線を失う"
 // distinction = "解決済みregular fileと未解決pathを同じmenu APIで比較する"
 // @end-test-value
+/** ファイルに解決できた場合にだけ Copy File が独立して表示され、その選択はリンクコピーとは別の結果になることを確かめる。 */
 test("Markdown link context menuは解決済みregular fileだけに別のfile copy操作を出す", async () => {
-  const resource = { sessionId: "session-1", rootId: "workspace", relativePath: "docs/report.txt" };
+  const resource = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "docs/report.txt",
+  };
   const harness = createHarness(undefined, resource);
   const resultPromise = harness.service.showContextMenu({} as never, {
     target: "docs/report.txt",
@@ -184,10 +207,10 @@ test("Markdown link context menuは解決済みregular fileだけに別のfile c
   });
   await Promise.resolve();
 
-  assert.deepEqual(harness.getMenuTemplate().map((item) => item.label), [
-    "Copy Link",
-    "Copy File",
-  ]);
+  assert.deepEqual(
+    harness.getMenuTemplate().map((item) => item.label),
+    ["Copy Link", "Copy File"],
+  );
   harness.getMenuTemplate()[1]?.click?.();
   harness.getPopupOptions()?.callback?.();
   assert.deepEqual(await resultPromise, {
@@ -202,7 +225,10 @@ test("Markdown link context menuは解決済みregular fileだけに別のfile c
     fileContext: { sessionId: "session-1" },
   });
   await Promise.resolve();
-  assert.deepEqual(unresolved.getMenuTemplate().map((item) => item.label), ["Copy Link"]);
+  assert.deepEqual(
+    unresolved.getMenuTemplate().map((item) => item.label),
+    ["Copy Link"],
+  );
   unresolved.getPopupOptions()?.callback?.();
   assert.deepEqual(await unresolvedResult, { status: "dismissed" });
 });
@@ -219,6 +245,7 @@ test("Markdown link context menuは解決済みregular fileだけに別のfile c
 // impact = "ユーザーがcopyできていない操作を成功と誤認する"
 // distinction = "dismiss経路とclipboard例外経路の両方をterminal resultで確認する"
 // @end-test-value
+/** メニューを閉じた場合とクリップボードが例外を返す場合を、成功に置き換えずそれぞれ終了と失敗として返すことを確かめる。 */
 test("Markdown link context menuはdismissとcopy失敗を成功扱いしない", async () => {
   const dismissed = createHarness();
   const dismissResult = dismissed.service.showContextMenu({} as never, {

@@ -26,6 +26,7 @@ import { normalizeAppSettings } from "../../src-shared/settings/provider-setting
 // impact = "過去会話の不可逆消失と検索・Bookmarkからの移動不能を防ぐ"
 // distinction = "既存full read/write testと型検査はpage保存時の切詰めや未取得履歴検索を観測しない。小さいSQLite fixtureで両保存ownerを確認する"
 // @end-test-value
+/** 親子いずれの履歴でも、末尾ページに全体の位置を残し、ページだけで全履歴を置き換えない。 */
 test("会話pageは全履歴seqを維持しfull保存へ流れない", async () => {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "withmate-conversation-page-"),
@@ -122,6 +123,7 @@ test("会話pageは全履歴seqを維持しfull保存へ流れない", async () 
 // impact = "設定変更による過去会話・Bookmarkの消失と再作成ownerへの古い更新を防ぐ"
 // distinction = "storage入口のpage拒否testだけではserviceがfull履歴へmetadataを適用する成功経路を観測しない。実SQLiteを使う小さいfixtureで確認する"
 // @end-test-value
+/** ページ表示からのタイトル変更は許すが、本文・ブックマークの置換や旧会話からの更新は拒む。 */
 test("paged Renderer metadata更新はfull履歴とBookmarkを保持する", async () => {
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "withmate-paged-service-"),
@@ -174,40 +176,69 @@ test("paged Renderer metadata更新はfull履歴とBookmarkを保持する", asy
     auxiliary.upsertAuxiliarySession(aux);
     let cached = [session];
     const mainService = new SessionPersistenceService({
+      /** サービスへ現在の一覧キャッシュを渡す。 */
       getSessions: () => cached,
+      /** 更新を後続のサービス呼び出しからも観測できるよう一覧に反映する。 */
       setSessions: (next) => {
         cached = next;
       },
+      /** ID に対応する会話をテストの一覧から引く。 */
       getSession: (id) => cached.find((item) => item.id === id) ?? null,
+      /** ページ化されていない保存済みの親会話を取得する。 */
       getStoredSession: (id) => main.getSession(id),
+      /** 待機中の会話として、実行中でない保存経路を使う。 */
       isSessionRunInFlight: () => false,
+      /** 誤って全件保存へ進んでも、実 DB の内容で変化を観測できるようにする。 */
       upsertStoredSession: (next) => main.upsertSession(next),
       patchStoredSessionMetadata: main.patchSessionMetadata.bind(main),
+      /** 一覧の一括置換は検証対象から外す。 */
       replaceStoredSessions: () => undefined,
+      /** 保存済み一覧を要求する経路には追加の会話を供給しない。 */
       listStoredSessions: () => [],
+      /** 利用者による上書きのない既定設定を使う。 */
       getAppSettings: () => normalizeAppSettings({}),
+      /** モデル候補に依存しない更新を検証するため、空のカタログを与える。 */
       getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
 
+      /** 会話更新時の計測状態はこの検証で扱わない。 */
       clearSessionContextTelemetry: () => undefined,
 
+      /** プロバイダーのスレッドへ副作用を及ぼさない。 */
       invalidateProviderSessionThread: () => undefined,
+      /** ウィンドウを用意せず、保存サービスだけを動かす。 */
       closeSessionWindow: () => undefined,
+      /** 保存結果は再読込で確認し、ウィンドウへの配信は省く。 */
       broadcastSessions: () => undefined,
     });
     const auxService = new AuxiliarySessionService({
+      /** 子会話の保存先として同じ実 DB を返す。 */
       getStorage: () => auxiliary,
+      /** 子の所有者照合に使う親を保存先から取得する。 */
       getParentSession: (id) => main.getSession(id),
+      /** 同時実行を作らないため、子の操作を待ち行列に入れず評価する。 */
       runProviderRuntimeOperationExclusive: async (operation) => operation(),
+      /** 会話の更新で起動時の選択が必要になった場合は、想定外として失敗させる。 */
       resolveSessionLaunchSelection: async () => {
         throw new Error("unused");
       },
+      /** 既存の定義を使うため、新しい候補は供給しない。 */
       listActiveCharacters: () => [],
+      /** 既存会話の更新では新規スナップショットを提供しない。 */
       createCharacterRuntimeSnapshot: () => null,
     });
     const mainView = main.getSessionView(session.id)!;
     const auxView = auxiliary.getAuxiliarySessionView(aux.id)!;
-    await mainService.patchSessionMetadata(session.id, mainView.incarnationId!, { title: "After" });
-    await auxService.patchAuxiliarySessionMetadata({ auxiliarySessionId: aux.id, parentSessionId: aux.parentSessionId, createdAt: aux.createdAt, patch: { title: "After" } });
+    await mainService.patchSessionMetadata(
+      session.id,
+      mainView.incarnationId!,
+      { title: "After" },
+    );
+    await auxService.patchAuxiliarySessionMetadata({
+      auxiliarySessionId: aux.id,
+      parentSessionId: aux.parentSessionId,
+      createdAt: aux.createdAt,
+      patch: { title: "After" },
+    });
     await mainService.updateSession({
       ...mainView,
       taskTitle: "After",

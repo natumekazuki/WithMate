@@ -1,3 +1,4 @@
+/** 検索欄に添える装飾アイコン。検索欄の名前やフォーカスは入力本体が持つ。 */
 export function renderHomeSearchIcon() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -9,6 +10,7 @@ export function renderHomeSearchIcon() {
   );
 }
 
+/** 新規作成ボタンに共通で使う、フォーカスを持たないプラス記号。 */
 export function renderHomePlusIcon() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -17,6 +19,7 @@ export function renderHomePlusIcon() {
   );
 }
 
+/** 独立した Monitor ウィンドウを開くボタンに添える装飾アイコン。 */
 export function renderHomeMonitorWindowIcon() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">

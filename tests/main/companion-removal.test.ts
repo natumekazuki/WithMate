@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, cp, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -17,13 +27,18 @@ import { CREATE_V3_SCHEMA_SQL } from "../../src-electron/storage/database-schema
 const execFileAsync = promisify(execFile);
 const sessionId = "companion-session-729";
 
+/** 一時リポジトリで Git を実行し、参照名や OID の比較に使う標準出力を返す。 */
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const result = await execFileAsync("git", ["-C", cwd, ...args], { windowsHide: true });
+  const result = await execFileAsync("git", ["-C", cwd, ...args], {
+    windowsHide: true,
+  });
   return result.stdout.trim();
 }
 
+/** 現役 Main・Auxiliary と廃止 Companion の所有物を、共有 blob や管理 worktree とともに一時環境へ配置する。 */
 async function fixture(t: TestContext, sharedAttachment = false) {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-removal-"));
+  /** テスト後に一時 DB とリポジトリ一式を取り除く。 */
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 3 }));
   const userData = path.join(root, "data");
   const repo = path.join(root, "repo");
@@ -42,13 +57,21 @@ async function fixture(t: TestContext, sharedAttachment = false) {
   await git(repo, "update-ref", ref, base);
   await mkdir(path.dirname(worktree));
   await git(repo, "worktree", "add", "-b", branch, worktree, base);
-  await writeFile(path.join(worktree, "uncommitted.txt"), "owned unmerged work");
+  await writeFile(
+    path.join(worktree, "uncommitted.txt"),
+    "owned unmerged work",
+  );
   const dbPath = path.join(userData, "withmate-v6.db");
   const blobStore = new SyncTextBlobStore(path.join(userData, "blobs", "v3"));
-  const ownedBlob = blobStore.putText({ contentType: "text/plain", text: "owned message" }).blobId;
+  const ownedBlob = blobStore.putText({
+    contentType: "text/plain",
+    text: "owned message",
+  }).blobId;
   const sharedBlob = blobStore.putText({
     contentType: "text/plain",
-    text: sharedAttachment ? `Shared attachment [file](<${path.join(userData, "session-files", sessionId, "shared.txt").replaceAll("\\", "/")}>)` : "shared message",
+    text: sharedAttachment
+      ? `Shared attachment [file](<${path.join(userData, "session-files", sessionId, "shared.txt").replaceAll("\\", "/")}>)`
+      : "shared message",
   }).blobId;
   const db = new DatabaseSync(dbPath);
   try {
@@ -68,25 +91,62 @@ async function fixture(t: TestContext, sharedAttachment = false) {
         VALUES ('aux-owned', '${sessionId}', 'active', 'now', 'now', '{}'), ('aux-keep', 'main-729', 'active', 'now', 'now', '{}');
       INSERT INTO app_settings VALUES ('ordinary-preference', 'keep-setting', 'now');
     `);
-    db.prepare("INSERT INTO companion_sessions VALUES (?, 'group-729', ?, 'main', ?, ?, ?, ?)").run(sessionId, repo, ref, base, branch, worktree);
-    db.prepare("INSERT INTO companion_messages VALUES (1, ?, ?), (2, ?, ?)").run(sessionId, ownedBlob, sessionId, sharedBlob);
-    db.prepare("INSERT INTO blob_objects VALUES (?), (?)").run(ownedBlob, sharedBlob);
-    db.prepare("INSERT INTO session_message_artifacts VALUES (1, ?)").run(sharedBlob);
-  } finally { db.close(); }
-  for (const id of [sessionId, "aux-owned", "main-729", "aux-keep", "unrelated-companion-name"]) {
+    db.prepare(
+      "INSERT INTO companion_sessions VALUES (?, 'group-729', ?, 'main', ?, ?, ?, ?)",
+    ).run(sessionId, repo, ref, base, branch, worktree);
+    db.prepare(
+      "INSERT INTO companion_messages VALUES (1, ?, ?), (2, ?, ?)",
+    ).run(sessionId, ownedBlob, sessionId, sharedBlob);
+    db.prepare("INSERT INTO blob_objects VALUES (?), (?)").run(
+      ownedBlob,
+      sharedBlob,
+    );
+    db.prepare("INSERT INTO session_message_artifacts VALUES (1, ?)").run(
+      sharedBlob,
+    );
+  } finally {
+    db.close();
+  }
+  for (const id of [
+    sessionId,
+    "aux-owned",
+    "main-729",
+    "aux-keep",
+    "unrelated-companion-name",
+  ]) {
     const directory = path.join(userData, "session-files", id);
     await mkdir(directory, { recursive: true });
     await writeFile(path.join(directory, "file.txt"), id);
   }
-  if (sharedAttachment) await writeFile(path.join(userData, "session-files", sessionId, "shared.txt"), "live attachment");
-  return { root, userData, repo, worktree, dbPath, ref, branch, ownedBlob, sharedBlob };
+  if (sharedAttachment)
+    await writeFile(
+      path.join(userData, "session-files", sessionId, "shared.txt"),
+      "live attachment",
+    );
+  return {
+    root,
+    userData,
+    repo,
+    worktree,
+    dbPath,
+    ref,
+    branch,
+    ownedBlob,
+    sharedBlob,
+  };
 }
 
+/** 指定した DB の単一行を検査用に読み、後続の削除が接続に阻まれないよう直ちに閉じる。 */
 function query<T>(dbPath: string, sql: string): T {
   const db = new DatabaseSync(dbPath);
-  try { return db.prepare(sql).get() as T; } finally { db.close(); }
+  try {
+    return db.prepare(sql).get() as T;
+  } finally {
+    db.close();
+  }
 }
 
+/** 廃止済みの親 Session ID を持つ子を作れるよう、fixture の Auxiliary テーブルをリリース当時の形に戻す。 */
 function installReleasedLegacyAuxiliarySessionsTable(db: DatabaseSync): void {
   db.exec(`
     PRAGMA foreign_keys = OFF;
@@ -116,18 +176,37 @@ const LEGACY_V3_COMPANION_TABLES = [
   "companion_audit_log_operations",
 ] as const;
 
+/** Companion と完了マーカーを比較対象から外し、他のスキーマとデータがそのまま残るかを照合する。 */
 function databaseSnapshot(db: DatabaseSync): {
-  schema: Array<{ type: string; name: string; tbl_name: string; sql: string | null }>;
+  schema: Array<{
+    type: string;
+    name: string;
+    tbl_name: string;
+    sql: string | null;
+  }>;
   rows: Record<string, Array<Record<string, unknown>>>;
 } {
-  const schema = (db.prepare(
-    "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name != 'sqlite_sequence' AND tbl_name NOT LIKE 'companion_%' ORDER BY type, name",
-  ).all() as Array<{ type: string; name: string; tbl_name: string; sql: string | null }>);
+  const schema = db
+    .prepare(
+      "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name != 'sqlite_sequence' AND tbl_name NOT LIKE 'companion_%' ORDER BY type, name",
+    )
+    .all() as Array<{
+    type: string;
+    name: string;
+    tbl_name: string;
+    sql: string | null;
+  }>;
   const rows: Record<string, Array<Record<string, unknown>>> = {};
   for (const table of schema.filter((entry) => entry.type === "table")) {
-    rows[table.name] = db.prepare(`SELECT * FROM "${table.name.replaceAll('"', '""')}" ORDER BY rowid`).all() as Array<Record<string, unknown>>;
+    rows[table.name] = db
+      .prepare(
+        `SELECT * FROM "${table.name.replaceAll('"', '""')}" ORDER BY rowid`,
+      )
+      .all() as Array<Record<string, unknown>>;
     if (table.name === "app_settings") {
-      rows[table.name] = rows[table.name].filter((row) => row.setting_key !== "companion_removal_completed_at");
+      rows[table.name] = rows[table.name].filter(
+        (row) => row.setting_key !== "companion_removal_completed_at",
+      );
     }
   }
   return { schema, rows };
@@ -146,28 +225,113 @@ function databaseSnapshot(db: DatabaseSync): {
 // distinction = "型・buildでは保証できない複数実SQLiteとfilesystem/Gitの更新境界を確認する"
 // risk_tags = ["irreversible-data-loss", "privacy"]
 // @end-test-value
+/** 起動時の削除は管理下の DB コピーを横断するが、現役 Session・他設定・共有 blob・普通の workspace は維持し、完了後の起動では繰り返さない。 */
 test("bootstrap removes owned data across managed database copies and preserves live owners", async (t) => {
   const f = await fixture(t);
-  const backup = path.join(f.userData, "withmate-v6.db.migration-backup-123-456");
+  const backup = path.join(
+    f.userData,
+    "withmate-v6.db.migration-backup-123-456",
+  );
   await copyFile(f.dbPath, backup);
   await removeCompanionData(f.userData);
   for (const dbPath of [f.dbPath, backup]) {
-    assert.equal(query(dbPath, "SELECT name FROM sqlite_schema WHERE tbl_name LIKE 'companion_%'"), undefined);
-    assert.deepEqual({ ...query<Record<string, unknown>>(dbPath, "SELECT thread_id FROM sessions_v6 WHERE id='main-729'") }, { thread_id: "keep-thread" });
-    assert.equal(query<{ n: number }>(dbPath, "SELECT count(*) n FROM auxiliary_sessions").n, 1);
-    assert.equal(query<{ setting_value: string }>(dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='ordinary-preference'").setting_value, "keep-setting");
+    assert.equal(
+      query(
+        dbPath,
+        "SELECT name FROM sqlite_schema WHERE tbl_name LIKE 'companion_%'",
+      ),
+      undefined,
+    );
+    assert.deepEqual(
+      {
+        ...query<Record<string, unknown>>(
+          dbPath,
+          "SELECT thread_id FROM sessions_v6 WHERE id='main-729'",
+        ),
+      },
+      { thread_id: "keep-thread" },
+    );
+    assert.equal(
+      query<{ n: number }>(dbPath, "SELECT count(*) n FROM auxiliary_sessions")
+        .n,
+      1,
+    );
+    assert.equal(
+      query<{ setting_value: string }>(
+        dbPath,
+        "SELECT setting_value FROM app_settings WHERE setting_key='ordinary-preference'",
+      ).setting_value,
+      "keep-setting",
+    );
   }
-  assert.equal(existsSync(path.join(f.userData, "session-files", sessionId)), false);
-  assert.equal(existsSync(path.join(f.userData, "session-files", "aux-owned")), false);
-  for (const id of ["main-729", "aux-keep", "unrelated-companion-name"]) assert.equal(await readFile(path.join(f.userData, "session-files", id, "file.txt"), "utf8"), id);
-  assert.equal(existsSync(path.join(f.userData, "blobs", "v3", f.ownedBlob.slice(0, 2), f.ownedBlob.slice(2, 4), `${f.ownedBlob}.br`)), false);
-  assert.equal(existsSync(path.join(f.userData, "blobs", "v3", f.sharedBlob.slice(0, 2), f.sharedBlob.slice(2, 4), `${f.sharedBlob}.br`)), true);
+  assert.equal(
+    existsSync(path.join(f.userData, "session-files", sessionId)),
+    false,
+  );
+  assert.equal(
+    existsSync(path.join(f.userData, "session-files", "aux-owned")),
+    false,
+  );
+  for (const id of ["main-729", "aux-keep", "unrelated-companion-name"])
+    assert.equal(
+      await readFile(
+        path.join(f.userData, "session-files", id, "file.txt"),
+        "utf8",
+      ),
+      id,
+    );
+  assert.equal(
+    existsSync(
+      path.join(
+        f.userData,
+        "blobs",
+        "v3",
+        f.ownedBlob.slice(0, 2),
+        f.ownedBlob.slice(2, 4),
+        `${f.ownedBlob}.br`,
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    existsSync(
+      path.join(
+        f.userData,
+        "blobs",
+        "v3",
+        f.sharedBlob.slice(0, 2),
+        f.sharedBlob.slice(2, 4),
+        `${f.sharedBlob}.br`,
+      ),
+    ),
+    true,
+  );
   assert.equal(existsSync(f.worktree), false);
-  assert.equal(await readFile(path.join(f.repo, "keep.txt"), "utf8"), "normal workspace");
-  assert.equal(await git(f.repo, "for-each-ref", "--format=%(refname)", "refs/withmate", "refs/heads/withmate"), "");
-  assert.equal(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
+  assert.equal(
+    await readFile(path.join(f.repo, "keep.txt"), "utf8"),
+    "normal workspace",
+  );
+  assert.equal(
+    await git(
+      f.repo,
+      "for-each-ref",
+      "--format=%(refname)",
+      "refs/withmate",
+      "refs/heads/withmate",
+    ),
+    "",
+  );
+  assert.equal(
+    query(
+      f.dbPath,
+      "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'",
+    ),
+    undefined,
+  );
   let phases = 0;
-  await removeCompanionData(f.userData, () => { phases++; });
+  await removeCompanionData(f.userData, () => {
+    phases++;
+  });
   assert.equal(phases, 0);
   assert.equal(await resolveOrMigrateAppDatabasePath(f.userData), f.dbPath);
 });
@@ -184,6 +348,7 @@ test("bootstrap removes owned data across managed database copies and preserves 
 // impact = "過去の作業directoryを削除・移動した利用者の更新後の起動不能を防ぐ"
 // distinction = "実SQLiteとfilesystemを用いて過去path不在のままbootstrapを通し、型検査では判定できない更新時の契約を検証する"
 // @end-test-value
+/** 廃止済みのリポジトリが元の場所になくても旧 DB と SessionFolder を整理でき、移動済みの Git 作業物には触れない。 */
 test("bootstrap clears obsolete Companion paths without requiring the retired repository", async (t) => {
   const f = await fixture(t);
   const retainedRepo = path.join(f.root, "moved-repository");
@@ -193,24 +358,69 @@ test("bootstrap clears obsolete Companion paths without requiring the retired re
   const db = new DatabaseSync(f.dbPath);
   try {
     // コピーしたデータベースは、元の `userData` ディレクトリを参照している場合がある。
-    db.prepare("UPDATE companion_sessions SET worktree_path = ?")
-      .run(path.join(f.root, "old-userdata", "cw", "cs-729"));
-  } finally { db.close(); }
-  const backup = path.join(f.userData, "withmate-v6.db.migration-backup-456-789");
+    db.prepare("UPDATE companion_sessions SET worktree_path = ?").run(
+      path.join(f.root, "old-userdata", "cw", "cs-729"),
+    );
+  } finally {
+    db.close();
+  }
+  const backup = path.join(
+    f.userData,
+    "withmate-v6.db.migration-backup-456-789",
+  );
   await copyFile(f.dbPath, backup);
 
   assert.equal(await resolveOrMigrateAppDatabasePath(f.userData), f.dbPath);
 
   for (const dbPath of [f.dbPath, backup]) {
-    assert.equal(query(dbPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"), undefined);
-    assert.equal(query(dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
-    assert.equal(query<{ thread_id: string }>(dbPath, "SELECT thread_id FROM sessions_v6 WHERE id='main-729'").thread_id, "keep-thread");
-    assert.equal(query<{ n: number }>(dbPath, "SELECT count(*) n FROM auxiliary_sessions WHERE id='aux-keep'").n, 1);
+    assert.equal(
+      query(
+        dbPath,
+        "SELECT name FROM sqlite_schema WHERE name='companion_sessions'",
+      ),
+      undefined,
+    );
+    assert.equal(
+      query(
+        dbPath,
+        "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'",
+      ),
+      undefined,
+    );
+    assert.equal(
+      query<{ thread_id: string }>(
+        dbPath,
+        "SELECT thread_id FROM sessions_v6 WHERE id='main-729'",
+      ).thread_id,
+      "keep-thread",
+    );
+    assert.equal(
+      query<{ n: number }>(
+        dbPath,
+        "SELECT count(*) n FROM auxiliary_sessions WHERE id='aux-keep'",
+      ).n,
+      1,
+    );
   }
-  assert.equal(existsSync(path.join(f.userData, "session-files", sessionId)), false);
-  assert.equal(await readFile(path.join(f.userData, "session-files", "main-729", "file.txt"), "utf8"), "main-729");
-  assert.equal(await readFile(path.join(retainedRepo, "keep.txt"), "utf8"), "normal workspace");
-  assert.equal(await readFile(path.join(retainedWorktree, "uncommitted.txt"), "utf8"), "owned unmerged work");
+  assert.equal(
+    existsSync(path.join(f.userData, "session-files", sessionId)),
+    false,
+  );
+  assert.equal(
+    await readFile(
+      path.join(f.userData, "session-files", "main-729", "file.txt"),
+      "utf8",
+    ),
+    "main-729",
+  );
+  assert.equal(
+    await readFile(path.join(retainedRepo, "keep.txt"), "utf8"),
+    "normal workspace",
+  );
+  assert.equal(
+    await readFile(path.join(retainedWorktree, "uncommitted.txt"), "utf8"),
+    "owned unmerged work",
+  );
   assert.equal(await resolveOrMigrateAppDatabasePath(f.userData), f.dbPath);
 });
 
@@ -226,24 +436,78 @@ test("bootstrap clears obsolete Companion paths without requiring the retired re
 // impact = "更新途中の中断で専有データが永久に残ることを防ぐ"
 // distinction = "実処理の段階間で停止し永続化された進捗を次の呼出しで利用する"
 // @end-test-value
+/** ファイル処理と DB 処理の両方で中断した場合、pending の記録を使ってやり直し、旧ファイル・参照・テーブルを最後まで除去する。 */
 test("resumes after file and database phase interruptions", async (t) => {
   const f = await fixture(t);
   let files = 0;
-  await assert.rejects(removeCompanionData(f.userData, (phase) => {
-    if (phase === "files" && ++files === 2) throw new Error("interrupt files");
-  }), /incomplete.*interrupt files/);
-  assert.ok(query(f.dbPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"));
-  assert.ok(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"));
-  await assert.rejects(removeCompanionData(f.userData, (phase) => {
-    if (phase === "database") throw new Error("interrupt database");
-  }), /incomplete.*interrupt database/);
+  await assert.rejects(
+    removeCompanionData(f.userData, (phase) => {
+      if (phase === "files" && ++files === 2)
+        throw new Error("interrupt files");
+    }),
+    /incomplete.*interrupt files/,
+  );
+  assert.ok(
+    query(
+      f.dbPath,
+      "SELECT name FROM sqlite_schema WHERE name='companion_sessions'",
+    ),
+  );
+  assert.ok(
+    query(
+      f.dbPath,
+      "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'",
+    ),
+  );
+  await assert.rejects(
+    removeCompanionData(f.userData, (phase) => {
+      if (phase === "database") throw new Error("interrupt database");
+    }),
+    /incomplete.*interrupt database/,
+  );
   assert.equal(existsSync(f.worktree), false);
   await removeCompanionData(f.userData);
-  assert.equal(existsSync(path.join(f.userData, "session-files", sessionId)), false);
-  assert.equal(existsSync(path.join(f.userData, "blobs", "v3", f.ownedBlob.slice(0, 2), f.ownedBlob.slice(2, 4), `${f.ownedBlob}.br`)), false);
-  assert.equal(await git(f.repo, "for-each-ref", "--format=%(refname)", `refs/heads/${f.branch}`, f.ref), "");
-  assert.equal(query(f.dbPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"), undefined);
-  assert.equal(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
+  assert.equal(
+    existsSync(path.join(f.userData, "session-files", sessionId)),
+    false,
+  );
+  assert.equal(
+    existsSync(
+      path.join(
+        f.userData,
+        "blobs",
+        "v3",
+        f.ownedBlob.slice(0, 2),
+        f.ownedBlob.slice(2, 4),
+        `${f.ownedBlob}.br`,
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    await git(
+      f.repo,
+      "for-each-ref",
+      "--format=%(refname)",
+      `refs/heads/${f.branch}`,
+      f.ref,
+    ),
+    "",
+  );
+  assert.equal(
+    query(
+      f.dbPath,
+      "SELECT name FROM sqlite_schema WHERE name='companion_sessions'",
+    ),
+    undefined,
+  );
+  assert.equal(
+    query(
+      f.dbPath,
+      "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'",
+    ),
+    undefined,
+  );
 });
 
 // @test-value v2
@@ -259,17 +523,24 @@ test("resumes after file and database phase interruptions", async (t) => {
 // distinction = "一時filesystemの実directory identity変化を用いる"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** 保存済み計画上の SessionFolder が別のディレクトリになっていれば、再開時に拒否して置換先のファイルを残す。 */
 test("refuses replacement directories when replaying a pending removal", async (t) => {
   const f = await fixture(t);
-  await assert.rejects(removeCompanionData(f.userData, (phase) => {
-    if (phase === "files") throw new Error("interrupt");
-  }), /incomplete/);
+  await assert.rejects(
+    removeCompanionData(f.userData, (phase) => {
+      if (phase === "files") throw new Error("interrupt");
+    }),
+    /incomplete/,
+  );
   const directory = path.join(f.userData, "session-files", sessionId);
   await rename(directory, path.join(f.root, "retained-original"));
   await mkdir(directory);
   await writeFile(path.join(directory, "keep.txt"), "unrelated replacement");
   await assert.rejects(removeCompanionData(f.userData), /replaced/);
-  assert.equal(await readFile(path.join(directory, "keep.txt"), "utf8"), "unrelated replacement");
+  assert.equal(
+    await readFile(path.join(directory, "keep.txt"), "utf8"),
+    "unrelated replacement",
+  );
 });
 
 // @test-value v2
@@ -285,14 +556,27 @@ test("refuses replacement directories when replaying a pending removal", async (
 // distinction = "OS上のsymlink/junctionで実境界を確認する"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** 旧 SessionFolder がリンクなら削除を止め、リンク先の通常 workspace と旧 DB を保持する。 */
 test("rejects a linked SessionFolder before deleting its target", async (t) => {
   const f = await fixture(t);
   const directory = path.join(f.userData, "session-files", sessionId);
   await rm(directory, { recursive: true });
-  await symlink(f.repo, directory, process.platform === "win32" ? "junction" : "dir");
+  await symlink(
+    f.repo,
+    directory,
+    process.platform === "win32" ? "junction" : "dir",
+  );
   await assert.rejects(removeCompanionData(f.userData), /symbolic link/);
-  assert.equal(await readFile(path.join(f.repo, "keep.txt"), "utf8"), "normal workspace");
-  assert.ok(query(f.dbPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"));
+  assert.equal(
+    await readFile(path.join(f.repo, "keep.txt"), "utf8"),
+    "normal workspace",
+  );
+  assert.ok(
+    query(
+      f.dbPath,
+      "SELECT name FROM sqlite_schema WHERE name='companion_sessions'",
+    ),
+  );
 });
 
 // @test-value v2
@@ -307,15 +591,46 @@ test("rejects a linked SessionFolder before deleting its target", async (t) => {
 // impact = "現役会話から参照できる添付の実データ損失を防ぐ"
 // distinction = "実blob復号とfile境界はtype/schemaだけでは保証できない"
 // @end-test-value
+/** 共有される本文 blob にある添付参照を辿って対象ファイルを保護し、所有専用の添付とバックアップ blob だけを取り除く。 */
 test("keeps attachment references from full shared blobs and cleans blob backups", async (t) => {
   const f = await fixture(t, true);
-  const backupRoot = path.join(f.userData, "blobs", "v3.migration-backup-123-456");
-  await cp(path.join(f.userData, "blobs", "v3"), backupRoot, { recursive: true });
+  const backupRoot = path.join(
+    f.userData,
+    "blobs",
+    "v3.migration-backup-123-456",
+  );
+  await cp(path.join(f.userData, "blobs", "v3"), backupRoot, {
+    recursive: true,
+  });
   await removeCompanionData(f.userData);
-  assert.equal(await readFile(path.join(f.userData, "session-files", sessionId, "shared.txt"), "utf8"), "live attachment");
-  assert.equal(existsSync(path.join(f.userData, "session-files", sessionId, "file.txt")), false);
-  assert.equal(existsSync(path.join(backupRoot, f.ownedBlob.slice(0, 2), f.ownedBlob.slice(2, 4), `${f.ownedBlob}.br`)), false);
-  assert.equal(new SyncTextBlobStore(backupRoot).getText(f.sharedBlob).includes("Shared attachment"), true);
+  assert.equal(
+    await readFile(
+      path.join(f.userData, "session-files", sessionId, "shared.txt"),
+      "utf8",
+    ),
+    "live attachment",
+  );
+  assert.equal(
+    existsSync(path.join(f.userData, "session-files", sessionId, "file.txt")),
+    false,
+  );
+  assert.equal(
+    existsSync(
+      path.join(
+        backupRoot,
+        f.ownedBlob.slice(0, 2),
+        f.ownedBlob.slice(2, 4),
+        `${f.ownedBlob}.br`,
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    new SyncTextBlobStore(backupRoot)
+      .getText(f.sharedBlob)
+      .includes("Shared attachment"),
+    true,
+  );
 });
 
 // @test-value v2
@@ -330,32 +645,72 @@ test("keeps attachment references from full shared blobs and cleans blob backups
 // impact = "更新時の部分削除でアプリが恒久的に起動不能になることを防ぐ"
 // distinction = "保存済みDBとGit lockを使用しhelper単体ではなくbootstrapの進捗引継ぎを通す"
 // @end-test-value
+/** DB コピーの状態が違っても、ブランチと base ref の削除に順番に失敗した処理を再開し、両方の DB を整理する。 */
 test("resumes branch and base ref failures across differing database snapshots", async (t) => {
   const f = await fixture(t);
-  const backup = path.join(f.userData, "withmate-v6.db.migration-backup-789-123");
+  const backup = path.join(
+    f.userData,
+    "withmate-v6.db.migration-backup-789-123",
+  );
   await copyFile(f.dbPath, backup);
   await git(f.worktree, "add", ".");
   await git(f.worktree, "commit", "-m", "updated base snapshot");
   const currentBase = await git(f.worktree, "rev-parse", "HEAD");
   await git(f.repo, "update-ref", f.ref, currentBase);
   const db = new DatabaseSync(f.dbPath);
-  db.prepare("UPDATE companion_sessions SET base_snapshot_commit = ?").run(currentBase);
+  db.prepare("UPDATE companion_sessions SET base_snapshot_commit = ?").run(
+    currentBase,
+  );
   db.close();
-  const branchLock = path.join(f.repo, ".git", "refs", "heads", `${f.branch}.lock`);
+  const branchLock = path.join(
+    f.repo,
+    ".git",
+    "refs",
+    "heads",
+    `${f.branch}.lock`,
+  );
   const baseLock = path.join(f.repo, ".git", `${f.ref}.lock`);
   await writeFile(branchLock, "fixture lock");
   await assert.rejects(removeCompanionData(f.userData), /incomplete/);
   assert.equal(existsSync(f.worktree), false);
-  assert.ok(query(f.dbPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"));
+  assert.ok(
+    query(
+      f.dbPath,
+      "SELECT name FROM sqlite_schema WHERE name='companion_sessions'",
+    ),
+  );
   await rm(branchLock);
   await writeFile(baseLock, "fixture lock");
   await assert.rejects(removeCompanionData(f.userData), /incomplete/);
-  assert.equal(await git(f.repo, "for-each-ref", "--format=%(refname)", `refs/heads/${f.branch}`), "");
-  assert.ok(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"));
+  assert.equal(
+    await git(
+      f.repo,
+      "for-each-ref",
+      "--format=%(refname)",
+      `refs/heads/${f.branch}`,
+    ),
+    "",
+  );
+  assert.ok(
+    query(
+      f.dbPath,
+      "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'",
+    ),
+  );
   await rm(baseLock);
   await removeCompanionData(f.userData);
-  assert.equal(await git(f.repo, "for-each-ref", "--format=%(refname)", f.ref), "");
-  for (const dbPath of [f.dbPath, backup]) assert.equal(query(dbPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"), undefined);
+  assert.equal(
+    await git(f.repo, "for-each-ref", "--format=%(refname)", f.ref),
+    "",
+  );
+  for (const dbPath of [f.dbPath, backup])
+    assert.equal(
+      query(
+        dbPath,
+        "SELECT name FROM sqlite_schema WHERE name='companion_sessions'",
+      ),
+      undefined,
+    );
 });
 
 // @test-value v2
@@ -370,11 +725,14 @@ test("resumes branch and base ref failures across differing database snapshots",
 // impact = "移行対象世代の取り残しと現役Workspaceのデータ損失を防ぐ"
 // distinction = "現行schemaのみのtestでは旧DBの保存形態と世代横断参照を検証できない"
 // @end-test-value
+/** 現役 workspace と共有する worktree は削除せず、参照を外したあとは実 V3 DB の旧専用データだけを除去し、他スキーマ・行・外部キーを保つ。 */
 test("cleans an actual V3 schema but refuses a worktree shared with a live workspace", async (t) => {
   const f = await fixture(t);
   const legacyPath = path.join(f.userData, "withmate-v3.db");
   const current = new DatabaseSync(f.dbPath);
-  current.prepare("UPDATE sessions_v6 SET workspace_path = ? WHERE id='main-729'").run(f.worktree);
+  current
+    .prepare("UPDATE sessions_v6 SET workspace_path = ? WHERE id='main-729'")
+    .run(f.worktree);
   current.close();
   const legacy = new DatabaseSync(legacyPath);
   const ownedBlob = "a".repeat(64);
@@ -589,13 +947,22 @@ test("cleans an actual V3 schema but refuses a worktree shared with a live works
     CREATE INDEX idx_v3_companion_audit_log_operations_log_seq ON companion_audit_log_operations(audit_log_id, seq);
     INSERT INTO companion_groups VALUES ('group-729', '${f.repo.replaceAll("'", "''")}', 'Companion', 'now', 'now');
   `);
-  legacy.prepare(`INSERT INTO companion_sessions (
+  legacy
+    .prepare(
+      `INSERT INTO companion_sessions (
     id, group_id, task_title, status, repo_root, focus_path, target_branch, base_snapshot_ref,
     base_snapshot_commit, companion_branch, worktree_path, provider, character_id, character_name,
     character_icon_path, created_at, updated_at
-  ) VALUES (?, 'group-729', 'Companion task', 'active', ?, 'src', 'main', ?, ?, ?, ?, 'codex', 'char', 'Character', '', 'now', 'now')`).run(
-    sessionId, f.repo, f.ref, (await git(f.repo, "rev-parse", "HEAD")), f.branch, f.worktree,
-  );
+  ) VALUES (?, 'group-729', 'Companion task', 'active', ?, 'src', 'main', ?, ?, ?, ?, 'codex', 'char', 'Character', '', 'now', 'now')`,
+    )
+    .run(
+      sessionId,
+      f.repo,
+      f.ref,
+      await git(f.repo, "rev-parse", "HEAD"),
+      f.branch,
+      f.worktree,
+    );
   legacy.exec(`
     INSERT INTO blob_objects (blob_id, codec, content_type, original_bytes, stored_bytes, raw_sha256, stored_sha256, state, created_at) VALUES
       ('${ownedBlob}', 'br', 'text/plain', 5, 5, '${ownedBlob}', '${ownedBlob}', 'ready', 'now'),
@@ -614,27 +981,77 @@ test("cleans an actual V3 schema but refuses a worktree shared with a live works
     INSERT INTO audit_log_details (audit_log_id, usage_metadata_json) VALUES (last_insert_rowid(), '{"keep":true}');
     INSERT INTO audit_log_operations (audit_log_id, seq, operation_type, summary) SELECT audit_log_id, 0, 'tool', 'keep operation' FROM audit_log_details;
   `);
-  legacy.prepare("INSERT INTO app_settings VALUES ('ordinary-setting', 'legacy-value', 'now')").run();
+  legacy
+    .prepare(
+      "INSERT INTO app_settings VALUES ('ordinary-setting', 'legacy-value', 'now')",
+    )
+    .run();
   const legacyBefore = databaseSnapshot(legacy);
-  legacyBefore.rows.blob_objects = legacyBefore.rows.blob_objects.filter((row) => row.blob_id !== ownedBlob);
+  legacyBefore.rows.blob_objects = legacyBefore.rows.blob_objects.filter(
+    (row) => row.blob_id !== ownedBlob,
+  );
   legacy.close();
-  await assert.rejects(removeCompanionData(f.userData), /live owner references/);
-  assert.equal(await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"), "owned unmerged work");
+  await assert.rejects(
+    removeCompanionData(f.userData),
+    /live owner references/,
+  );
+  assert.equal(
+    await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"),
+    "owned unmerged work",
+  );
   const resumed = new DatabaseSync(f.dbPath);
-  resumed.prepare("UPDATE sessions_v6 SET workspace_path = ? WHERE id='main-729'").run(f.repo);
+  resumed
+    .prepare("UPDATE sessions_v6 SET workspace_path = ? WHERE id='main-729'")
+    .run(f.repo);
   resumed.close();
   await removeCompanionData(f.userData);
-  assert.equal(query(legacyPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"), undefined);
+  assert.equal(
+    query(
+      legacyPath,
+      "SELECT name FROM sqlite_schema WHERE name='companion_sessions'",
+    ),
+    undefined,
+  );
   const cleaned = new DatabaseSync(legacyPath);
   try {
     assert.deepEqual(databaseSnapshot(cleaned), legacyBefore);
     for (const table of LEGACY_V3_COMPANION_TABLES) {
-      assert.equal(cleaned.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table), undefined);
+      assert.equal(
+        cleaned
+          .prepare(
+            "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?",
+          )
+          .get(table),
+        undefined,
+      );
     }
-    assert.equal((cleaned.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE type = 'index' AND name LIKE 'idx_v3_companion_%'").get() as { n: number }).n, 0);
+    assert.equal(
+      (
+        cleaned
+          .prepare(
+            "SELECT count(*) AS n FROM sqlite_schema WHERE type = 'index' AND name LIKE 'idx_v3_companion_%'",
+          )
+          .get() as { n: number }
+      ).n,
+      0,
+    );
     assert.equal(cleaned.prepare("PRAGMA foreign_key_check").all().length, 0);
-    assert.equal((cleaned.prepare("SELECT count(*) AS n FROM blob_objects WHERE blob_id = ?").get(sharedBlob) as { n: number }).n, 1);
-    assert.equal((cleaned.prepare("SELECT count(*) AS n FROM blob_objects WHERE blob_id = ?").get(ownedBlob) as { n: number }).n, 0);
+    assert.equal(
+      (
+        cleaned
+          .prepare("SELECT count(*) AS n FROM blob_objects WHERE blob_id = ?")
+          .get(sharedBlob) as { n: number }
+      ).n,
+      1,
+    );
+    assert.equal(
+      (
+        cleaned
+          .prepare("SELECT count(*) AS n FROM blob_objects WHERE blob_id = ?")
+          .get(ownedBlob) as { n: number }
+      ).n,
+      0,
+    );
   } finally {
     cleaned.close();
   }
@@ -653,6 +1070,7 @@ test("cleans an actual V3 schema but refuses a worktree shared with a live works
 // distinction = "実Git lockで部分完了を作り次のbootstrap呼出しへ引き継ぐため、型検査や単回削除testでは代替できない"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** base ref の削除だけを再開するとき、先に削除済みの worktree パスやブランチに新しい作業が作られていても触れない。 */
 test("keeps recreated worktree paths and branches when resuming a base ref failure", async (t) => {
   const f = await fixture(t);
   const mainOid = await git(f.repo, "rev-parse", "main");
@@ -660,21 +1078,56 @@ test("keeps recreated worktree paths and branches when resuming a base ref failu
   await writeFile(baseLock, "fixture lock");
   await assert.rejects(removeCompanionData(f.userData), /incomplete/);
   assert.equal(existsSync(f.worktree), false);
-  assert.equal(await git(f.repo, "for-each-ref", "--format=%(refname)", `refs/heads/${f.branch}`), "");
+  assert.equal(
+    await git(
+      f.repo,
+      "for-each-ref",
+      "--format=%(refname)",
+      `refs/heads/${f.branch}`,
+    ),
+    "",
+  );
 
   await mkdir(f.worktree);
   await writeFile(path.join(f.worktree, "keep.txt"), "new unrelated work");
-  const replacementOid = await git(f.repo, "commit-tree", `${mainOid}^{tree}`, "-m", "new unrelated branch");
+  const replacementOid = await git(
+    f.repo,
+    "commit-tree",
+    `${mainOid}^{tree}`,
+    "-m",
+    "new unrelated branch",
+  );
   await git(f.repo, "update-ref", `refs/heads/${f.branch}`, replacementOid);
   await rm(baseLock);
   await removeCompanionData(f.userData);
 
-  assert.equal(await readFile(path.join(f.worktree, "keep.txt"), "utf8"), "new unrelated work");
-  assert.equal(await git(f.repo, "rev-parse", `refs/heads/${f.branch}`), replacementOid);
+  assert.equal(
+    await readFile(path.join(f.worktree, "keep.txt"), "utf8"),
+    "new unrelated work",
+  );
+  assert.equal(
+    await git(f.repo, "rev-parse", `refs/heads/${f.branch}`),
+    replacementOid,
+  );
   assert.equal(await git(f.repo, "rev-parse", "main"), mainOid);
-  assert.equal(await git(f.repo, "for-each-ref", "--format=%(refname)", f.ref), "");
-  assert.equal(query(f.dbPath, "SELECT name FROM sqlite_schema WHERE name='companion_sessions'"), undefined);
-  assert.equal(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
+  assert.equal(
+    await git(f.repo, "for-each-ref", "--format=%(refname)", f.ref),
+    "",
+  );
+  assert.equal(
+    query(
+      f.dbPath,
+      "SELECT name FROM sqlite_schema WHERE name='companion_sessions'",
+    ),
+    undefined,
+  );
+  assert.equal(
+    query(
+      f.dbPath,
+      "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'",
+    ),
+    undefined,
+  );
 });
 
 // @test-value v2
@@ -690,20 +1143,35 @@ test("keeps recreated worktree paths and branches when resuming a base ref failu
 // distinction = "Git登録のpathを残したまま実directoryを置換し、SessionFolderのidentity testとは別のGit経路を検証する"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** 計画後に worktree 本体が入れ替わった場合は処理を続けず、旧作業と置換先の双方を残したまま pending を保持する。 */
 test("refuses a worktree replaced after the removal plan was saved", async (t) => {
   const f = await fixture(t);
-  await assert.rejects(removeCompanionData(f.userData, (phase) => {
-    if (phase === "git") throw new Error("interrupt before Git");
-  }), /interrupt before Git/);
+  await assert.rejects(
+    removeCompanionData(f.userData, (phase) => {
+      if (phase === "git") throw new Error("interrupt before Git");
+    }),
+    /interrupt before Git/,
+  );
   const original = path.join(f.root, "retained-worktree");
   await rename(f.worktree, original);
   await mkdir(f.worktree);
   await writeFile(path.join(f.worktree, "keep.txt"), "replacement directory");
 
   await assert.rejects(removeCompanionData(f.userData), /replaced/);
-  assert.equal(await readFile(path.join(f.worktree, "keep.txt"), "utf8"), "replacement directory");
-  assert.equal(await readFile(path.join(original, "uncommitted.txt"), "utf8"), "owned unmerged work");
-  assert.ok(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"));
+  assert.equal(
+    await readFile(path.join(f.worktree, "keep.txt"), "utf8"),
+    "replacement directory",
+  );
+  assert.equal(
+    await readFile(path.join(original, "uncommitted.txt"), "utf8"),
+    "owned unmerged work",
+  );
+  assert.ok(
+    query(
+      f.dbPath,
+      "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'",
+    ),
+  );
 });
 
 // @test-value v2
@@ -719,26 +1187,59 @@ test("refuses a worktree replaced after the removal plan was saved", async (t) =
 // distinction = "過去DBのbase commitではなく今回の削除計画からの置換を実Gitと永続pendingで検証する"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** 旧ブランチまたは base ref の OID が計画後に書き換わっていれば削除を拒み、元に戻したときだけ本来の処理を完了できる。 */
 test("refuses replaced branch and base refs before continuing pending deletion", async (t) => {
   const f = await fixture(t);
   const originalOid = await git(f.repo, "rev-parse", "main");
-  await assert.rejects(removeCompanionData(f.userData, (phase) => {
-    if (phase === "git") throw new Error("interrupt before Git");
-  }), /interrupt before Git/);
-  const replacementOid = await git(f.repo, "commit-tree", `${originalOid}^{tree}`, "-m", "replacement ref");
+  await assert.rejects(
+    removeCompanionData(f.userData, (phase) => {
+      if (phase === "git") throw new Error("interrupt before Git");
+    }),
+    /interrupt before Git/,
+  );
+  const replacementOid = await git(
+    f.repo,
+    "commit-tree",
+    `${originalOid}^{tree}`,
+    "-m",
+    "replacement ref",
+  );
   for (const ref of [`refs/heads/${f.branch}`, f.ref]) {
     await git(f.repo, "update-ref", ref, replacementOid);
     await assert.rejects(removeCompanionData(f.userData), /ref was replaced/);
     assert.equal(await git(f.repo, "rev-parse", ref), replacementOid);
-    assert.equal(await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"), "owned unmerged work");
-    assert.ok(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"));
+    assert.equal(
+      await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"),
+      "owned unmerged work",
+    );
+    assert.ok(
+      query(
+        f.dbPath,
+        "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'",
+      ),
+    );
     await git(f.repo, "update-ref", ref, originalOid);
   }
   await removeCompanionData(f.userData);
   assert.equal(existsSync(f.worktree), false);
-  assert.equal(await git(f.repo, "for-each-ref", "--format=%(refname)", `refs/heads/${f.branch}`, f.ref), "");
+  assert.equal(
+    await git(
+      f.repo,
+      "for-each-ref",
+      "--format=%(refname)",
+      `refs/heads/${f.branch}`,
+      f.ref,
+    ),
+    "",
+  );
   assert.equal(await git(f.repo, "rev-parse", "main"), originalOid);
-  assert.equal(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
+  assert.equal(
+    query(
+      f.dbPath,
+      "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'",
+    ),
+    undefined,
+  );
 });
 
 // @test-value v2
@@ -753,8 +1254,10 @@ test("refuses replaced branch and base refs before continuing pending deletion",
 // impact = "旧データの任意参照列だけで正常な会話すべてを起動不能にしない"
 // distinction = "collector単体だけでなく実V6 DBの初回bootstrapから再起動までを小規模fixtureで検証する"
 // @end-test-value
+/** 削除対象がなければ現役行の添付情報や Auxiliary payload が不正 JSON でも起動し、値を変更したり pending を作ったりしない。 */
 test("boots without parsing live reference JSON when there are no removal targets", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-removal-empty-"));
+  /** 削除対象なしを再現する一時 DB をテスト終了時に片付ける。 */
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 3 }));
   const dbPath = path.join(root, "withmate-v6.db");
   const db = new DatabaseSync(dbPath);
@@ -765,12 +1268,32 @@ test("boots without parsing live reference JSON when there are no removal target
       VALUES ('normal', 'Normal task', 'active', 'codex', 1, 'fixture', 'never', 'now', 'now', 'now', 'invalid-json');
       INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at, payload_json)
       VALUES ('normal-aux', 'normal', 'active', 'now', 'now', 'invalid-payload');`);
-  } finally { db.close(); }
+  } finally {
+    db.close();
+  }
 
   assert.equal(await resolveOrMigrateAppDatabasePath(root), dbPath);
-  assert.equal(query<{ allowed_additional_directories_json: string }>(dbPath, "SELECT allowed_additional_directories_json FROM sessions_v6 WHERE id='normal'").allowed_additional_directories_json, "invalid-json");
-  assert.equal(query<{ payload_json: string }>(dbPath, "SELECT payload_json FROM auxiliary_sessions WHERE id='normal-aux'").payload_json, "invalid-payload");
-  assert.equal(query(dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
+  assert.equal(
+    query<{ allowed_additional_directories_json: string }>(
+      dbPath,
+      "SELECT allowed_additional_directories_json FROM sessions_v6 WHERE id='normal'",
+    ).allowed_additional_directories_json,
+    "invalid-json",
+  );
+  assert.equal(
+    query<{ payload_json: string }>(
+      dbPath,
+      "SELECT payload_json FROM auxiliary_sessions WHERE id='normal-aux'",
+    ).payload_json,
+    "invalid-payload",
+  );
+  assert.equal(
+    query(
+      dbPath,
+      "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'",
+    ),
+    undefined,
+  );
   assert.equal(await resolveOrMigrateAppDatabasePath(root), dbPath);
 });
 
@@ -787,23 +1310,55 @@ test("boots without parsing live reference JSON when there are no removal target
 // distinction = "所有DBと共有参照DBを分離した実SQLite fixtureは単一DBのcollector testでは代替できない"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** すべての DB の現役参照を確認してからファイルを消し始め、コピー側の読み取り不能な行または有効な参照が見つかれば未変更で中断する。 */
 test("checks live references across databases before deleting any owned files", async (t) => {
   const f = await fixture(t);
-  const backup = path.join(f.userData, "withmate-v6.db.migration-backup-321-654");
+  const backup = path.join(
+    f.userData,
+    "withmate-v6.db.migration-backup-321-654",
+  );
   const db = new DatabaseSync(backup);
   try {
     ensureV6Schema(db);
     db.exec(`INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision, model_id, approval_mode, created_at, updated_at, last_active_at, allowed_additional_directories_json)
       VALUES ('shared-owner', 'Shared owner', 'active', 'codex', 1, 'fixture', 'never', 'now', 'now', 'now', 'invalid-json')`);
-  } finally { db.close(); }
+  } finally {
+    db.close();
+  }
   await assert.rejects(removeCompanionData(f.userData), /incomplete.*JSON/);
-  assert.equal(await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"), "owned unmerged work");
-  assert.equal(await readFile(path.join(f.userData, "session-files", sessionId, "file.txt"), "utf8"), sessionId);
-  assert.equal(query(f.dbPath, "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'"), undefined);
+  assert.equal(
+    await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"),
+    "owned unmerged work",
+  );
+  assert.equal(
+    await readFile(
+      path.join(f.userData, "session-files", sessionId, "file.txt"),
+      "utf8",
+    ),
+    sessionId,
+  );
+  assert.equal(
+    query(
+      f.dbPath,
+      "SELECT setting_value FROM app_settings WHERE setting_key='companion_removal_pending'",
+    ),
+    undefined,
+  );
 
   const repaired = new DatabaseSync(backup);
-  try { repaired.prepare("UPDATE sessions_v6 SET allowed_additional_directories_json = ?").run(JSON.stringify([f.worktree])); }
-  finally { repaired.close(); }
-  await assert.rejects(removeCompanionData(f.userData), /live owner references/);
-  assert.equal(await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"), "owned unmerged work");
+  try {
+    repaired
+      .prepare("UPDATE sessions_v6 SET allowed_additional_directories_json = ?")
+      .run(JSON.stringify([f.worktree]));
+  } finally {
+    repaired.close();
+  }
+  await assert.rejects(
+    removeCompanionData(f.userData),
+    /live owner references/,
+  );
+  assert.equal(
+    await readFile(path.join(f.worktree, "uncommitted.txt"), "utf8"),
+    "owned unmerged work",
+  );
 });

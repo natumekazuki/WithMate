@@ -20,11 +20,13 @@ const validProjection: SessionGlossaryProjection = {
     status: "valid",
     relativePath: ".withmate/glossary.yaml",
     revision: "a".repeat(64),
-    entries: [{
-      term: "Runtime",
-      aliases: ["RT"],
-      definition: "<strong>plain</strong> **not markdown**\nsecond line",
-    }],
+    entries: [
+      {
+        term: "Runtime",
+        aliases: ["RT"],
+        definition: "<strong>plain</strong> **not markdown**\nsecond line",
+      },
+    ],
   },
 };
 
@@ -38,11 +40,17 @@ const baseProps = {
   searchError: "",
   searchStale: false,
   selectedTerm: null,
+  /** 静的な一覧表示では検索欄への入力を処理しない。 */
   onSearchQueryChange() {},
+  /** 一覧の検証では検索結果の追加取得を行わない。 */
   onLoadMoreSearchResults() {},
+  /** 読取結果の表示用フィクスチャのため、取得の再試行は行わない。 */
   onRetryProjection() {},
+  /** 失敗表示を描画するだけなので、検索を再試行しない。 */
   onRetrySearch() {},
+  /** 詳細の選択状態はpropsで与え、クリックによる切替は対象外とする。 */
   onSelectTerm() {},
+  /** 一覧への戻り先は静的描画では操作しない。 */
   onBackToList() {},
 };
 
@@ -56,6 +64,7 @@ const baseProps = {
 // scope = "session-glossary-valid-pane"
 // lifecycle = "permanent"
 // @end-test-value
+/** 閲覧専用の一覧に検索と用語を表示し、編集用の部品を置かないことを確認する。 */
 test("SessionGlossaryPaneは一覧を用語と検索へ絞りread-onlyで表示する", () => {
   const html = renderToStaticMarkup(
     <SessionGlossaryPane {...baseProps} projection={validProjection} />,
@@ -80,6 +89,7 @@ test("SessionGlossaryPaneは一覧を用語と検索へ絞りread-onlyで表示�
 // impact = "障害詳細が一覧を押し下げるか、理由や回復操作へ到達できなくなる"
 // distinction = "ユーザー指定popupの宣言と回復経路をSSRのDOMで確認する。型検査はtargetの実際の関連先を確認しない。native開閉とlayoutは実ブラウザーで別途確認する"
 // @end-test-value
+/** 検索失敗を正常な空結果と区別し、診断と再試行への導線を表示することを確認する。 */
 test("SessionGlossaryPaneは検索失敗を空結果として表示しない", () => {
   const html = renderToStaticMarkup(
     <SessionGlossaryPane
@@ -90,15 +100,25 @@ test("SessionGlossaryPaneは検索失敗を空結果として表示しない", (
     />,
   );
   const document = new JSDOM(html).window.document;
-  assert.equal(document.querySelector('[role="alert"]')?.textContent, "Glossary Search Failed");
-  const details = document.querySelector('button[aria-label="Glossary Search Failed: Details"]')!;
-  const popup = document.getElementById(details.getAttribute("popovertarget")!)!;
+  assert.equal(
+    document.querySelector('[role="alert"]')?.textContent,
+    "Glossary Search Failed",
+  );
+  const details = document.querySelector(
+    'button[aria-label="Glossary Search Failed: Details"]',
+  )!;
+  const popup = document.getElementById(
+    details.getAttribute("popovertarget")!,
+  )!;
   assert.equal(details.getAttribute("aria-controls"), popup.id);
   assert.equal(details.getAttribute("aria-haspopup"), "dialog");
   assert.equal(details.getAttribute("aria-expanded"), "false");
   assert.equal(popup.getAttribute("popover"), "auto");
   assert.equal(popup.getAttribute("role"), "dialog");
-  assert.equal(popup.getAttribute("aria-label"), "Glossary Search Failed: Details");
+  assert.equal(
+    popup.getAttribute("aria-label"),
+    "Glossary Search Failed: Details",
+  );
   assert.notEqual(popup.getAttribute("aria-modal"), "true");
   assert.equal(popup.textContent, "×Search failed");
   const reason = popup.querySelector(".glossary-error-detail")!;
@@ -117,11 +137,19 @@ test("SessionGlossaryPaneは検索失敗を空結果として表示しない", (
 // scope = "session-glossary-definition-rendering"
 // lifecycle = "permanent"
 // @end-test-value
+/** 定義内のHTML風文字列やMarkdownをリテラルのまま省略せず表示することを確認する。 */
 test("SessionGlossaryPaneはdefinitionをMarkdownやHTMLとして解釈せず完全表示する", () => {
   const html = renderToStaticMarkup(
-    <SessionGlossaryPane {...baseProps} projection={validProjection} selectedTerm="Runtime" />,
+    <SessionGlossaryPane
+      {...baseProps}
+      projection={validProjection}
+      selectedTerm="Runtime"
+    />,
   );
-  assert.match(html, /&lt;strong&gt;plain&lt;\/strong&gt; \*\*not markdown\*\*/);
+  assert.match(
+    html,
+    /&lt;strong&gt;plain&lt;\/strong&gt; \*\*not markdown\*\*/,
+  );
   assert.doesNotMatch(html, /<strong>plain<\/strong>/);
   assert.match(html, />RT</);
   assert.doesNotMatch(html, /Aliases:/);
@@ -138,6 +166,7 @@ test("SessionGlossaryPaneはdefinitionをMarkdownやHTMLとして解釈せず完
 // scope = "session-glossary-invalid-state"
 // lifecycle = "permanent"
 // @end-test-value
+/** 不正または非対応の用語集を一つの表示で説明し、修正の案内と診断を結び付けることを確認する。 */
 test("SessionGlossaryPaneはinvalid/unsupportedの単一描画で失敗と修正案内を表示し診断popupへ接続する", () => {
   for (const state of [
     {
@@ -151,7 +180,13 @@ test("SessionGlossaryPaneはinvalid/unsupportedの単一描画で失敗と修正
       relativePath: ".withmate/glossary.yaml",
       revision: "b".repeat(64),
       schemaVersion: 99,
-      issues: [{ path: "schemaVersion", code: "UNSUPPORTED_SCHEMA_VERSION", message: "Unsupported schema" }],
+      issues: [
+        {
+          path: "schemaVersion",
+          code: "UNSUPPORTED_SCHEMA_VERSION",
+          message: "Unsupported schema",
+        },
+      ],
     },
   ] satisfies SessionGlossaryProjection["state"][]) {
     const html = renderToStaticMarkup(
@@ -165,18 +200,31 @@ test("SessionGlossaryPaneはinvalid/unsupportedの単一描画で失敗と修正
       />,
     );
     const document = new JSDOM(html).window.document;
-    const label = state.status === "invalid" ? "Could not load the glossary" : "Unsupported format";
+    const label =
+      state.status === "invalid"
+        ? "Could not load the glossary"
+        : "Unsupported format";
     assert.equal(document.querySelector('[role="alert"]')?.textContent, label);
-    const details = document.querySelector(`button[aria-label="${label}: Details"]`)!;
-    const popup = document.getElementById(details.getAttribute("popovertarget")!)!;
+    const details = document.querySelector(
+      `button[aria-label="${label}: Details"]`,
+    )!;
+    const popup = document.getElementById(
+      details.getAttribute("popovertarget")!,
+    )!;
     assert.equal(popup.getAttribute("popover"), "auto");
     const reason = popup.querySelector(".glossary-error-detail")!;
-    assert.equal(reason.textContent, state.status === "invalid" ? "Invalid YAML" : "schemaVersion 99");
+    assert.equal(
+      reason.textContent,
+      state.status === "invalid" ? "Invalid YAML" : "schemaVersion 99",
+    );
     const guidance = document.querySelector(".glossary-error-guidance")!;
     assert.equal(popup.contains(guidance), false);
-    assert.equal(guidance.textContent, state.status === "invalid"
-      ? "Fix .withmate/glossary.yaml to load the glossary."
-      : "Use a supported schemaVersion in .withmate/glossary.yaml.");
+    assert.equal(
+      guidance.textContent,
+      state.status === "invalid"
+        ? "Fix .withmate/glossary.yaml to load the glossary."
+        : "Use a supported schemaVersion in .withmate/glossary.yaml.",
+    );
     assert.doesNotMatch(html, />Runtime</);
   }
 });

@@ -4,14 +4,23 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { locateReply, locateSentInstruction } from "../../src/chat/conversation/reply-location.js";
+import {
+  locateReply,
+  locateSentInstruction,
+} from "../../src/chat/conversation/reply-location.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 import { SessionTurnStorageV6 } from "../../src-electron/session/session-turn-storage-v6.js";
 import { SessionTurnQueueStorageV6 } from "../../src-electron/session/session-turn-queue-storage-v6.js";
 import { SessionExecutionReadStorage } from "../../src-electron/storage/session-execution-read.js";
-import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  getSessionIncarnationId,
+} from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import { conversationPeerKey, conversationThreadsResultSchema } from "../../src-shared/session/conversation-threads.js";
+import {
+  conversationPeerKey,
+  conversationThreadsResultSchema,
+} from "../../src-shared/session/conversation-threads.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { executionWindowResultSchemas } from "../../src-shared/session/session-execution-read.js";
 
@@ -27,6 +36,7 @@ import { executionWindowResultSchemas } from "../../src-shared/session/session-e
 // impact = "同じ指示が複数ある履歴で利用者が別の指示へ誘導される"
 // distinction = "SQLiteの取得単体と画面表示の検査だけでは投影先・送信元・receiptの三つの照合を検出できない"
 // @end-test-value
+/** 実SQLiteに同文の送信とSteerを保存し、引用は指定receiptの送信カードへ戻り、宛先参照はカード種別に応じたキーを使うことを確認する。世代違いと投影外は移動先を返さない。 */
 test("legacy reply receipts locate only the exact outgoing card in its parent's projection", async () => {
   const dir = await mkdtemp(join(tmpdir(), "withmate-reply-location-"));
   const db = join(dir, "synthetic.db");
@@ -35,70 +45,241 @@ test("legacy reply receipts locate only the exact outgoing card in its parent's 
   const queue = new SessionTurnQueueStorageV6(db);
   const read = new SessionExecutionReadStorage(db);
   try {
-    const seed = buildNewSession({ id: "parent", taskTitle: "Parent", workspaceLabel: "Fixture", workspacePath: "C:/fixture", branch: "test",
-      characterId: "test", character: "Test", characterIconPath: "", characterThemeColors: { main: "#112233", sub: "#445566" }, approvalMode: "on-request" });
-    const parent = sessions.insertSession({ ...seed, rootSessionId: seed.id, sessionRole: "overall-coordinator", model: "test-model",
-      messages: [{ role: "user", text: "job" }, { role: "assistant", text: "source anchor" }] });
-    const childSession = sessions.insertSession({ ...seed, id: "child", rootSessionId: parent.id, parentSessionId: parent.id,
-      createdBySessionId: parent.id, sessionRole: "executor", model: parent.model, messages: [{ role: "user", text: "unrelated recipient seq" }] });
-    const main = { kind: "main" as const, sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) };
-    const child = { kind: "main" as const, sessionId: childSession.id, incarnationId: getSessionIncarnationId(childSession) };
-    const sourceTurn = turns.createSessionTurn({ sessionId: parent.id, provider: parent.provider, model: parent.model, reasoningEffort: parent.reasoningEffort,
-      approvalMode: parent.approvalMode, phase: "completed", threadId: "", errorMessage: "", userMessageSeq: 0, assistantMessageSeq: 1, createdAt: "2026-11-23T00:00:00Z" });
-    const origin = { kind: "session" as const, operation: "send" as const, actorKind: "main" as const, actorSessionId: main.sessionId,
-      actorIncarnationId: main.incarnationId, actorTurnId: String(sourceTurn.id), targetSessionId: child.sessionId, targetIncarnationId: child.incarnationId };
-    const enqueue = (actorIncarnationId: string) => queue.enqueue(child, { provider: childSession.provider, workspacePath: childSession.workspacePath, attachments: [],
-      origin: { ...origin, actorIncarnationId }, request: { userMessage: "same text", clientRequestId: randomUUID(),
-        executionOptions: captureSessionExecutionOptions(childSession) } });
+    const seed = buildNewSession({
+      id: "parent",
+      taskTitle: "Parent",
+      workspaceLabel: "Fixture",
+      workspacePath: "C:/fixture",
+      branch: "test",
+      characterId: "test",
+      character: "Test",
+      characterIconPath: "",
+      characterThemeColors: { main: "#112233", sub: "#445566" },
+      approvalMode: "on-request",
+    });
+    const parent = sessions.insertSession({
+      ...seed,
+      rootSessionId: seed.id,
+      sessionRole: "overall-coordinator",
+      model: "test-model",
+      messages: [
+        { role: "user", text: "job" },
+        { role: "assistant", text: "source anchor" },
+      ],
+    });
+    const childSession = sessions.insertSession({
+      ...seed,
+      id: "child",
+      rootSessionId: parent.id,
+      parentSessionId: parent.id,
+      createdBySessionId: parent.id,
+      sessionRole: "executor",
+      model: parent.model,
+      messages: [{ role: "user", text: "unrelated recipient seq" }],
+    });
+    const main = {
+      kind: "main" as const,
+      sessionId: parent.id,
+      incarnationId: getSessionIncarnationId(parent),
+    };
+    const child = {
+      kind: "main" as const,
+      sessionId: childSession.id,
+      incarnationId: getSessionIncarnationId(childSession),
+    };
+    const sourceTurn = turns.createSessionTurn({
+      sessionId: parent.id,
+      provider: parent.provider,
+      model: parent.model,
+      reasoningEffort: parent.reasoningEffort,
+      approvalMode: parent.approvalMode,
+      phase: "completed",
+      threadId: "",
+      errorMessage: "",
+      userMessageSeq: 0,
+      assistantMessageSeq: 1,
+      createdAt: "2026-11-23T00:00:00Z",
+    });
+    const origin = {
+      kind: "session" as const,
+      operation: "send" as const,
+      actorKind: "main" as const,
+      actorSessionId: main.sessionId,
+      actorIncarnationId: main.incarnationId,
+      actorTurnId: String(sourceTurn.id),
+      targetSessionId: child.sessionId,
+      targetIncarnationId: child.incarnationId,
+    };
+    /** 本文を揃えたまま要求IDと送信元世代を変えられる送信記録を作る。 */
+    const enqueue = (actorIncarnationId: string) =>
+      queue.enqueue(child, {
+        provider: childSession.provider,
+        workspacePath: childSession.workspacePath,
+        attachments: [],
+        origin: { ...origin, actorIncarnationId },
+        request: {
+          userMessage: "same text",
+          clientRequestId: randomUUID(),
+          executionOptions: captureSessionExecutionOptions(childSession),
+        },
+      });
     const first = enqueue(main.incarnationId);
     for (let i = 0; i < 19; ++i) enqueue(main.incarnationId);
     const exact = enqueue(main.incarnationId);
     const obsolete = enqueue("old-parent");
-    sessions.updateSession({ ...childSession, messages: [...childSession.messages, ...[1, 2].map((index) => ({
-      role: "user" as const, text: "same text", turnInput: { turnId: String(index), nativeTurnId: "native", state: "confirmed" as const, attachments: [],
-        origin: { ...origin, operation: "steer" as const } },
-    }))] });
-    const scope = { main, threads: conversationThreadsResultSchema.parse(read.execute({
-      target: main, operation: "read_conversation_threads", request: { target: main },
-    })) };
-    const readSessionExecution: WithMateWindowApi["readSessionExecution"] = async (_owner, operation, request) =>
-      executionWindowResultSchemas[operation].parse(read.execute({ target: request.target, operation, request })) as never;
-    const api = { readSessionExecution, getConversationPage: async (id: string) => sessions.getConversationPage(id) };
+    sessions.updateSession({
+      ...childSession,
+      messages: [
+        ...childSession.messages,
+        ...[1, 2].map((index) => ({
+          role: "user" as const,
+          text: "same text",
+          turnInput: {
+            turnId: String(index),
+            nativeTurnId: "native",
+            state: "confirmed" as const,
+            attachments: [],
+            origin: { ...origin, operation: "steer" as const },
+          },
+        })),
+      ],
+    });
+    const scope = {
+      main,
+      threads: conversationThreadsResultSchema.parse(
+        read.execute({
+          target: main,
+          operation: "read_conversation_threads",
+          request: { target: main },
+        }),
+      ),
+    };
+    /** window APIの履歴操作を実ストレージへ渡し、操作ごとの公開結果schemaで解釈する。 */
+    const readSessionExecution: WithMateWindowApi["readSessionExecution"] =
+      async (_owner, operation, request) =>
+        executionWindowResultSchemas[operation].parse(
+          read.execute({ target: request.target, operation, request }),
+        ) as never;
+    const api = {
+      readSessionExecution,
+      /** 親会話のページ取得を実ストレージへ委ねる。 */ getConversationPage:
+        async (id: string) => sessions.getConversationPage(id),
+    };
+    /** 旧receiptから元入力の来歴を読み、指定された会話投影上で返信の移動先を求める。 */
     const resolveReceipt = async (receiptId: string, where = scope) => {
       const reference = { target: child, receiptId };
-      const source = await readSessionExecution(parent.id, "get_execution_input", { ...reference, stage: "original" });
+      const source = await readSessionExecution(
+        parent.id,
+        "get_execution_input",
+        { ...reference, stage: "original" },
+      );
       assert.ok(source.ok);
-      return locateReply(api, parent.id, where, { reference, origin: source.origin, text: source.text });
+      return locateReply(api, parent.id, where, {
+        reference,
+        origin: source.origin,
+        text: source.text,
+      });
     };
-    const destination = { column: "main", ownerKey: conversationPeerKey(main), frameId: conversationPeerKey(child), seq: 1 };
-    assert.deepEqual(await resolveReceipt(first.id), { ...destination, sentKey: first.id });
-    assert.deepEqual(await resolveReceipt(exact.id), { ...destination, sentKey: exact.id });
+    const destination = {
+      column: "main",
+      ownerKey: conversationPeerKey(main),
+      frameId: conversationPeerKey(child),
+      seq: 1,
+    };
+    assert.deepEqual(await resolveReceipt(first.id), {
+      ...destination,
+      sentKey: first.id,
+    });
+    assert.deepEqual(await resolveReceipt(exact.id), {
+      ...destination,
+      sentKey: exact.id,
+    });
     assert.equal(await resolveReceipt(obsolete.id), null);
-    assert.equal(await resolveReceipt(exact.id, { ...scope, threads: { ...scope.threads, children: [] } }), null);
+    assert.equal(
+      await resolveReceipt(exact.id, {
+        ...scope,
+        threads: { ...scope.threads, children: [] },
+      }),
+      null,
+    );
 
-    const originalPage = await readSessionExecution(parent.id, "list_sent_deliveries", { target: main, messageSeqs: [1], limit: 20 });
+    const originalPage = await readSessionExecution(
+      parent.id,
+      "list_sent_deliveries",
+      { target: main, messageSeqs: [1], limit: 20 },
+    );
     assert.ok(originalPage.ok && originalPage.nextCursor !== null);
-    const deliveryPage = await readSessionExecution(parent.id, "list_sent_deliveries", { target: main, messageSeqs: [1], limit: 20, cursor: originalPage.nextCursor });
+    const deliveryPage = await readSessionExecution(
+      parent.id,
+      "list_sent_deliveries",
+      {
+        target: main,
+        messageSeqs: [1],
+        limit: 20,
+        cursor: originalPage.nextCursor,
+      },
+    );
     assert.ok(deliveryPage.ok);
     const deliveries = [...originalPage.items, ...deliveryPage.items];
     const delivery = deliveries.find((item) => item.receiptId === exact.id)!;
     for (const { id } of [first, exact]) {
-      assert.deepEqual(locateSentInstruction(scope, main, deliveries.find((item) => item.receiptId === id)!), { ...destination, sentKey: id });
+      assert.deepEqual(
+        locateSentInstruction(
+          scope,
+          main,
+          deliveries.find((item) => item.receiptId === id)!,
+        ),
+        { ...destination, sentKey: id },
+      );
     }
-    const steers = await readSessionExecution(parent.id, "list_sent_steers", { target: main, messageSeqs: [1] });
+    const steers = await readSessionExecution(parent.id, "list_sent_steers", {
+      target: main,
+      messageSeqs: [1],
+    });
     assert.ok(steers.ok);
-    assert.deepEqual(steers.items.map(({ messageSeq }) => messageSeq).sort((a, b) => a - b), [1, 2]);
+    assert.deepEqual(
+      steers.items.map(({ messageSeq }) => messageSeq).sort((a, b) => a - b),
+      [1, 2],
+    );
     for (const item of steers.items) {
-      assert.deepEqual(locateSentInstruction(scope, main, item), { ...destination, sentKey: `steer:${destination.frameId}:${item.messageSeq}` });
+      assert.deepEqual(locateSentInstruction(scope, main, item), {
+        ...destination,
+        sentKey: `steer:${destination.frameId}:${item.messageSeq}`,
+      });
     }
-    assert.equal(locateSentInstruction(scope, main, { ...delivery, sourceMessageSeq: null }), null);
-    const outOfFrame = { ...scope, threads: { ...scope.threads, children: [] } };
+    assert.equal(
+      locateSentInstruction(scope, main, {
+        ...delivery,
+        sourceMessageSeq: null,
+      }),
+      null,
+    );
+    const outOfFrame = {
+      ...scope,
+      threads: { ...scope.threads, children: [] },
+    };
     assert.equal(locateSentInstruction(outOfFrame, main, delivery), null);
     const oldChild = { ...child, incarnationId: "replaced-child" };
-    assert.equal(locateSentInstruction(scope, main, { ...delivery, target: oldChild, origin: { ...origin, targetIncarnationId: oldChild.incarnationId } }), null);
-    assert.equal(locateSentInstruction(scope, main, { ...delivery, origin: { ...origin, actorIncarnationId: "old-parent" } }), null);
+    assert.equal(
+      locateSentInstruction(scope, main, {
+        ...delivery,
+        target: oldChild,
+        origin: { ...origin, targetIncarnationId: oldChild.incarnationId },
+      }),
+      null,
+    );
+    assert.equal(
+      locateSentInstruction(scope, main, {
+        ...delivery,
+        origin: { ...origin, actorIncarnationId: "old-parent" },
+      }),
+      null,
+    );
   } finally {
-    read.close(); queue.close(); turns.close(); sessions.close();
+    read.close();
+    queue.close();
+    turns.close();
+    sessions.close();
     await rm(dir, { recursive: true, force: true });
   }
 });

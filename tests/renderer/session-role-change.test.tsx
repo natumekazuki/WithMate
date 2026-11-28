@@ -4,47 +4,124 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
-import type { Session, SessionSummary } from "../../src-shared/session/session-state.js";
+import type {
+  Session,
+  SessionSummary,
+} from "../../src-shared/session/session-state.js";
 import { SessionHeader } from "../../src/chat/shell/session-header.js";
 import { useSessionHeaderOperations } from "../../src/chat/shell/use-session-header-operations.js";
 
+/** Role 変更と無関係なヘッダー操作を何も実行しないハンドラ。 */
 const noop = () => {};
-const standalone = { id: "session-a", incarnationId: "incarnation-a", taskTitle: "Planning", sessionKind: "default", sessionRole: "standalone", runState: "idle" } as Session;
+const standalone = {
+  id: "session-a",
+  incarnationId: "incarnation-a",
+  taskTitle: "Planning",
+  sessionKind: "default",
+  sessionRole: "standalone",
+  runState: "idle",
+} as Session;
 
-function setup(promote: WithMateWindowApi["promoteSessionToOverallCoordinator"]) {
-  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
-  const previous = { window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement, Node: globalThis.Node };
-  Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, IS_REACT_ACT_ENVIRONMENT: true });
+/** 実ヘッダーと操作フックを DOM に載せ、昇格 API の応答をテストから制御できるようにする。 */
+function setup(
+  promote: WithMateWindowApi["promoteSessionToOverallCoordinator"],
+) {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", {
+    pretendToBeVisual: true,
+  });
+  const previous = {
+    window: globalThis.window,
+    document: globalThis.document,
+    HTMLElement: globalThis.HTMLElement,
+    Node: globalThis.Node,
+  };
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    Node: dom.window.Node,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
   const root = createRoot(dom.window.document.getElementById("root")!);
-  function Harness({ session, readOnly = false }: { session: Session; readOnly?: boolean }) {
+  /** 選択セッションと読み取り専用状態を操作フックに渡してヘッダーを描画する。 */
+  function Harness({
+    session,
+    readOnly = false,
+  }: {
+    session: Session;
+    readOnly?: boolean;
+  }) {
     const operations = useSessionHeaderOperations({
       api: { promoteSessionToOverallCoordinator: promote } as WithMateWindowApi,
-      selectedSession: session, isReadOnly: readOnly, runState: session.runState,
-      updateTitle: async () => undefined, closeWindow: noop,
+      selectedSession: session,
+      isReadOnly: readOnly,
+      runState: session.runState,
+      /** タイトル更新は実行経路から切り離し、Role 更新だけを観察する。 */
+      updateTitle: async () => undefined,
+      closeWindow: noop,
     });
-    return <SessionHeader {...operations.buildChatHeader({
-      isRunning: session.runState === "running", isReadOnly: readOnly, isPinned: false, isPinPending: false,
-      isWorkspaceAvailable: true, onOpenSessionTerminal: noop, onOpenSessionFilesExplorer: noop,
-      onOpenSessionFilesTerminal: noop, onTitleInputKeyDown: noop, onDeleteSession: noop,
-      onToggleSessionPin: noop, onOpenSessionExplorer: noop,
-    })} />;
+    return (
+      <SessionHeader
+        {...operations.buildChatHeader({
+          isRunning: session.runState === "running",
+          isReadOnly: readOnly,
+          isPinned: false,
+          isPinPending: false,
+          isWorkspaceAvailable: true,
+          onOpenSessionTerminal: noop,
+          onOpenSessionFilesExplorer: noop,
+          onOpenSessionFilesTerminal: noop,
+          onTitleInputKeyDown: noop,
+          onDeleteSession: noop,
+          onToggleSessionPin: noop,
+          onOpenSessionExplorer: noop,
+        })}
+      />
+    );
   }
+  /** 表示文言が一致するボタンを要求し、未描画なら操作前に失敗させる。 */
   const button = (text: string) => {
-    const value = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")].find((entry) => entry.textContent === text);
+    const value = [
+      ...dom.window.document.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((entry) => entry.textContent === text);
     assert.ok(value, text);
     return value;
   };
   return {
-    document: dom.window.document, button,
-    async render(session = standalone, readOnly = false) { await act(async () => root.render(<Harness session={session} readOnly={readOnly} />)); },
+    document: dom.window.document,
+    button,
+    /** セッションや読み取り専用状態の変更を描画へ反映する。 */
+    async render(session = standalone, readOnly = false) {
+      await act(async () =>
+        root.render(<Harness session={session} readOnly={readOnly} />),
+      );
+    },
+    /** ヘッダーの操作メニューから Role 変更確認を開き、初期フォーカスを待つ。 */
     async open() {
-      const trigger = dom.window.document.querySelector<HTMLElement>('summary[aria-label="Session actions"]')!;
+      const trigger = dom.window.document.querySelector<HTMLElement>(
+        'summary[aria-label="Session actions"]',
+      )!;
       await act(async () => trigger.click());
       await act(async () => button("Change Role…").click());
       await act(async () => new Promise((resolve) => setTimeout(resolve, 5)));
     },
-    async escape() { await act(async () => dom.window.document.activeElement?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }))); },
-    async dispose() { await act(async () => root.unmount()); dom.window.close(); Object.assign(globalThis, previous); },
+    /** 現在のフォーカスを起点に Escape を送り、実際のダイアログ操作を通す。 */
+    async escape() {
+      await act(async () =>
+        dom.window.document.activeElement?.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+          }),
+        ),
+      );
+    },
+    /** ヘッダーをアンマウントし、差し替えた DOM 環境を復元する。 */
+    async dispose() {
+      await act(async () => root.unmount());
+      dom.window.close();
+      Object.assign(globalThis, previous);
+    },
   };
 }
 
@@ -60,46 +137,85 @@ function setup(promote: WithMateWindowApi["promoteSessionToOverallCoordinator"])
 // impact = "ユーザーの同意と異なるRole変更や、失敗後に回復できない操作を防ぐ"
 // distinction = "IPC/storageの認可testや共通a11y testでは検出できないheader ownerから確認dialogと昇格APIまでの接続を検証する"
 // @end-test-value
+/** Role 変更は明示確定でだけ対象の昇格を一度要求し、取消時のフォーカス復帰、処理中の操作抑止、失敗詳細と同じ対象への再試行を扱えることを確認する。 */
 test("Role変更はアプリ内で確認し、取消・busy・失敗後の再試行を扱う", async () => {
   const calls: string[][] = [];
   let complete!: (value: SessionSummary) => void;
   let fail!: (error: Error) => void;
-  const view = setup((...args) => { calls.push(args); return new Promise((resolve, reject) => { complete = resolve; fail = reject; }); });
+  const view = setup((...args) => {
+    calls.push(args);
+    return new Promise((resolve, reject) => {
+      complete = resolve;
+      fail = reject;
+    });
+  });
   try {
     await view.render();
     await view.open();
     assert.deepEqual(calls, []);
-    const dialog = view.document.querySelector('[role="dialog"][aria-label="Change Session Role"]');
+    const dialog = view.document.querySelector(
+      '[role="dialog"][aria-label="Change Session Role"]',
+    );
     assert.ok(dialog);
     assert.match(dialog.textContent!, /Planning.*Overall Coordinator/s);
     assert.equal(view.document.activeElement, view.button("Cancel"));
     await view.escape();
     assert.equal(view.document.querySelector('[role="dialog"]'), null);
-    assert.equal(view.document.activeElement?.getAttribute("aria-label"), "Session actions");
+    assert.equal(
+      view.document.activeElement?.getAttribute("aria-label"),
+      "Session actions",
+    );
     await view.open();
     await act(async () => view.button("Cancel").click());
     assert.deepEqual(calls, []);
     await view.open();
     const confirm = view.button("Change Role");
-    await act(async () => { confirm.click(); confirm.click(); });
+    await act(async () => {
+      confirm.click();
+      confirm.click();
+    });
     assert.deepEqual(calls, [[standalone.id, standalone.incarnationId]]);
     assert.equal(confirm.getAttribute("aria-busy"), "true");
-    assert.equal(view.document.activeElement, view.document.querySelector('[aria-label="Change Session Role"] section'));
+    assert.equal(
+      view.document.activeElement,
+      view.document.querySelector('[aria-label="Change Session Role"] section'),
+    );
     assert.equal(view.button("Cancel").disabled, true);
     await view.escape();
     assert.ok(view.document.querySelector('[role="dialog"]'));
     await act(async () => fail(new Error("Session is active.")));
-    assert.match(view.document.querySelector('[role="alert"]')?.textContent ?? "", /Role could not be changed/);
+    assert.match(
+      view.document.querySelector('[role="alert"]')?.textContent ?? "",
+      /Role could not be changed/,
+    );
     assert.equal(view.button("Change Role").disabled, false);
-    await act(async () => view.document.querySelector<HTMLButtonElement>('[aria-label="Role Change Error Details"]')!.click());
-    assert.match(view.document.querySelector('[aria-label="Role Change Error Details"][role="dialog"]')?.textContent ?? "", /Session is active/);
+    await act(async () =>
+      view.document
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="Role Change Error Details"]',
+        )!
+        .click(),
+    );
+    assert.match(
+      view.document.querySelector(
+        '[aria-label="Role Change Error Details"][role="dialog"]',
+      )?.textContent ?? "",
+      /Session is active/,
+    );
     await view.escape();
-    assert.ok(view.document.querySelector('[aria-label="Change Session Role"]'));
+    assert.ok(
+      view.document.querySelector('[aria-label="Change Session Role"]'),
+    );
     await act(async () => view.button("Change Role").click());
-    assert.deepEqual(calls, [[standalone.id, standalone.incarnationId], [standalone.id, standalone.incarnationId]]);
+    assert.deepEqual(calls, [
+      [standalone.id, standalone.incarnationId],
+      [standalone.id, standalone.incarnationId],
+    ]);
     await act(async () => complete(standalone as unknown as SessionSummary));
     assert.equal(view.document.querySelector('[role="dialog"]'), null);
-  } finally { await view.dispose(); }
+  } finally {
+    await view.dispose();
+  }
 });
 
 // @test-value v2
@@ -114,22 +230,31 @@ test("Role変更はアプリ内で確認し、取消・busy・失敗後の再試
 // impact = "native確認から非同期dialogになっても、利用者が確認した対象と実行条件を維持する"
 // distinction = "Mainの最終認可とは別に、rendererが古い同意を別の表示対象へ持ち越さないことを実イベントで確認する"
 // @end-test-value
+/** 確認中に実行状態・読み取り専用・incarnation が変わると確認を破棄し、新しい確認で指定した対象にだけ昇格 API を呼ぶことを確認する。 */
 test("Role確認は対象と実行可否の変化で閉じ、古い同意を持ち越さない", async () => {
   const calls: string[][] = [];
-  const view = setup(async (...args) => { calls.push(args); return standalone as unknown as SessionSummary; });
+  const view = setup(async (...args) => {
+    calls.push(args);
+    return standalone as unknown as SessionSummary;
+  });
   try {
-    await view.render(); await view.open();
+    await view.render();
+    await view.open();
     await view.render({ ...standalone, runState: "running" });
     assert.equal(view.document.querySelector('[role="dialog"]'), null);
     await view.render();
     assert.equal(view.document.querySelector('[role="dialog"]'), null);
-    await view.open(); await view.render(standalone, true);
+    await view.open();
+    await view.render(standalone, true);
     assert.equal(view.document.querySelector('[role="dialog"]'), null);
-    await view.render(); await view.open();
+    await view.render();
+    await view.open();
     await view.render({ ...standalone, incarnationId: "replacement" });
     assert.equal(view.document.querySelector('[role="dialog"]'), null);
     await view.open();
     await act(async () => view.button("Change Role").click());
     assert.deepEqual(calls, [[standalone.id, "replacement"]]);
-  } finally { await view.dispose(); }
+  } finally {
+    await view.dispose();
+  }
 });

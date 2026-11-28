@@ -1,4 +1,7 @@
-import type { HomeSessionSummary, SessionCharacterUsage } from "../../src-shared/session/session-state.js";
+import type {
+  HomeSessionSummary,
+  SessionCharacterUsage,
+} from "../../src-shared/session/session-state.js";
 import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
 import {
   buildHomeSessionSummaryEntries,
@@ -6,6 +9,7 @@ import {
   type HomeSessionSummaryPageCollection,
 } from "./home-session-summary-query.js";
 
+/** 最近・ピン留め・開いている Session の要約と、検索ページや Character 利用情報の独立した取得状態。 */
 export type HomeSessionSummariesState = {
   recentStatus: SessionSummariesLoadStatus;
   pinnedStatus: SessionSummariesLoadStatus;
@@ -29,6 +33,7 @@ export type HomeSessionSummariesState = {
   characterUsage: SessionCharacterUsage[];
 };
 
+/** 確定済みの要約やカーソルがない初回取得用の状態を作る。 */
 export function createEmptyHomeSessionSummariesState(): HomeSessionSummariesState {
   return {
     recentStatus: "loading",
@@ -54,6 +59,7 @@ export function createEmptyHomeSessionSummariesState(): HomeSessionSummariesStat
   };
 }
 
+/** 取得済みのページを表示用に統合し、各種最後のページから次の取得位置を更新する。 */
 export function applyHomeSessionSummaryPages(
   current: HomeSessionSummariesState,
   pages: HomeSessionSummaryPageCollection,

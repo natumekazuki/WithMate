@@ -6,24 +6,40 @@ import { createRoot } from "react-dom/client";
 
 import { useHomeSearchInput } from "../../src/home/use-home-search-input.js";
 
+/** 検索入力のフックを描画し、入力表示と適用時刻を模擬時計で個別に観測する。 */
 async function mount(t: TestContext) {
   const dom = new JSDOM("<div id='root'></div>");
-  const properties = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true };
-  const originals = Object.keys(properties).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
-  for (const [key, value] of Object.entries(properties)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const properties = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = Object.keys(properties).map(
+    (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+  );
+  for (const [key, value] of Object.entries(properties))
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const root = createRoot(dom.window.document.getElementById("root")!);
   let state!: ReturnType<typeof useHomeSearchInput>;
   let mounted = true;
+  /** フックの現在の値をテストに公開し、入力欄にも表示する。 */
   function Harness() {
     state = useHomeSearchInput();
     return <input readOnly value={state.inputText} />;
   }
+  /** 後処理からも安全に呼べるよう、一度だけ React ルートを破棄する。 */
   const unmount = async () => {
     if (!mounted) return;
     await act(async () => root.unmount());
     mounted = false;
   };
+  /** ルート、時計、JSDOM および元のグローバル定義を復元する。 */
   t.after(async () => {
     await unmount();
     t.mock.timers.reset();
@@ -35,10 +51,22 @@ async function mount(t: TestContext) {
   });
   await act(async () => root.render(<Harness />));
   return {
-    get state() { return state; },
-    get inputValue() { return dom.window.document.querySelector("input")!.value; },
-    change: async (value: string) => { await act(async () => state.onChangeInputText(value)); },
-    tick: async (ms: number) => { await act(async () => t.mock.timers.tick(ms)); },
+    /** 直近のレンダーでフックが返した状態と操作を読む。 */
+    get state() {
+      return state;
+    },
+    /** DOM の入力欄に投影された値を読む。 */
+    get inputValue() {
+      return dom.window.document.querySelector("input")!.value;
+    },
+    /** 入力変更をフックに届け、React の描画が終わるまで待つ。 */
+    change: async (value: string) => {
+      await act(async () => state.onChangeInputText(value));
+    },
+    /** 模擬時計を進め、その間に発生した React の更新を反映する。 */
+    tick: async (ms: number) => {
+      await act(async () => t.mock.timers.tick(ms));
+    },
     unmount,
   };
 }
@@ -55,6 +83,7 @@ async function mount(t: TestContext) {
 // impact = "入力ごとの一覧再取得と表示のちらつきを避ける"
 // distinction = "静的型検査や検索filter testでは入力と適用の時間境界を検出できない"
 // @end-test-value
+/** 表示は即時に変え、適用する共通検索語は最後の変更から 300 ms 後に置き換える。 */
 test("Home検索は最後の入力から300ms待って共通検索語を置換する", async (t) => {
   const fixture = await mount(t);
   await fixture.change("old");
@@ -84,6 +113,7 @@ test("Home検索は最後の入力から300ms待って共通検索語を置換�
 // impact = "未確定の日本語で一覧が再取得・再配置されることを防ぐ"
 // distinction = "通常入力のtimer testではcompositionと後続changeの順序を扱わない"
 // @end-test-value
+/** 変換中は未確定の値を適用せず、確定後に同じ入力イベントが来ても待機期間を延ばさない。 */
 test("IME変換の確定値だけを適用し、後続の同値changeで待ち直さない", async (t) => {
   const fixture = await mount(t);
   await fixture.change("old");
@@ -120,6 +150,7 @@ test("IME変換の確定値だけを適用し、後続の同値changeで待ち�
 // impact = "クリア後も一覧が絞り込まれる操作不一致を防ぐ"
 // distinction = "非空入力のdebounce testでは即時解除と取消の組合せを確認しない"
 // @end-test-value
+/** 検索を空にしたら即座に解除し、直前の保留語が後で復活しないようにする。 */
 test("空入力は即座に適用し、保留中の検索を取消す", async (t) => {
   const fixture = await mount(t);
   await fixture.change("old");
@@ -145,14 +176,20 @@ test("空入力は即座に適用し、保留中の検索を取消す", async (t
 // impact = "閉じたHome入力に紐づく保留処理を残さない"
 // distinction = "値だけの検査ではReactが破棄するunmount後の更新を検出できない"
 // @end-test-value
+/** 破棄時に保留タイマーを取り除き、React に無視されるだけでなくコールバック自体を実行しない。 */
 test("unmountで保留中の検索timerを取消す", async (t) => {
   const fixture = await mount(t);
   let callbacks = 0;
   const setTimeoutBeforeSpy = globalThis.setTimeout;
-  t.mock.method(globalThis, "setTimeout", (callback: () => void, delay: number) => setTimeoutBeforeSpy(() => {
-    callbacks += 1;
-    callback();
-  }, delay));
+  t.mock.method(
+    globalThis,
+    "setTimeout",
+    (callback: () => void, delay: number) =>
+      setTimeoutBeforeSpy(() => {
+        callbacks += 1;
+        callback();
+      }, delay),
+  );
   await fixture.change("pending");
   await fixture.unmount();
   await fixture.tick(500);

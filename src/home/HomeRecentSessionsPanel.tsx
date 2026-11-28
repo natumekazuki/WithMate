@@ -9,8 +9,12 @@ import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary
 import type { HomeSessionState } from "./home-session-projection.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui/ui-utils.js";
 
+/** 最近の Session とピンの状態、ページ追加・再取得・Session を開く操作を受け取る。 */
 export type HomeRecentSessionsPanelProps = {
-  filteredSessionEntries: Array<{ session: HomeSessionSummary; state: HomeSessionState }>;
+  filteredSessionEntries: Array<{
+    session: HomeSessionSummary;
+    state: HomeSessionState;
+  }>;
   onOpenSession: (sessionId: string) => void;
   onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
   hasMore?: boolean;
@@ -23,8 +27,17 @@ export type HomeRecentSessionsPanelProps = {
   launchResults?: ReactNode;
 };
 
-const HOME_SESSION_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const HOME_SESSION_WEEKDAYS = [
+  "Sun",
+  "Mon",
+  "Tue",
+  "Wed",
+  "Thu",
+  "Fri",
+  "Sat",
+] as const;
 
+/** 更新時刻を表示環境の日時と曜日で表し、解析できない値は元の表記を維持する。 */
 export function formatHomeSessionUpdatedAt(value: string): string {
   const timestamp = new Date(value);
   if (Number.isNaN(timestamp.getTime())) {
@@ -40,6 +53,7 @@ export function formatHomeSessionUpdatedAt(value: string): string {
   return `${year}-${month}-${day}(${weekday}) ${hours}:${minutes}`;
 }
 
+/** ピン留めの状態を塗りで区別する装飾。読み上げ用の操作名は親ボタンが持つ。 */
 function PinIcon({ active }: { active: boolean }) {
   return (
     <svg
@@ -59,6 +73,7 @@ function PinIcon({ active }: { active: boolean }) {
   );
 }
 
+/** ピン留めを先にして更新時刻順に表示し、一覧の末尾へ近づいたときに次ページを要求する。 */
 export function HomeRecentSessionsPanel({
   filteredSessionEntries,
   onOpenSession,
@@ -77,48 +92,68 @@ export function HomeRecentSessionsPanel({
   useEffect(() => {
     const sentinel = loadMoreSentinelRef.current;
     const scrollRoot = sentinel?.parentElement;
-    if (!sentinel || !scrollRoot || !hasMore || !onLoadMore || typeof IntersectionObserver === "undefined") {
+    if (
+      !sentinel ||
+      !scrollRoot ||
+      !hasMore ||
+      !onLoadMore ||
+      typeof IntersectionObserver === "undefined"
+    ) {
       return;
     }
 
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) {
-        onLoadMore();
-      }
-    }, {
-      root: scrollRoot,
-      rootMargin: "0px 0px 96px",
-    });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onLoadMore();
+        }
+      },
+      {
+        root: scrollRoot,
+        rootMargin: "0px 0px 96px",
+      },
+    );
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [hasMore, onLoadMore]);
 
+  /** カードの ID を開く処理へ渡す。ピン操作とは別の入口にする。 */
   const openSession = (sessionId: string) => {
     onOpenSession(sessionId);
   };
-  const visibleSessionEntries = filteredSessionEntries.map((entry) => ({
+  const visibleSessionEntries = filteredSessionEntries
+    .map((entry) => ({
       kind: "agent" as const,
       updatedAt: entry.session.updatedAt,
       isPinned: entry.session.isPinned,
       entry,
-    })).sort((left, right) => {
-    if (left.isPinned !== right.isPinned) {
-      return left.isPinned ? -1 : 1;
-    }
-    const leftTime = Date.parse(left.updatedAt);
-    const rightTime = Date.parse(right.updatedAt);
-    return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
-  });
+    }))
+    .sort((left, right) => {
+      if (left.isPinned !== right.isPinned) {
+        return left.isPinned ? -1 : 1;
+      }
+      const leftTime = Date.parse(left.updatedAt);
+      const rightTime = Date.parse(right.updatedAt);
+      return (
+        (Number.isNaN(rightTime) ? 0 : rightTime) -
+        (Number.isNaN(leftTime) ? 0 : leftTime)
+      );
+    });
   const hasVisibleEntries = visibleSessionEntries.length > 0;
   const isLoading = sessionSummaryLoadStatus === "loading";
-  const loadErrorMessage = feedback || (sessionSummaryLoadStatus === "error"
-    ? "Could not load sessions."
-    : "");
+  const loadErrorMessage =
+    feedback ||
+    (sessionSummaryLoadStatus === "error" ? "Could not load sessions." : "");
 
   return (
     <section className="panel session-list-panel home-session-list-panel rise-3">
       {loadErrorMessage ? (
-        <LoadError message={loadErrorMessage} onRetry={onRetry} retryDisabled={isLoading || loadingMore} className="home-session-list-feedback" />
+        <LoadError
+          message={loadErrorMessage}
+          onRetry={onRetry}
+          retryDisabled={isLoading || loadingMore}
+          className="home-session-list-feedback"
+        />
       ) : null}
       <div
         className="session-card-list home-session-card-list"
@@ -128,7 +163,8 @@ export function HomeRecentSessionsPanel({
         {visibleSessionEntries.map((item) => {
           const { session } = item.entry;
           const isReadOnly = isReadOnlySession(session);
-          const isCharacterAuthoring = session.sessionKind === "character-authoring";
+          const isCharacterAuthoring =
+            session.sessionKind === "character-authoring";
           const isPinPending = pendingSessionPinIds.includes(session.id);
           return (
             <div
@@ -142,7 +178,10 @@ export function HomeRecentSessionsPanel({
                 onClick={() => openSession(session.id)}
               >
                 <CharacterAvatar
-                  character={{ name: session.character, iconPath: session.characterIconPath }}
+                  character={{
+                    name: session.character,
+                    iconPath: session.characterIconPath,
+                  }}
                   size="tiny"
                   className="home-session-card-avatar"
                 />
@@ -157,23 +196,37 @@ export function HomeRecentSessionsPanel({
               <div className="home-session-card-actions">
                 {isCharacterAuthoring || isReadOnly ? (
                   <div className="home-session-card-badges">
-                    {isCharacterAuthoring ? <span className="session-mode-badge character">Character</span> : null}
-                    {isReadOnly ? <span className="session-status home-session-status neutral">Read Only</span> : null}
+                    {isCharacterAuthoring ? (
+                      <span className="session-mode-badge character">
+                        Character
+                      </span>
+                    ) : null}
+                    {isReadOnly ? (
+                      <span className="session-status home-session-status neutral">
+                        Read Only
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
                 <button
                   className={`home-session-pin-button${session.isPinned ? " is-active" : ""}`}
                   type="button"
                   aria-pressed={session.isPinned}
-                  aria-label={isPinPending
-                    ? `Updating pin for ${session.taskTitle}`
-                    : `${session.isPinned ? "Unpin" : "Pin"} ${session.taskTitle}`}
-                  title={isPinPending
-                    ? `Updating pin for ${session.taskTitle}`
-                    : `${session.isPinned ? "Unpin" : "Pin"} ${session.taskTitle}`}
+                  aria-label={
+                    isPinPending
+                      ? `Updating pin for ${session.taskTitle}`
+                      : `${session.isPinned ? "Unpin" : "Pin"} ${session.taskTitle}`
+                  }
+                  title={
+                    isPinPending
+                      ? `Updating pin for ${session.taskTitle}`
+                      : `${session.isPinned ? "Unpin" : "Pin"} ${session.taskTitle}`
+                  }
                   aria-busy={isPinPending}
                   disabled={isPinPending}
-                  onClick={() => onSetSessionPinned(session.id, !session.isPinned)}
+                  onClick={() =>
+                    onSetSessionPinned(session.id, !session.isPinned)
+                  }
                 >
                   <ButtonContent busy={isPinPending}>
                     <PinIcon active={session.isPinned} />
@@ -184,11 +237,23 @@ export function HomeRecentSessionsPanel({
           );
         })}
         {!hasVisibleEntries && isLoading ? (
-          <LoadingIndicator label="Loading sessions" className="home-session-list-load-status" />
+          <LoadingIndicator
+            label="Loading sessions"
+            className="home-session-list-load-status"
+          />
         ) : null}
-        {hasMore ? <div ref={loadMoreSentinelRef} className="home-session-list-load-sentinel" aria-hidden="true" /> : null}
+        {hasMore ? (
+          <div
+            ref={loadMoreSentinelRef}
+            className="home-session-list-load-sentinel"
+            aria-hidden="true"
+          />
+        ) : null}
         {loadingMore ? (
-          <LoadingIndicator label="Loading more sessions" className="home-session-list-load-status" />
+          <LoadingIndicator
+            label="Loading more sessions"
+            className="home-session-list-load-status"
+          />
         ) : null}
       </div>
     </section>

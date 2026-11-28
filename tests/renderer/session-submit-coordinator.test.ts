@@ -14,6 +14,7 @@ import {
 } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 
+/** 再取得のマージに使う Session を作り、各ケースに必要なメッセージや実行状態だけ指定できるようにする。 */
 function createSession(overrides: Partial<Session> = {}): Session {
   return {
     id: "session-1",
@@ -62,15 +63,29 @@ function createSession(overrides: Partial<Session> = {}): Session {
 // impact = "実行中に確定messageへ行ったBookmark変更が失われる"
 // distinction = "送信成功の接続testは古い再取得によるBookmark上書きを検証しない"
 // @end-test-value
+/** 確定本文のブックマーク付与・解除を再取得前の状態から引き継ぎつつ、再取得で増えた本文は取り込む。 */
 test("Mainの再取得はBookmark付与・解除を維持する", () => {
-  const marked = { role: "assistant" as const, text: "before", isBookmarked: true };
+  const marked = {
+    role: "assistant" as const,
+    text: "before",
+    isBookmarked: true,
+  };
   const unmarked = { role: "assistant" as const, text: "before" };
   const current = createSession({ messages: [unmarked] });
-  const stale = createSession({ messages: [marked, { role: "assistant", text: "done" }] });
+  const stale = createSession({
+    messages: [marked, { role: "assistant", text: "done" }],
+  });
   const merged = mergeRefetchedSessionProjection(current, stale, true);
   assert.equal(merged.messages[0]?.isBookmarked, undefined);
   assert.equal(merged.messages[1]?.text, "done");
-  assert.equal(mergeRefetchedSessionProjection(createSession({ messages: [marked] }), createSession({ messages: [unmarked] }), true).messages[0]?.isBookmarked, true);
+  assert.equal(
+    mergeRefetchedSessionProjection(
+      createSession({ messages: [marked] }),
+      createSession({ messages: [unmarked] }),
+      true,
+    ).messages[0]?.isBookmarked,
+    true,
+  );
 });
 
 // @test-value v2
@@ -83,14 +98,17 @@ test("Mainの再取得はBookmark付与・解除を維持する", () => {
 // scope = "session-submit-coordinator-rapid-submit"
 // lifecycle = "permanent"
 // @end-test-value
+/** 送信のプレビュー待機中は同一 Session の二重送信を拒み、先行処理がリースを解放した後は再送信を受け付ける。 */
 test("SessionSubmitCoordinator は preview 待機中の同一session rapid submitを一件だけ通す", async () => {
   const coordinator = new SessionSubmitCoordinator();
+  /** 保留したプレビューを後から完了するための関数を、Promise の生成前に初期化する。 */
   let releasePreview: () => void = () => undefined;
   const preview = new Promise<void>((resolve) => {
     releasePreview = resolve;
   });
   let dispatchCount = 0;
 
+  /** リースを取得した呼び出しだけがプレビューを待ち、送信を数えた後にリースを返却する。 */
   const submit = async () => {
     const lease = coordinator.tryAcquire("session-1");
     if (!lease) {
@@ -130,6 +148,7 @@ test("SessionSubmitCoordinator は preview 待機中の同一session rapid submi
 // scope = "session-refetch-request-revision"
 // lifecycle = "permanent"
 // @end-test-value
+/** 新しい再取得を開始した時点で、先に開始した再取得のリビジョンを適用対象から外す。 */
 test("LatestRequestRevision は逆順で完了した古いsession refetchを失効させる", () => {
   const revisions = new LatestRequestRevision();
   const older = revisions.start();
@@ -149,6 +168,7 @@ test("LatestRequestRevision は逆順で完了した古いsession refetchを失�
 // scope = "session-state-mutation-revision"
 // lifecycle = "permanent"
 // @end-test-value
+/** 取得中に状態が変更されると、開始時に捕捉したリビジョンを現在のものとして認めない。 */
 test("StateMutationRevision はrefetch待機中の楽観またはsubscription更新を検知する", () => {
   const revisions = new StateMutationRevision();
   const refetchStartedAt = revisions.capture();
@@ -168,6 +188,7 @@ test("StateMutationRevision はrefetch待機中の楽観またはsubscription更
 // scope = "session-refetch-pin-projection"
 // lifecycle = "permanent"
 // @end-test-value
+/** ローカルのピン保持を指定した場合でも本体は再取得結果に更新し、保持指定がなければ取得した Session をそのまま返す。 */
 test("session refetch は局所的なpin projectionを維持して権威ある本体状態を反映する", () => {
   const current = createSession({
     isPinned: true,
@@ -177,14 +198,20 @@ test("session refetch は局所的なpin projectionを維持して権威ある�
   const refreshed = createSession({
     isPinned: false,
     runState: "idle",
-    messages: [{ role: "user", text: "accepted" }, { role: "assistant", text: "done" }],
+    messages: [
+      { role: "user", text: "accepted" },
+      { role: "assistant", text: "done" },
+    ],
   });
 
   assert.deepEqual(mergeRefetchedSessionProjection(current, refreshed, true), {
     ...refreshed,
     isPinned: true,
   });
-  assert.equal(mergeRefetchedSessionProjection(current, refreshed, false), refreshed);
+  assert.equal(
+    mergeRefetchedSessionProjection(current, refreshed, false),
+    refreshed,
+  );
 });
 
 // @test-value v2
@@ -199,32 +226,42 @@ test("session refetch は局所的なpin projectionを維持して権威ある�
 // distinction = "runtimeの未検証文字列と本文との関係はTypeScript型検査では検出できない"
 // lifecycle = "permanent"
 // @end-test-value
+/** 診断用の相関情報は UUID と既知の送信元に絞り、自由入力だけでなく、本文に含まれる UUID も相関 ID から除外する。 */
 test("normalizeSessionTurnClientRequestId はログへ安全に渡せる相関IDだけを受理する", () => {
   assert.equal(
     normalizeSessionTurnClientRequestId("7c26d875-9117-4ad5-97b5-e9af775b94bc"),
     "7c26d875-9117-4ad5-97b5-e9af775b94bc",
   );
-  assert.equal(normalizeSessionTurnClientRequestId("session-turn-mewz2-k4j8n"), null);
+  assert.equal(
+    normalizeSessionTurnClientRequestId("session-turn-mewz2-k4j8n"),
+    null,
+  );
   assert.equal(normalizeSessionTurnClientRequestId("turn-123:abc"), null);
   assert.equal(normalizeSessionTurnClientRequestId(""), null);
   assert.equal(normalizeSessionTurnClientRequestId("本文 を含む"), null);
   assert.equal(normalizeSessionTurnClientRequestId("x".repeat(129)), null);
   assert.equal(normalizeSessionTurnSubmitSource("composer"), "composer");
   assert.equal(normalizeSessionTurnSubmitSource("本文"), null);
-  assert.deepEqual(normalizeSessionTurnCorrelation({
-    userMessage: "secretprompt",
-    clientRequestId: "session-turn-secretprompt-abc",
-    submitSource: "本文" as "composer",
-  }), {
-    clientRequestId: null,
-    submitSource: null,
-  });
-  assert.deepEqual(normalizeSessionTurnCorrelation({
-    userMessage: "please use 7c26d875-9117-4ad5-97b5-e9af775b94bc",
-    clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
-    submitSource: "composer",
-  }), {
-    clientRequestId: null,
-    submitSource: "composer",
-  });
+  assert.deepEqual(
+    normalizeSessionTurnCorrelation({
+      userMessage: "secretprompt",
+      clientRequestId: "session-turn-secretprompt-abc",
+      submitSource: "本文" as "composer",
+    }),
+    {
+      clientRequestId: null,
+      submitSource: null,
+    },
+  );
+  assert.deepEqual(
+    normalizeSessionTurnCorrelation({
+      userMessage: "please use 7c26d875-9117-4ad5-97b5-e9af775b94bc",
+      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
+      submitSource: "composer",
+    }),
+    {
+      clientRequestId: null,
+      submitSource: "composer",
+    },
+  );
 });
