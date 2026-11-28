@@ -21,8 +21,8 @@
     "dist:dir": "npm run icon:generate && npm run stage:provider-binaries && npm run build && electron-builder --dir",
     "preview": "vite preview",
     "benchmark:data-loading": "tsx scripts/benchmarks/benchmark-data-loading.ts",
-    "lint": "node scripts/checks/check-quality.mjs",
-    "check:staged": "node -e \"const {execFileSync}=require('node:child_process');execFileSync(process.execPath,['--input-type=module','-','--pre-commit'],{input:execFileSync('git',['show',':scripts/checks/check-quality.mjs']),stdio:['pipe','inherit','inherit']})\"",
+    "lint": "eslint . --max-warnings 0",
+    "check:staged": "node scripts/checks/run-staged-checks.mjs",
     "test": "node --import tsx scripts/checks/run-tests.ts",
     "test:shard": "node --import tsx scripts/checks/run-tests.ts",
     "typecheck:tests": "tsc -p tsconfig.tests.json --noEmit",
@@ -76,6 +76,8 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@babel/core": "^8.0.0",
+    "@babel/eslint-parser": "^8.1.2",
     "@electron/rebuild": "^4.2.1",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.6.6",
@@ -85,6 +87,8 @@
     "@vitejs/plugin-react": "^6.3.0",
     "electron": "^44.11.5",
     "electron-builder": "^26.18.0",
+    "eslint": "^10.16.0",
+    "eslint-plugin-jsdoc": "^65.6.0",
     "jsdom": "^31.0.1",
     "png-to-ico": "^3.0.2",
     "sharp": "^0.35.5",
@@ -128,7 +132,9 @@
     ],
     "asar": true,
     "beforePack": "./scripts/build/before-pack.mjs",
-    "asarUnpack": ["node_modules/node-pty/prebuilds/**"],
+    "asarUnpack": [
+      "node_modules/node-pty/prebuilds/**"
+    ],
     "extraResources": [
       {
         "from": "resources",

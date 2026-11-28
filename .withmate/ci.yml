@@ -1,5 +1,6 @@
 version: 1
 commands:
   - npm ci
+  - npm run lint
   - npm run typecheck
   - npm test
