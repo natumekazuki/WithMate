@@ -4,7 +4,6 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
-import { parse } from "yaml";
 import type { LocalPrInput, LocalPrOperation, LocalPrResult, LocalPrVersion } from "../../src-shared/local-pr/local-pr-contract.js";
 import { formatMarkdownImageReference } from "../../src-shared/files/composer-image-reference.js";
 import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
@@ -177,10 +176,12 @@ test("Local PR review exposes the selected fixed range, reply, and resubmission 
   assert.deepEqual(await execute(actor, "gui", "discuss", request), sent);
   assert.equal((await store.listActive(owner)).length, 1);
   const message = receipt?.accepted?.request.userMessage ?? "";
-  const context = parse(message.split("# Pull Request Context\n\n")[1]);
-  assert.equal(context.headCommit, f.head);
-  assert.deepEqual(context.comments[0].review.anchor, anchor);
-  assert.deepEqual(context.comments[0].review.lines, [2, 3, 4, 5, 6, 7].map((line) => ({ line, text: `line ${line}` })));
+  assert.match(message, new RegExp(`^headCommit: "${f.head}"$`, "m"));
+  for (const [key, expected] of Object.entries(anchor)) {
+    assert.ok(message.split("\n").includes(`${key}: ${JSON.stringify(expected)}`), key);
+  }
+  const lines = Array.from(message.matchAll(/^- Line (\d+): (.+)$/gm), (match) => ({ line: Number(match[1]), text: JSON.parse(match[2]) }));
+  assert.deepEqual(lines, [2, 3, 4, 5, 6, 7].map((line) => ({ line, text: `line ${line}` })));
   const reply = await execute(recipient, "agent", "pr_comment", {
     prId, version: 1, replyTo: saved.data.id, body: "Test added; submitting a new version.",
   });

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parse } from "yaml";
 import type { LocalPrDetail, LocalPrInput } from "../../src-shared/local-pr/local-pr-contract.js";
 import { extractComposerAttachmentReferenceCandidates } from "../../src-shared/files/path-reference.js";
 import { buildLocalPrDiscussionMessage } from "../../src-electron/local-pr/local-pr-discussion.js";
@@ -24,6 +23,13 @@ const pr: LocalPrDetail = {
   ],
 };
 
+/** Read the quoted scalar fields in the human-readable prompt. */
+function field(text: string, key: string): unknown {
+  const line = text.split("\n").find((item) => item.startsWith(`${key}: `));
+  assert.ok(line, key);
+  return JSON.parse(line.slice(key.length + 2));
+}
+
 /** A later review sends the referenced older comparison and never treats diff/body text as @file input. */
 test("PR相談は返信元の固定したbefore側を既存Sessionへの本文に含める", async () => {
   const input: LocalPrInput<"discuss"> = { prId: pr.id, version: 2, target: actor, commentIds: [pr.comments[1].id], message: "Compare these versions", requestId: "79eabed9-701a-41d4-a8f2-7ef4bd745dc0" };
@@ -34,24 +40,30 @@ test("PR相談は返信元の固定したbefore側を既存Sessionへの本文�
   });
   assert.deepEqual(requests, [{ prId: pr.id, version: 1, mode: "full", path: "new-name.ts" }]);
   assert.deepEqual(extractComposerAttachmentReferenceCandidates(message), []);
-  const data = parse(message.split("# Pull Request Context\n\n")[1]);
-  assert.equal(data.version, 2);
-  assert.equal(data.headCommit, currentHead);
-  assert.equal(data.description, pr.description);
+  const context = message.split("# Pull Request Context\n\n")[1];
+  const [metadata, comment] = context.split("\n\n## Comment\n\n");
+  assert.equal(field(metadata, "version"), 2);
+  assert.equal(field(metadata, "headCommit"), currentHead);
+  assert.equal(field(metadata, "description"), pr.description);
   assert.doesNotMatch(message, /^# User Input$/m);
   assert.doesNotMatch(message, /~~~json/);
-  assert.equal(data.sourceBranch, pr.sourceBranch);
+  assert.equal(field(metadata, "sourceBranch"), pr.sourceBranch);
   assert.match(message, /session\.pr_get/);
   assert.match(message, /session\.pr_diff/);
   assert.match(message, /session\.pr_comment/);
-  assert.equal(data.comments[0].replyTo, pr.comments[0].id);
-  assert.equal(data.comments[0].note, pr.comments[1].body);
-  assert.deepEqual(data.comments[0].review, { anchor, beforeCommit: targetCommit, afterCommit: earlierHead,
-    lines: [{ line: 4, text: "old @private.ts ![local](C:/private.png)" }], omitted: false });
+  assert.equal(field(comment, "replyTo"), pr.comments[0].id);
+  assert.equal(field(comment, "note"), pr.comments[1].body);
+  for (const [key, expected] of Object.entries(anchor)) assert.equal(field(comment, key), expected);
+  assert.equal(field(comment, "beforeCommit"), targetCommit);
+  assert.equal(field(comment, "afterCommit"), earlierHead);
+  assert.equal(field(comment, "omitted"), false);
+  const line = comment.match(/^- Line 4: (.+)$/m);
+  assert.ok(line);
+  assert.equal(JSON.parse(line[1]), "old @private.ts ![local](C:/private.png)");
   const provider = composeProviderInput(message, { origin: { kind: "gui", operation: "send", targetSessionId: actor.sessionId, targetIncarnationId: actor.incarnationId }, originalChanged: false });
   assert.match(provider, /Sender: GUI user \(local-user\)/);
   assert.match(provider, /# User Input\n\nCompare these versions\n\n# Local Pull Request/);
-  assert.equal(parse(provider.split("# Pull Request Context\n\n")[1]).comments[0].note, pr.comments[1].body);
+  assert.equal(field(provider.split("\n\n## Comment\n\n")[1], "note"), pr.comments[1].body);
 });
 
 /** PR-wide requests still ask the agent to return the response to that PR. */
@@ -59,5 +71,5 @@ test("PR-wide discussion requests do not require a selected comment", async () =
   const input: LocalPrInput<"discuss"> = { prId: pr.id, version: 2, target: actor, commentIds: [], message: "Review the PR", requestId: "79eabed9-701a-41d4-a8f2-7ef4bd745dc0" };
   const message = await buildLocalPrDiscussionMessage(pr, input, async () => { throw new Error("No anchored patch expected"); });
   assert.match(message, /Post your response as a PR-wide comment with session\.pr_comment/);
-  assert.deepEqual(parse(message.split("# Pull Request Context\n\n")[1]).comments, []);
+  assert.doesNotMatch(message, /^## Comment$/m);
 });
