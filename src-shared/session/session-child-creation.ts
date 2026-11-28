@@ -3,6 +3,7 @@ import type { CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
 import type { CodexReviewer } from "../settings/codex-reviewer.js";
 import type { ModelReasoningEffort } from "../settings/model-catalog.js";
 
+/** 通常子の作成に指定する受付ID、担当、実行先と作業領域。権限値は入力しない。 */
 export type CreateChildSessionRequest = {
   requestId: string;
   role: "task-coordinator" | "executor";

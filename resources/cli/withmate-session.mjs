@@ -5910,11 +5910,13 @@ var SESSION_OPERATING_POLICY_DESCRIPTIONS = {
 };
 // src-shared/session/session-target.ts
 var id$3 = string().trim().min(1).max(256);
+/** Mainを指定するには、保存IDとその個体を識別するincarnation IDを両方要求する。 */
 var mainSessionTargetSchema = object({
 	kind: literal("main"),
 	sessionId: id$3,
 	incarnationId: id$3
 }).strict();
+/** MainとAuxiliaryを区別し、Auxiliaryには所属するMainの個体も要求する。 */
 var sessionTargetSchema = discriminatedUnion("kind", [mainSessionTargetSchema, object({
 	kind: literal("auxiliary"),
 	sessionId: id$3,
@@ -6335,6 +6337,7 @@ object({
 });
 // src-shared/session/session-reply.ts
 var turnId$1 = string().regex(/^[1-9]\d*$/);
+/** 返信先を、保存メッセージの連番、または配送の受付UUIDのいずれかで指定する。 */
 var sessionReplySchema = union([object({
 	target: sessionTargetSchema,
 	seq: number().int().nonnegative(),

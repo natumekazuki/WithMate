@@ -1,5 +1,9 @@
-import type { AssistantQuestionRange, ElicitationRecord } from "./runtime-state.js";
+import type {
+  AssistantQuestionRange,
+  ElicitationRecord,
+} from "./runtime-state.js";
 
+/** 質問の発生元IDを本文範囲に対応付け、対応しなくなった質問の古い範囲を外す。 */
 export function placeElicitationRecords(
   records: ElicitationRecord[] | undefined,
   ranges: readonly AssistantQuestionRange[] | undefined,
@@ -8,6 +12,9 @@ export function placeElicitationRecords(
   return records.map((record) => {
     if (!record.sourceItemId) return record;
     const range = ranges.find((entry) => entry.itemId === record.sourceItemId);
-    return { ...record, textRange: range ? { start: range.start, end: range.end } : undefined };
+    return {
+      ...record,
+      textRange: range ? { start: range.start, end: range.end } : undefined,
+    };
   });
 }

@@ -1,12 +1,32 @@
-import { APPROVAL_MODE_VALUES, type ApprovalMode } from "../settings/approval-mode.js";
-import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider } from "../settings/provider-runtime-options.js";
-import { CODEX_REVIEWER_VALUES, type CodexReviewer } from "../settings/codex-reviewer.js";
+import {
+  APPROVAL_MODE_VALUES,
+  type ApprovalMode,
+} from "../settings/approval-mode.js";
+import {
+  getApprovalOptionsForProvider,
+  getApprovalReviewerOptionsForProvider,
+} from "../settings/provider-runtime-options.js";
+import {
+  CODEX_REVIEWER_VALUES,
+  type CodexReviewer,
+} from "../settings/codex-reviewer.js";
 import { supportsWithMateAutoReview } from "../settings/withmate-auto-review.js";
-import { CODEX_SANDBOX_MODE_VALUES, type CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
-import { CODEX_SPEED_VALUES, type CodexSpeed } from "../settings/codex-speed.js";
-import { isModelReasoningEffort, type ModelCatalogProvider, type ModelReasoningEffort } from "../settings/model-catalog.js";
+import {
+  CODEX_SANDBOX_MODE_VALUES,
+  type CodexSandboxMode,
+} from "../settings/codex-sandbox-mode.js";
+import {
+  CODEX_SPEED_VALUES,
+  type CodexSpeed,
+} from "../settings/codex-speed.js";
+import {
+  isModelReasoningEffort,
+  type ModelCatalogProvider,
+  type ModelReasoningEffort,
+} from "../settings/model-catalog.js";
 import type { Session } from "./session-state.js";
 
+/** Turn開始時に使用するモデル・推論と、承認からCustom Agentまでの確定済み設定。 */
 export type SessionExecutionOptions = Readonly<{
   model: string;
   reasoningEffort: ModelReasoningEffort;
@@ -19,9 +39,14 @@ export type SessionExecutionOptions = Readonly<{
 }>;
 
 /** メッセージごとに公開指定できる項目。保存済みの権限は宛先側から取得する。 */
-export type SessionMessageExecutionOptions = Partial<Pick<SessionExecutionOptions, "model" | "reasoningEffort">>;
+export type SessionMessageExecutionOptions = Partial<
+  Pick<SessionExecutionOptions, "model" | "reasoningEffort">
+>;
 
-export function captureSessionExecutionOptions(source: Pick<Session, keyof SessionExecutionOptions>): SessionExecutionOptions {
+/** 保存済みSessionから実行に必要な値だけを取り出し、受付後の書き換えを防ぐ。 */
+export function captureSessionExecutionOptions(
+  source: Pick<Session, keyof SessionExecutionOptions>,
+): SessionExecutionOptions {
   return Object.freeze({
     model: source.model,
     reasoningEffort: source.reasoningEffort,
@@ -29,11 +54,14 @@ export function captureSessionExecutionOptions(source: Pick<Session, keyof Sessi
     codexSandboxMode: source.codexSandboxMode,
     codexSpeed: source.codexSpeed,
     codexReviewer: source.codexReviewer,
-    ...(source.withMateReviewerExplicit ? { withMateReviewerExplicit: true } : {}),
+    ...(source.withMateReviewerExplicit
+      ? { withMateReviewerExplicit: true }
+      : {}),
     customAgentName: source.customAgentName,
   });
 }
 
+/** 実行設定の型とProviderごとの承認・判断役の組み合わせを検証し、確定した値を凍結する。 */
 export function validateSessionExecutionOptions(
   value: unknown,
   providerCatalog: Pick<ModelCatalogProvider, "id">,
@@ -51,25 +79,50 @@ export function validateSessionExecutionOptions(
   if (!APPROVAL_MODE_VALUES.includes(candidate.approvalMode as ApprovalMode)) {
     throw new Error("The selected approval mode is invalid.");
   }
-  if (!getApprovalOptionsForProvider(providerCatalog.id).some((option) => option.value === candidate.approvalMode)) {
-    throw new Error("The selected approval mode is not supported by this provider.");
+  if (
+    !getApprovalOptionsForProvider(providerCatalog.id).some(
+      (option) => option.value === candidate.approvalMode,
+    )
+  ) {
+    throw new Error(
+      "The selected approval mode is not supported by this provider.",
+    );
   }
-  if (!CODEX_SANDBOX_MODE_VALUES.includes(candidate.codexSandboxMode as CodexSandboxMode)) {
+  if (
+    !CODEX_SANDBOX_MODE_VALUES.includes(
+      candidate.codexSandboxMode as CodexSandboxMode,
+    )
+  ) {
     throw new Error("The selected sandbox mode is invalid.");
   }
   if (!CODEX_SPEED_VALUES.includes(candidate.codexSpeed as CodexSpeed)) {
     throw new Error("The selected speed is invalid.");
   }
-  if (!CODEX_REVIEWER_VALUES.includes(candidate.codexReviewer as CodexReviewer)) {
+  if (
+    !CODEX_REVIEWER_VALUES.includes(candidate.codexReviewer as CodexReviewer)
+  ) {
     throw new Error("The selected reviewer is invalid.");
   }
-  if (candidate.withMateReviewerExplicit !== undefined
-    && (candidate.withMateReviewerExplicit !== true || !supportsWithMateAutoReview(providerCatalog.id))) {
-    throw new Error("The explicit WithMate reviewer setting is invalid for this provider.");
+  if (
+    candidate.withMateReviewerExplicit !== undefined &&
+    (candidate.withMateReviewerExplicit !== true ||
+      !supportsWithMateAutoReview(providerCatalog.id))
+  ) {
+    throw new Error(
+      "The explicit WithMate reviewer setting is invalid for this provider.",
+    );
   }
-  if (getApprovalReviewerOptionsForProvider(providerCatalog.id, candidate.approvalMode as ApprovalMode)
-    .some((option) => option.value === candidate.codexReviewer && option.disabled)) {
-    throw new Error("The selected reviewer is not supported with this approval mode.");
+  if (
+    getApprovalReviewerOptionsForProvider(
+      providerCatalog.id,
+      candidate.approvalMode as ApprovalMode,
+    ).some(
+      (option) => option.value === candidate.codexReviewer && option.disabled,
+    )
+  ) {
+    throw new Error(
+      "The selected reviewer is not supported with this approval mode.",
+    );
   }
   if (typeof candidate.customAgentName !== "string") {
     throw new Error("The selected custom agent is invalid.");
@@ -81,7 +134,9 @@ export function validateSessionExecutionOptions(
     codexSandboxMode: candidate.codexSandboxMode as CodexSandboxMode,
     codexSpeed: candidate.codexSpeed as CodexSpeed,
     codexReviewer: candidate.codexReviewer as CodexReviewer,
-    ...(candidate.withMateReviewerExplicit ? { withMateReviewerExplicit: true } : {}),
+    ...(candidate.withMateReviewerExplicit
+      ? { withMateReviewerExplicit: true }
+      : {}),
     customAgentName: candidate.customAgentName,
   });
 }
