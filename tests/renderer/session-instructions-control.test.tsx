@@ -9,28 +9,78 @@ import { SessionInstructionsControl } from "../../src/chat/composer/session-inst
 /** `ActionDock` が対象を切り替えたとき、遅れて届く読み取り結果や保存の応答が、別のエディターに反映されないことを確認する。 */
 test("切替前の読込・保存完了は新しい Instructions エディターを変更しない", async () => {
   const dom = new JSDOM("<div id='root'></div>");
-  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true };
-  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { value, configurable: true });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const previous = new Map(
+    Object.keys(globals).map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { value, configurable: true });
 
-  const main: SessionInstructionsTarget = { kind: "main", sessionId: "main", incarnationId: "main-v1" };
-  const auxiliary: SessionInstructionsTarget = { kind: "auxiliary", sessionId: "aux", incarnationId: "aux-v1", mainSessionId: "main", mainIncarnationId: "main-v1" };
-  const reads: Array<{ target: SessionInstructionsTarget; finish: (body: string) => void }> = [];
-  const writes: Array<{ target: SessionInstructionsTarget; body: string; finish: (result: { byteLength: number }) => void }> = [];
+  const main: SessionInstructionsTarget = {
+    kind: "main",
+    sessionId: "main",
+    incarnationId: "main-v1",
+  };
+  const auxiliary: SessionInstructionsTarget = {
+    kind: "auxiliary",
+    sessionId: "aux",
+    incarnationId: "aux-v1",
+    mainSessionId: "main",
+    mainIncarnationId: "main-v1",
+  };
+  const reads: Array<{
+    target: SessionInstructionsTarget;
+    finish: (body: string) => void;
+  }> = [];
+  const writes: Array<{
+    target: SessionInstructionsTarget;
+    body: string;
+    finish: (result: { byteLength: number }) => void;
+  }> = [];
   const api = {
-    getSessionInstructions: (target: SessionInstructionsTarget) => new Promise<string>((finish) => { reads.push({ target, finish }); }),
-    setSessionInstructions: (target: SessionInstructionsTarget, body: string) => new Promise<{ byteLength: number }>((finish) => { writes.push({ target, body, finish }); }),
+    /** 本文の読み取り先を記録し、切替前後の応答が届く順序をテストから制御する。 */
+    getSessionInstructions: (target: SessionInstructionsTarget) =>
+      new Promise<string>((finish) => {
+        reads.push({ target, finish });
+      }),
+    /** 保存先と編集中の本文を記録し、次の所有者が開いた後から保存完了を返せるようにする。 */
+    setSessionInstructions: (target: SessionInstructionsTarget, body: string) =>
+      new Promise<{ byteLength: number }>((finish) => {
+        writes.push({ target, body, finish });
+      }),
   };
   let root: Root | undefined;
   const body = dom.window.document.body;
-  const render = (target: SessionInstructionsTarget) => act(async () => {
-    root!.render(<SessionInstructionsControl key={JSON.stringify(target)} title={target.sessionId} target={target} api={api} />);
-  });
-  const click = (name: string) => act(async () => {
-    const button = Array.from(body.querySelectorAll("button")).find((element) => element.textContent === name);
-    assert.ok(button, name);
-    button.click();
-  });
+  /** 対象の識別情報を React のキーに使い、切替時に別の編集インスタンスを描画する。 */
+  const render = (target: SessionInstructionsTarget) =>
+    act(async () => {
+      root!.render(
+        <SessionInstructionsControl
+          key={JSON.stringify(target)}
+          title={target.sessionId}
+          target={target}
+          api={api}
+        />,
+      );
+    });
+  /** 画面に出ている文言でボタンを選び、React の操作境界内で押す。 */
+  const click = (name: string) =>
+    act(async () => {
+      const button = Array.from(body.querySelectorAll("button")).find(
+        (element) => element.textContent === name,
+      );
+      assert.ok(button, name);
+      button.click();
+    });
+  /** その時点で開いている指示入力欄を取得し、切替後は表示されない場合も扱う。 */
   const input = () => body.querySelector("textarea");
   try {
     const { createRoot } = await import("react-dom/client");
@@ -41,17 +91,31 @@ test("切替前の読込・保存完了は新しい Instructions エディター
     await render(auxiliary);
     assert.equal(input(), null);
     await click("Instructions");
-    assert.deepEqual(reads.map(({ target }) => target), [main, auxiliary]);
-    await act(async () => { reads[1].finish("補足😀"); });
-    await act(async () => { reads[0].finish("stale Main text"); });
+    assert.deepEqual(
+      reads.map(({ target }) => target),
+      [main, auxiliary],
+    );
+    await act(async () => {
+      reads[1].finish("補足😀");
+    });
+    await act(async () => {
+      reads[0].finish("stale Main text");
+    });
     assert.equal(input()?.value, "補足😀");
 
     await click("Save");
-    assert.deepEqual(writes.map(({ target, body: draft }) => ({ target, draft })), [{ target: auxiliary, draft: "補足😀" }]);
+    assert.deepEqual(
+      writes.map(({ target, body: draft }) => ({ target, draft })),
+      [{ target: auxiliary, draft: "補足😀" }],
+    );
     await render(main);
     await click("Instructions");
-    await act(async () => { reads[2].finish("current Main"); });
-    await act(async () => { writes[0].finish({ byteLength: 10 }); });
+    await act(async () => {
+      reads[2].finish("current Main");
+    });
+    await act(async () => {
+      writes[0].finish({ byteLength: 10 });
+    });
     assert.equal(input()?.value, "current Main");
   } finally {
     await act(async () => root?.unmount());

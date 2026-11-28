@@ -20,6 +20,7 @@ import { createHtmlPreviewApi } from "./html-preview-api.js";
 import { createCoordinationApi } from "./coordination-api.js";
 import { createSessionExecutionApi } from "./session-execution-api.js";
 
+/** 機能ごとの IPC 窓口を合成し、renderer のエラー転送も登録する。Electron 固有の File 判定は別で接続する。 */
 export function createWithMateWindowApi(
   ipcRenderer: IpcRendererLike,
   platform: NodeJS.Platform = process.platform,

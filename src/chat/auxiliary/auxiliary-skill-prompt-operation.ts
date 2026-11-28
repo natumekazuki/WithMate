@@ -4,6 +4,7 @@ import {
   type SkillPromptInsertionState,
 } from "../composer/session-composer-selection.js";
 
+/** 現在の Auxiliary の Provider と下書きに応じてスキルを挿入し、下書きの更新後に完了を通知する。 */
 export async function runAuxiliarySkillPromptInsertionOperation(input: {
   activeSession: Pick<AuxiliarySession, "provider" | "composerDraft"> | null;
   skillName: string;

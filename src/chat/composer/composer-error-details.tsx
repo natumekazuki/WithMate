@@ -1,16 +1,35 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { createPortal } from "react-dom";
 
 import { ComposerIcon } from "./composer-icon.js";
 
-export function ComposerErrorDetails({ label, message, isActive = true }: { label: string; message: string; isActive?: boolean }) {
+/** アクティブなコンポーザーの失敗詳細を、復旧用の操作を隠さない位置で表示する。 */
+export function ComposerErrorDetails({
+  label,
+  message,
+  isActive = true,
+}: {
+  label: string;
+  message: string;
+  isActive?: boolean;
+}) {
   const id = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [isOpen, setOpen] = useState(false);
   const open = isOpen && isActive;
-  const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
+  const [position, setPosition] = useState<CSSProperties>({
+    visibility: "hidden",
+  });
   const positioned = position.visibility !== "hidden";
+  /** 詳細を閉じ、キーボードなどで明示的に閉じたときはスクロールせず開閉ボタンへ戻る。 */
   const close = (restoreFocus: boolean) => {
     setOpen(false);
     if (restoreFocus) triggerRef.current?.focus({ preventScroll: true });
@@ -24,23 +43,43 @@ export function ComposerErrorDetails({ label, message, isActive = true }: { labe
       setPosition({ visibility: "hidden" });
       return;
     }
+    /** 復旧行全体と表示領域を計測して配置を選び、開閉ボタンから表示色を受け継ぐ。 */
     const updatePosition = () => {
       const trigger = triggerRef.current;
       const panel = panelRef.current;
       if (!trigger || !panel) return;
       // 折り返されたボタンも含め、復旧操作の行全体が隠れないようにする。
-      const anchor = (trigger.closest(".composer-save-feedback") ?? trigger).getBoundingClientRect();
+      const anchor = (
+        trigger.closest(".composer-save-feedback") ?? trigger
+      ).getBoundingClientRect();
       const margin = 16;
       const gap = 8;
       const above = Math.max(0, anchor.top - gap - margin);
-      const below = Math.max(0, window.innerHeight - anchor.bottom - gap - margin);
+      const below = Math.max(
+        0,
+        window.innerHeight - anchor.bottom - gap - margin,
+      );
       const useAbove = above >= below;
       const maxHeight = Math.min(320, useAbove ? above : below);
-      const height = Math.min(panel.scrollHeight + panel.offsetHeight - panel.clientHeight, maxHeight);
+      const height = Math.min(
+        panel.scrollHeight + panel.offsetHeight - panel.clientHeight,
+        maxHeight,
+      );
       const styles = window.getComputedStyle(trigger);
       setPosition({
-        ...Object.fromEntries(["--ink", "--line", "--surface-strong"].map((name) => [name, styles.getPropertyValue(name)])),
-        left: Math.max(margin, Math.min(anchor.left, window.innerWidth - panel.getBoundingClientRect().width - margin)),
+        ...Object.fromEntries(
+          ["--ink", "--line", "--surface-strong"].map((name) => [
+            name,
+            styles.getPropertyValue(name),
+          ]),
+        ),
+        left: Math.max(
+          margin,
+          Math.min(
+            anchor.left,
+            window.innerWidth - panel.getBoundingClientRect().width - margin,
+          ),
+        ),
         top: useAbove ? anchor.top - gap - height : anchor.bottom + gap,
         maxHeight,
       });
@@ -60,10 +99,16 @@ export function ComposerErrorDetails({ label, message, isActive = true }: { labe
 
   useEffect(() => {
     if (!open) return;
+    /** ボタンまたは詳細の外を押したときは、その場所のフォーカスを奪わず閉じる。 */
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (!triggerRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
+      if (
+        !triggerRef.current?.contains(target) &&
+        !panelRef.current?.contains(target)
+      )
+        setOpen(false);
     };
+    /** Escape を詳細の閉じる操作として処理し、上位へ伝えず開閉ボタンへ戻る。 */
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -80,42 +125,54 @@ export function ComposerErrorDetails({ label, message, isActive = true }: { labe
     };
   }, [open]);
 
-  return <>
-    <button
-      ref={triggerRef}
-      type="button"
-      className="drawer-toggle compact secondary composer-error-details-trigger"
-      aria-label={label}
-      aria-expanded={open}
-      aria-haspopup="dialog"
-      aria-controls={open ? id : undefined}
-      onClick={() => setOpen(!open)}
-    >
-      <ComposerIcon name="error" />
-      <span>Details</span>
-    </button>
-    {open ? createPortal(
-      <div
-        ref={panelRef}
-        id={id}
-        role="dialog"
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="drawer-toggle compact secondary composer-error-details-trigger"
         aria-label={label}
-        tabIndex={-1}
-        className="composer-error-details-popover"
-        style={position}
-        onKeyDown={(event) => {
-          if (event.key === "Tab" && (event.shiftKey || event.target !== event.currentTarget)) {
-            close(true);
-            if (event.shiftKey) event.preventDefault();
-          }
-        }}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-controls={open ? id : undefined}
+        onClick={() => setOpen(!open)}
       >
-        <button className="composer-error-details-close" type="button" aria-label="Close Error Details" onClick={() => close(true)}>
-          <ComposerIcon name="close" />
-        </button>
-        <p>{message}</p>
-      </div>,
-      document.body,
-    ) : null}
-  </>;
+        <ComposerIcon name="error" />
+        <span>Details</span>
+      </button>
+      {open
+        ? createPortal(
+            <div
+              ref={panelRef}
+              id={id}
+              role="dialog"
+              aria-label={label}
+              tabIndex={-1}
+              className="composer-error-details-popover"
+              style={position}
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Tab" &&
+                  (event.shiftKey || event.target !== event.currentTarget)
+                ) {
+                  close(true);
+                  if (event.shiftKey) event.preventDefault();
+                }
+              }}
+            >
+              <button
+                className="composer-error-details-close"
+                type="button"
+                aria-label="Close Error Details"
+                onClick={() => close(true)}
+              >
+                <ComposerIcon name="close" />
+              </button>
+              <p>{message}</p>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
 }

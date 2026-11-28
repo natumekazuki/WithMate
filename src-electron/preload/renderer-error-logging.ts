@@ -2,6 +2,7 @@ import type { RendererLogInput } from "../../src-shared/window/app-log-types.js"
 import { WITHMATE_RENDERER_LOG_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import type { IpcRendererLike } from "./ipc.js";
 
+/** renderer の実行時エラーを、本文と発生位置を含む診断に変換するための項目。 */
 type PreloadErrorEvent = {
   message?: string;
   filename?: string;
@@ -9,13 +10,17 @@ type PreloadErrorEvent = {
   colno?: number;
   error?: unknown;
 };
+/** 未処理の Promise 拒否から診断用に受け取る理由。 */
 type PreloadUnhandledRejectionEvent = { reason?: unknown };
+/** ログに記録するページと、グローバルエラー通知を受け取る最小の Window 契約。 */
 type PreloadWindow = {
   location: { href: string };
+  /** 実行時エラーの本文や発生位置を受け取るために購読する。 */
   addEventListener(
     type: "error",
     listener: (event: PreloadErrorEvent) => void,
   ): void;
+  /** 未処理の Promise 拒否から reason を受け取るために購読する。 */
   addEventListener(
     type: "unhandledrejection",
     listener: (event: PreloadUnhandledRejectionEvent) => void,
@@ -26,6 +31,7 @@ declare const window: PreloadWindow | undefined;
 
 let rendererErrorLoggingInstalled = false;
 
+/** 変換済みの renderer 診断を、応答を待たず Main のロガーへ渡す。 */
 function reportRendererLog(
   ipcRenderer: IpcRendererLike,
   input: RendererLogInput,
@@ -33,6 +39,7 @@ function reportRendererLog(
   ipcRenderer.send(WITHMATE_RENDERER_LOG_CHANNEL, input);
 }
 
+/** ブラウザーの Window が利用可能なら、未捕捉エラーと未処理拒否の診断転送を一度だけ登録する。 */
 export function installRendererErrorLogging(
   ipcRenderer: IpcRendererLike,
 ): void {

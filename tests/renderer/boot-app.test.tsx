@@ -16,10 +16,14 @@ import BootApp from "../../src/app/BootApp.js";
 // lifecycle = "permanent"
 // distinction = "型検査では分からないBoot consumerのstageと非視覚的状態の結び付きを確認する"
 // @end-test-value
+/** 起動画面は処理中の領域を示し、単一の status で可視の起動文言と支援技術向けの処理名を伝える。 */
 test("BootApp は起動中の領域と処理名を支援技術へ伝える", () => {
   const html = renderToStaticMarkup(React.createElement(BootApp));
 
   assert.match(html, /<section[^>]*aria-busy="true"/);
-  assert.match(html, /role="status" aria-atomic="true">.*?Starting WithMate.*?<span class="sr-only">Preparing Startup<\/span>/);
+  assert.match(
+    html,
+    /role="status" aria-atomic="true">.*?Starting WithMate.*?<span class="sr-only">Preparing Startup<\/span>/,
+  );
   assert.equal((html.match(/role="status"/g) ?? []).length, 1);
 });

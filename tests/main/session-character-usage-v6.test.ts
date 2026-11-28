@@ -9,6 +9,7 @@ import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src-shared/character/character
 import type { SessionCharacterUsage } from "../../src-shared/session/session-state.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 
+/** v6 の利用履歴に投入するセッション行の主要列と旧ポリシー JSON。 */
 type UsageRow = {
   id: string;
   characterId: string | null;
@@ -17,11 +18,14 @@ type UsageRow = {
   kind?: string;
 };
 
+/** 一時 SQLite に履歴を直接投入し、公開 API の集約結果を検査に渡す。 */
 async function withUsageRows(
   rows: readonly UsageRow[],
   check: (usage: SessionCharacterUsage[]) => void,
 ): Promise<void> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-character-usage-v6-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-character-usage-v6-"),
+  );
   const dbPath = path.join(directory, "withmate-v6.db");
   let storage: SessionStorageV6 | null = null;
   try {
@@ -44,7 +48,14 @@ async function withUsageRows(
         if (row.characterId !== null) {
           character.run(row.characterId, row.characterId);
         }
-        insert.run(row.id, row.kind ?? "default", row.policy ?? "{}", row.characterId, row.at, row.at);
+        insert.run(
+          row.id,
+          row.kind ?? "default",
+          row.policy ?? "{}",
+          row.characterId,
+          row.at,
+          row.at,
+        );
       }
       db.exec("COMMIT;");
     } finally {
@@ -69,33 +80,125 @@ async function withUsageRows(
 // impact = "Homeの使用履歴とランダムCharacter選択の重みが変わる、または履歴取得が失敗する"
 // distinction = "既存summary page testは通常ID二つだけであり、型/buildは実DBのJSON評価・SQL TRIMとJS trimの差・tie-breakを検出できない。小さいmetadata fixtureで継続費用を抑える"
 // @end-test-value
+/** 旧 JSON からの復元、通常セッションへの限定、同時刻の ID 順を実 DB で確かめる。 */
 test("Character usage は fallback・空ID・無効JSON・owner回復・同時刻順を保持する", async () => {
-  await withUsageRows([
-    { id: "tie-a", characterId: "char-a", at: "2026-10-01" },
-    { id: "tie-y", characterId: "char-b", at: "2026-10-01" },
-    { id: "tie-z", characterId: "char-a", at: "2026-10-01", policy: "invalid JSON" },
-    { id: "fallback-space", characterId: "  ", at: "2026-10-02", policy: '{"characterId":"  char-c  "}' },
-    { id: "fallback-null", characterId: null, at: "2026-10-03", policy: '{"characterId":"char-d"}' },
-    { id: "fallback-empty", characterId: "", at: "2026-10-04", policy: '{"characterId":"char-e"}' },
-    { id: "relational", characterId: " char-f ", at: "2026-10-05", policy: '{"characterId":"ignored"}' },
-    { id: "owner-whitespace", characterId: "\t\n", at: "2026-10-06", policy: '{"characterId":"ignored"}' },
-    { id: "owner-reserved", characterId: null, at: "2026-10-07", policy: JSON.stringify({ characterId: UNKNOWN_CHARACTER_OWNER_ID }) },
-    { id: "normalized-alias", characterId: "\tchar-a\n", at: "2026-10-08" },
-    { id: "fallback-number", characterId: null, at: "2026-10-09", policy: '{"characterId":23}' },
-    { id: "fallback-boolean", characterId: null, at: "2026-10-10", policy: '{"characterId":false}' },
-    { id: "fallback-object", characterId: null, at: "2026-10-11", policy: '{"characterId":{"id":"nested"}}' },
-    { id: "missing", characterId: null, at: "2026-10-20" },
-    { id: "invalid", characterId: null, at: "2026-10-20", policy: "invalid JSON" },
-    { id: "empty", characterId: "", at: "2026-10-20", policy: '{"characterId":"  "}' },
-    { id: "null", characterId: null, at: "2026-10-20", policy: '{"characterId":null}' },
-    { id: "authoring", characterId: "char-a", at: "2026-10-20", kind: "character-authoring" },
-    { id: "other-kind", characterId: "char-b", at: "2026-10-20", kind: "other" },
-  ], (usage) => {
-    assert.deepEqual(usage, [
-      '{"id":"nested"}', "0", "23", "char-a", UNKNOWN_CHARACTER_OWNER_ID,
-      UNKNOWN_CHARACTER_OWNER_ID, "char-f", "char-e", "char-d", "char-c", "char-a", "char-b",
-    ].map((characterId) => ({ characterId, sessionKind: "default" })));
-  });
+  await withUsageRows(
+    [
+      { id: "tie-a", characterId: "char-a", at: "2026-10-01" },
+      { id: "tie-y", characterId: "char-b", at: "2026-10-01" },
+      {
+        id: "tie-z",
+        characterId: "char-a",
+        at: "2026-10-01",
+        policy: "invalid JSON",
+      },
+      {
+        id: "fallback-space",
+        characterId: "  ",
+        at: "2026-10-02",
+        policy: '{"characterId":"  char-c  "}',
+      },
+      {
+        id: "fallback-null",
+        characterId: null,
+        at: "2026-10-03",
+        policy: '{"characterId":"char-d"}',
+      },
+      {
+        id: "fallback-empty",
+        characterId: "",
+        at: "2026-10-04",
+        policy: '{"characterId":"char-e"}',
+      },
+      {
+        id: "relational",
+        characterId: " char-f ",
+        at: "2026-10-05",
+        policy: '{"characterId":"ignored"}',
+      },
+      {
+        id: "owner-whitespace",
+        characterId: "\t\n",
+        at: "2026-10-06",
+        policy: '{"characterId":"ignored"}',
+      },
+      {
+        id: "owner-reserved",
+        characterId: null,
+        at: "2026-10-07",
+        policy: JSON.stringify({ characterId: UNKNOWN_CHARACTER_OWNER_ID }),
+      },
+      { id: "normalized-alias", characterId: "\tchar-a\n", at: "2026-10-08" },
+      {
+        id: "fallback-number",
+        characterId: null,
+        at: "2026-10-09",
+        policy: '{"characterId":23}',
+      },
+      {
+        id: "fallback-boolean",
+        characterId: null,
+        at: "2026-10-10",
+        policy: '{"characterId":false}',
+      },
+      {
+        id: "fallback-object",
+        characterId: null,
+        at: "2026-10-11",
+        policy: '{"characterId":{"id":"nested"}}',
+      },
+      { id: "missing", characterId: null, at: "2026-10-20" },
+      {
+        id: "invalid",
+        characterId: null,
+        at: "2026-10-20",
+        policy: "invalid JSON",
+      },
+      {
+        id: "empty",
+        characterId: "",
+        at: "2026-10-20",
+        policy: '{"characterId":"  "}',
+      },
+      {
+        id: "null",
+        characterId: null,
+        at: "2026-10-20",
+        policy: '{"characterId":null}',
+      },
+      {
+        id: "authoring",
+        characterId: "char-a",
+        at: "2026-10-20",
+        kind: "character-authoring",
+      },
+      {
+        id: "other-kind",
+        characterId: "char-b",
+        at: "2026-10-20",
+        kind: "other",
+      },
+    ],
+    (usage) => {
+      assert.deepEqual(
+        usage,
+        [
+          '{"id":"nested"}',
+          "0",
+          "23",
+          "char-a",
+          UNKNOWN_CHARACTER_OWNER_ID,
+          UNKNOWN_CHARACTER_OWNER_ID,
+          "char-f",
+          "char-e",
+          "char-d",
+          "char-c",
+          "char-a",
+          "char-b",
+        ].map((characterId) => ({ characterId, sessionKind: "default" })),
+      );
+    },
+  );
 });
 
 // @test-value v2
@@ -110,6 +213,7 @@ test("Character usage は fallback・空ID・無効JSON・owner回復・同時�
 // impact = "Character使用履歴の欠落や重複でHomeのランダム選択の重みが変わる"
 // distinction = "小さいedge fixtureと異なり19/3000 Character分布の全返却を固定した入力規則から検証する。時間閾値は置かず、metadataのみのbatch挿入でCI費用を限定する"
 // @end-test-value
+/** 同じキャラクターに履歴が集中しても全件が別々でも、最新使用順を保つ。 */
 test("Character usage は少数/多数Character分布の全件を最新使用順で返す", async () => {
   const count = 3000;
   // 19 件にすると、重複 ID が両方の保存経路を通り、最古と最新の行の並び順が異なる。
@@ -118,16 +222,21 @@ test("Character usage は少数/多数Character分布の全件を最新使用順
       const characterId = `char-${index % characterCount}`;
       return {
         id: `session-${String(index).padStart(6, "0")}`,
-        at: new Date(Date.UTC(2026, 0, 1, 0, 0, Math.floor(index / 3))).toISOString(),
+        at: new Date(
+          Date.UTC(2026, 0, 1, 0, 0, Math.floor(index / 3)),
+        ).toISOString(),
         characterId: index % 5 === 0 ? null : characterId,
         policy: JSON.stringify({ characterId }),
       };
     });
     await withUsageRows(rows, (usage) => {
-      assert.deepEqual(usage, Array.from({ length: characterCount }, (_, index) => ({
-        characterId: `char-${(count - 1 - index) % characterCount}`,
-        sessionKind: "default",
-      })));
+      assert.deepEqual(
+        usage,
+        Array.from({ length: characterCount }, (_, index) => ({
+          characterId: `char-${(count - 1 - index) % characterCount}`,
+          sessionKind: "default",
+        })),
+      );
     });
   }
 });

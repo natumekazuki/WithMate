@@ -1,4 +1,13 @@
-import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import {
+  useCallback,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 
 import type {
   GlossaryEntry,
@@ -9,6 +18,7 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
 import { CloseButton } from "../ui/close-button.js";
 
+/** 用語集の取得・検索・選択の状態と、再試行や詳細の開閉を所有元へ通知する操作。 */
 export type SessionGlossaryPaneProps = {
   scrollContainerRef?: RefObject<HTMLDivElement | null>;
   projection: SessionGlossaryProjection | null;
@@ -29,14 +39,19 @@ export type SessionGlossaryPaneProps = {
   onBackToList: () => void;
 };
 
-function stateMessage(projection: SessionGlossaryProjection): { title: string; detail?: string; guidance?: string } | null {
+/** 不正な内容・未対応の形式・監視の失敗を別の診断にし、空や対象外は障害として扱わない。 */
+function stateMessage(
+  projection: SessionGlossaryProjection,
+): { title: string; detail?: string; guidance?: string } | null {
   switch (projection.state.status) {
     case "missing":
       return null;
     case "invalid":
       return {
         title: "Could not load the glossary",
-        detail: projection.state.issues[0]?.message ?? "Check the glossary.yaml file contents.",
+        detail:
+          projection.state.issues[0]?.message ??
+          "Check the glossary.yaml file contents.",
         guidance: "Fix .withmate/glossary.yaml to load the glossary.",
       };
     case "unsupported":
@@ -57,7 +72,14 @@ function stateMessage(projection: SessionGlossaryProjection): { title: string; d
   }
 }
 
-function GlossaryFailure({ label, detail, guidance, onRetry, busy = false }: {
+/** 取得や検証の失敗の要点と診断を分け、再試行できる場合は操作も表示する。 */
+function GlossaryFailure({
+  label,
+  detail,
+  guidance,
+  onRetry,
+  busy = false,
+}: {
   label: string;
   detail: string;
   guidance?: string;
@@ -86,10 +108,16 @@ function GlossaryFailure({ label, detail, guidance, onRetry, busy = false }: {
     });
   }, []);
   useLayoutEffect(() => {
+    /** ウィンドウの大きさが変わったら、以前の位置で開いていた診断を閉じる。 */
     const dismiss = () => popoverRef.current?.hidePopover();
+    /** 背景のスクロールでボタン位置が移動したら、開いている詳細を再配置する。 */
     const onScroll = (event: Event) => {
       const popup = popoverRef.current;
-      if (popup?.matches(":popover-open") && !popup.contains(event.target as Node)) updatePosition();
+      if (
+        popup?.matches(":popover-open") &&
+        !popup.contains(event.target as Node)
+      )
+        updatePosition();
     };
     window.addEventListener("resize", dismiss);
     window.addEventListener("scroll", onScroll, true);
@@ -100,7 +128,9 @@ function GlossaryFailure({ label, detail, guidance, onRetry, busy = false }: {
   }, [updatePosition]);
   return (
     <div className="glossary-error" role="group" aria-label={label}>
-      <span className="sr-only" role="alert">{label}</span>
+      <span className="sr-only" role="alert">
+        {label}
+      </span>
       <div className="glossary-error-actions">
         <button
           ref={anchorRef}
@@ -114,7 +144,18 @@ function GlossaryFailure({ label, detail, guidance, onRetry, busy = false }: {
           aria-expanded={expanded}
           onClick={updatePosition}
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+          <svg
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+          >
             <path d="M12 3 2 21h20L12 3Z" />
             <path d="M12 9v5m0 3v.1" />
           </svg>
@@ -136,15 +177,29 @@ function GlossaryFailure({ label, detail, guidance, onRetry, busy = false }: {
         ) : null}
       </div>
       {guidance ? <p className="glossary-error-guidance">{guidance}</p> : null}
-      <div id={detailsId} ref={popoverRef} popover="auto" className="glossary-error-popover" role="dialog" aria-label={`${label}: Details`} style={position}
-        onToggle={(event) => setExpanded(event.currentTarget.matches(":popover-open"))}>
-        <CloseButton ariaLabel="Close Error Details" onClose={() => popoverRef.current?.hidePopover()} />
+      <div
+        id={detailsId}
+        ref={popoverRef}
+        popover="auto"
+        className="glossary-error-popover"
+        role="dialog"
+        aria-label={`${label}: Details`}
+        style={position}
+        onToggle={(event) =>
+          setExpanded(event.currentTarget.matches(":popover-open"))
+        }
+      >
+        <CloseButton
+          ariaLabel="Close Error Details"
+          onClose={() => popoverRef.current?.hidePopover()}
+        />
         <p className="glossary-error-detail">{detail}</p>
       </div>
     </div>
   );
 }
 
+/** チェックアウトの用語集を読み取り専用で表示し、一覧と詳細の間で閲覧位置を保持する。 */
 export function SessionGlossaryPane({
   scrollContainerRef,
   projection,
@@ -168,31 +223,46 @@ export function SessionGlossaryPane({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const recoveryRef = useRef<HTMLDivElement>(null);
   const restoreSearchFocusRef = useRef(false);
+  /** 再試行操作にフォーカスがあった場合は、復旧後に検索欄へ戻す候補として記録する。 */
   const retry = (action: () => void) => {
-    restoreSearchFocusRef.current = recoveryRef.current?.contains(document.activeElement) ?? false;
+    restoreSearchFocusRef.current =
+      recoveryRef.current?.contains(document.activeElement) ?? false;
     action();
   };
-  const entries = projection?.state.status === "valid" ? projection.state.entries : [];
+  const entries =
+    projection?.state.status === "valid" ? projection.state.entries : [];
   const selectedEntry = useMemo(
-    () => entries.find((entry) => entry.term === selectedTerm)
-      ?? searchEntries.find((entry) => entry.term === selectedTerm) ?? null,
+    () =>
+      entries.find((entry) => entry.term === selectedTerm) ??
+      searchEntries.find((entry) => entry.term === selectedTerm) ??
+      null,
     [entries, searchEntries, selectedTerm],
   );
   const visibleEntries = searchQuery.trim() ? searchEntries : entries;
   const visibleTotal = searchQuery.trim() ? searchTotal : entries.length;
-  const showLoadMore = visibleEntries.length < visibleTotal && !searchError && (!searchStale || searchLoading);
-  const searchWaitLabel = searchStale ? "Refreshing glossary search results"
-    : showLoadMore ? "Loading more glossary results" : "Searching glossary";
+  const showLoadMore =
+    visibleEntries.length < visibleTotal &&
+    !searchError &&
+    (!searchStale || searchLoading);
+  const searchWaitLabel = searchStale
+    ? "Refreshing glossary search results"
+    : showLoadMore
+      ? "Loading more glossary results"
+      : "Searching glossary";
 
   useLayoutEffect(() => {
-    if (!restoreSearchFocusRef.current || projectionError || searchError) return;
+    if (!restoreSearchFocusRef.current || projectionError || searchError)
+      return;
     restoreSearchFocusRef.current = false;
-    if (document.activeElement === document.body) searchInputRef.current?.focus();
+    if (document.activeElement === document.body)
+      searchInputRef.current?.focus();
   }, [projectionError, searchError]);
 
   useLayoutEffect(() => {
     if (scrollContainerRef?.current) {
-      scrollContainerRef.current.scrollTop = selectedEntry ? 0 : savedListScrollTopRef.current;
+      scrollContainerRef.current.scrollTop = selectedEntry
+        ? 0
+        : savedListScrollTopRef.current;
     }
   }, [scrollContainerRef, selectedEntry]);
 
@@ -206,7 +276,12 @@ export function SessionGlossaryPane({
     if (projectionError) {
       return (
         <div ref={recoveryRef}>
-          <GlossaryFailure label="Glossary Load Failed" detail={projectionError} onRetry={() => retry(onRetryProjection)} busy={projectionLoading} />
+          <GlossaryFailure
+            label="Glossary Load Failed"
+            detail={projectionError}
+            onRetry={() => retry(onRetryProjection)}
+            busy={projectionLoading}
+          />
         </div>
       );
     }
@@ -218,21 +293,26 @@ export function SessionGlossaryPane({
   }
 
   const unavailable = stateMessage(projection);
-  const checkoutLabel = projection.checkout.branch
-    || projection.checkout.pathLabel
-    || projection.checkout.repositoryName;
+  const checkoutLabel =
+    projection.checkout.branch ||
+    projection.checkout.pathLabel ||
+    projection.checkout.repositoryName;
   const checkoutTitle = [
     projection.checkout.repositoryName,
     projection.checkout.branch,
     projection.checkout.pathLabel,
-  ].filter(Boolean).join(" / ");
+  ]
+    .filter(Boolean)
+    .join(" / ");
   const isNotApplicable = projection.state.status === "not-applicable";
   const showList = projection.state.status === "valid" && !selectedEntry;
   return (
     <section className="glossary-pane" aria-label="Repository glossary">
       {isNotApplicable ? null : (
         <div className="glossary-pane-controls">
-          <p className="glossary-pane-checkout" title={checkoutTitle}>{checkoutLabel}</p>
+          <p className="glossary-pane-checkout" title={checkoutTitle}>
+            {checkoutLabel}
+          </p>
           {showList ? (
             <>
               <label className="glossary-search-field">
@@ -246,7 +326,12 @@ export function SessionGlossaryPane({
               </label>
               {searchError ? (
                 <div ref={recoveryRef}>
-                  <GlossaryFailure label="Glossary Search Failed" detail={searchError} onRetry={() => retry(onRetrySearch)} busy={searchLoading} />
+                  <GlossaryFailure
+                    label="Glossary Search Failed"
+                    detail={searchError}
+                    onRetry={() => retry(onRetrySearch)}
+                    busy={searchLoading}
+                  />
                 </div>
               ) : null}
             </>
@@ -254,18 +339,35 @@ export function SessionGlossaryPane({
         </div>
       )}
 
-      {projectionError ? <GlossaryFailure label="Glossary Refresh Failed" detail={projectionError} onRetry={onRetryProjection} busy={projectionLoading} /> : null}
+      {projectionError ? (
+        <GlossaryFailure
+          label="Glossary Refresh Failed"
+          detail={projectionError}
+          onRetry={onRetryProjection}
+          busy={projectionLoading}
+        />
+      ) : null}
       {searchStale ? (
-        <p className={searchLoading ? "sr-only" : "glossary-search-stale"} role="status">Showing previous search results.</p>
+        <p
+          className={searchLoading ? "sr-only" : "glossary-search-stale"}
+          role="status"
+        >
+          Showing previous search results.
+        </p>
       ) : null}
 
-      {projection.state.status === "missing" || isNotApplicable ? null : unavailable ? (
+      {projection.state.status === "missing" ||
+      isNotApplicable ? null : unavailable ? (
         projection.state.status === "watch-error" && projectionError ? null : (
           <GlossaryFailure
             label={unavailable.title}
             detail={unavailable.detail ?? unavailable.title}
             guidance={unavailable.guidance}
-            onRetry={projection.state.status === "watch-error" ? onRetryProjection : undefined}
+            onRetry={
+              projection.state.status === "watch-error"
+                ? onRetryProjection
+                : undefined
+            }
             busy={projectionLoading}
           />
         )
@@ -275,10 +377,14 @@ export function SessionGlossaryPane({
           <header>
             <h3>{selectedEntry.term}</h3>
             {selectedEntry.aliases.length > 0 ? (
-              <p className="glossary-entry-aliases">{selectedEntry.aliases.join(" · ")}</p>
+              <p className="glossary-entry-aliases">
+                {selectedEntry.aliases.join(" · ")}
+              </p>
             ) : null}
           </header>
-          <p className="glossary-entry-definition">{selectedEntry.definition}</p>
+          <p className="glossary-entry-definition">
+            {selectedEntry.definition}
+          </p>
         </article>
       ) : (
         <div className="glossary-list-view">
@@ -289,7 +395,8 @@ export function SessionGlossaryPane({
                 className="glossary-entry-row"
                 type="button"
                 onClick={() => {
-                  savedListScrollTopRef.current = scrollContainerRef?.current?.scrollTop ?? 0;
+                  savedListScrollTopRef.current =
+                    scrollContainerRef?.current?.scrollTop ?? 0;
                   onSelectTerm(entry.term);
                 }}
               >
@@ -302,10 +409,14 @@ export function SessionGlossaryPane({
               </div>
             ) : null}
             {showLoadMore ? (
-              <button className="glossary-load-more" type="button" aria-disabled={searchLoading || undefined}
+              <button
+                className="glossary-load-more"
+                type="button"
+                aria-disabled={searchLoading || undefined}
                 aria-busy={searchLoading || undefined}
                 aria-label={searchLoading ? searchWaitLabel : undefined}
-                onClick={searchLoading ? undefined : onLoadMoreSearchResults}>
+                onClick={searchLoading ? undefined : onLoadMoreSearchResults}
+              >
                 <ButtonContent busy={searchLoading}>Load More</ButtonContent>
               </button>
             ) : null}

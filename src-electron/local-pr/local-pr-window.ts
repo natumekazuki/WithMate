@@ -1,8 +1,27 @@
 import { BrowserWindow, dialog, type IpcMainInvokeEvent } from "electron";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
-import { localPrGuiInput, type LocalPrData, type LocalPrInput, type LocalPrOperation, type LocalPrResult } from "../../src-shared/local-pr/local-pr-contract.js";
-import { LOCAL_PR_CHANGED, LOCAL_PR_EXECUTE, LOCAL_PR_INSPECT_IMAGE, LOCAL_PR_OPEN_WINDOW, LOCAL_PR_PICK_ATTACHMENT, LOCAL_PR_READ_IMAGE_CHUNK, LOCAL_PR_SAVE_CLIPBOARD_IMAGE, LOCAL_PR_OPEN_ATTACHMENT, localPrClipboardImageInput, localPrImageChunkInput, localPrImageInput, openLocalPrWindowInput } from "../../src-shared/local-pr/local-pr-ipc.js";
+import {
+  localPrGuiInput,
+  type LocalPrData,
+  type LocalPrInput,
+  type LocalPrOperation,
+  type LocalPrResult,
+} from "../../src-shared/local-pr/local-pr-contract.js";
+import {
+  LOCAL_PR_CHANGED,
+  LOCAL_PR_EXECUTE,
+  LOCAL_PR_INSPECT_IMAGE,
+  LOCAL_PR_OPEN_WINDOW,
+  LOCAL_PR_PICK_ATTACHMENT,
+  LOCAL_PR_READ_IMAGE_CHUNK,
+  LOCAL_PR_SAVE_CLIPBOARD_IMAGE,
+  LOCAL_PR_OPEN_ATTACHMENT,
+  localPrClipboardImageInput,
+  localPrImageChunkInput,
+  localPrImageInput,
+  openLocalPrWindowInput,
+} from "../../src-shared/local-pr/local-pr-ipc.js";
 import type { OpenPathResult } from "../../src-shared/window/withmate-window-types.js";
 import type { MainSessionTarget } from "../../src-shared/session/session-target.js";
 import { assertNotHtmlPreviewSender } from "../files/html-preview-isolation.js";
@@ -10,33 +29,68 @@ import type { SessionFileExplorerService } from "../files/session-file-explorer-
 import type { IpcHandleRegistrar } from "../ipc/contracts.js";
 import { failure, type LocalPrApplication } from "./local-pr-application.js";
 
+/** リポジトリの識別情報と、この PR ウィンドウが紐付くチェックアウトのパス。 */
 type Repository = { repositoryId: string; workspacePath: string };
-type Source<Repo> = { actor: MainSessionTarget; repository: Repo; generation: object };
-type Entry<Repo> = { window: BrowserWindow; source: Source<Repo>; approvalPending: boolean };
+/** ウィンドウを開く時点で Main が解決した実行主体、リポジトリ、ストレージ世代。 */
+type Source<Repo> = {
+  actor: MainSessionTarget;
+  repository: Repo;
+  generation: object;
+};
+/** 登録済み専用ウィンドウと、所有元およびネイティブ承認の待機状態。 */
+type Entry<Repo> = {
+  window: BrowserWindow;
+  source: Source<Repo>;
+  approvalPending: boolean;
+};
 
 /** PR ウィンドウを開く可否は Main が管理する。renderer はリポジトリや実行主体を選べない。 */
 export class LocalPrWindowService<Repo extends Repository> {
   private readonly entries = new Map<number, Entry<Repo>>();
 
-  constructor(private readonly deps: {
-    resolveOwner(actor: MainSessionTarget): Promise<Source<Repo> | null>;
-    sessionWindow(id: string): BrowserWindow | null;
-    createWindow(): BrowserWindow;
-    loadWindow(window: BrowserWindow): Promise<void>;
-    application: Pick<LocalPrApplication<Repo>, "execute">;
-    pickAttachment(window: BrowserWindow, workspacePath: string): Promise<string[]>;
-    saveClipboardImage(input: ReturnType<typeof localPrClipboardImageInput.parse>): Promise<string>;
-    openAttachment(target: string): Promise<OpenPathResult>;
-    imageReader(): Pick<SessionFileExplorerService, "inspectImage" | "readImageChunk">;
-  }) {}
+  /** 保存済みの所有元の解決、専用ウィンドウの生成と添付操作への接続を受け取る。 */
+  constructor(
+    private readonly deps: {
+      /** Main Session の保存済み識別情報から、現在のリポジトリと世代を解決する。 */
+      resolveOwner(actor: MainSessionTarget): Promise<Source<Repo> | null>;
+      /** 専用ウィンドウを開こうとした IPC の送信元が、実際の Session の所有ウィンドウか照合する。 */
+      sessionWindow(id: string): BrowserWindow | null;
+      /** PR 専用の renderer 設定で、新しいウィンドウを生成する。 */
+      createWindow(): BrowserWindow;
+      /** 専用ウィンドウへ PR 文書を読み込み、表示前に完了を待つ。 */
+      loadWindow(window: BrowserWindow): Promise<void>;
+      application: Pick<LocalPrApplication<Repo>, "execute">;
+      /** 専用ウィンドウを親とし、紐付く作業ディレクトリを初期位置に添付候補を選ぶ。 */
+      pickAttachment(
+        window: BrowserWindow,
+        workspacePath: string,
+      ): Promise<string[]>;
+      /** 検証済みの画像バイト列を添付の置き場へ保存し、そのパスを返す。 */
+      saveClipboardImage(
+        input: ReturnType<typeof localPrClipboardImageInput.parse>,
+      ): Promise<string>;
+      /** 添付リンクを既存のパス操作へ渡して、開けたかを結果として返す。 */
+      openAttachment(target: string): Promise<OpenPathResult>;
+      /** 所有 Session の既存ファイル読み取り境界を使い、画像情報と分割読み取りを提供する。 */
+      imageReader(): Pick<
+        SessionFileExplorerService,
+        "inspectImage" | "readImageChunk"
+      >;
+    },
+  ) {}
 
   /** 別の renderer と明示的なメインフレーム確認を使い、必要最小限の IPC だけを登録する。 */
   register(ipc: IpcHandleRegistrar): void {
-    ipc.handle(LOCAL_PR_OPEN_WINDOW, (event, raw) => this.open(event, openLocalPrWindowInput.parse(raw)));
+    ipc.handle(LOCAL_PR_OPEN_WINDOW, (event, raw) =>
+      this.open(event, openLocalPrWindowInput.parse(raw)),
+    );
     ipc.handle(LOCAL_PR_PICK_ATTACHMENT, async (event) => {
       const { entry, assertCurrent } = this.requirePrWindow(event);
       await assertCurrent();
-      const paths = await this.deps.pickAttachment(entry.window, entry.source.repository.workspacePath);
+      const paths = await this.deps.pickAttachment(
+        entry.window,
+        entry.source.repository.workspacePath,
+      );
       await assertCurrent();
       return paths;
     });
@@ -57,7 +111,9 @@ export class LocalPrWindowService<Repo extends Repository> {
       const { target } = localPrImageInput.parse(raw);
       this.assertAbsoluteImage(target);
       await assertCurrent();
-      const result = await this.deps.imageReader().inspectImage({ target, sessionId: entry.source.actor.sessionId });
+      const result = await this.deps
+        .imageReader()
+        .inspectImage({ target, sessionId: entry.source.actor.sessionId });
       await assertCurrent();
       return result;
     });
@@ -66,49 +122,104 @@ export class LocalPrWindowService<Repo extends Repository> {
       const input = localPrImageChunkInput.parse(raw);
       this.assertAbsoluteImage(input.target);
       await assertCurrent();
-      const result = await this.deps.imageReader().readImageChunk({ ...input, sessionId: entry.source.actor.sessionId });
+      const result = await this.deps
+        .imageReader()
+        .readImageChunk({ ...input, sessionId: entry.source.actor.sessionId });
       await assertCurrent();
       return result;
     });
-    ipc.handle(LOCAL_PR_EXECUTE, async (event, operation: unknown, input: unknown) => {
-      if (typeof operation !== "string" || !Object.hasOwn(localPrGuiInput, operation)) return failure("PR_INVALID_REQUEST", "Unknown Pull Request operation.");
-      let owner: ReturnType<LocalPrWindowService<Repo>["requirePrWindow"]>;
-      try { owner = this.requirePrWindow(event); }
-      catch { return failure("PR_FORBIDDEN", "Use the owning Pull Requests window."); }
-      const { entry, assertCurrent } = owner;
+    ipc.handle(
+      LOCAL_PR_EXECUTE,
+      async (event, operation: unknown, input: unknown) => {
+        if (
+          typeof operation !== "string" ||
+          !Object.hasOwn(localPrGuiInput, operation)
+        )
+          return failure(
+            "PR_INVALID_REQUEST",
+            "Unknown Pull Request operation.",
+          );
+        let owner: ReturnType<LocalPrWindowService<Repo>["requirePrWindow"]>;
+        try {
+          owner = this.requirePrWindow(event);
+        } catch {
+          return failure(
+            "PR_FORBIDDEN",
+            "Use the owning Pull Requests window.",
+          );
+        }
+        const { entry, assertCurrent } = owner;
 
-      // 承認はアプリが所有するネイティブ確認画面で行い、共通 PR サービスでも再確認する。
-      if (operation === "approve") return this.approve(entry, input, assertCurrent);
-      try {
-        return await this.deps.application.execute(entry.source.repository, entry.source.actor, "gui", operation as LocalPrOperation, input, assertCurrent);
-      } catch (error) {
-        return failure("PR_OPERATION_FAILED", error instanceof Error ? error.message : String(error), "unknown");
-      }
-    });
+        // 承認はアプリが所有するネイティブ確認画面で行い、共通 PR サービスでも再確認する。
+        if (operation === "approve")
+          return this.approve(entry, input, assertCurrent);
+        try {
+          return await this.deps.application.execute(
+            entry.source.repository,
+            entry.source.actor,
+            "gui",
+            operation as LocalPrOperation,
+            input,
+            assertCurrent,
+          );
+        } catch (error) {
+          return failure(
+            "PR_OPERATION_FAILED",
+            error instanceof Error ? error.message : String(error),
+            "unknown",
+          );
+        }
+      },
+    );
   }
 
+  /** PR の画像参照で作業ディレクトリに依存する相対指定を受け付けない。 */
   private assertAbsoluteImage(target: string): void {
     if (!/^file:/i.test(target) && !path.isAbsolute(target)) {
       throw new Error("Pull Request images require an absolute path.");
     }
   }
 
+  /** 登録済みの PR 文書からの IPC だけを認め、処理中の差し替えを検出する再確認手段も返す。 */
   private requirePrWindow(event: IpcMainInvokeEvent) {
     const frame = event.senderFrame;
     const window = this.mainFrameWindow(event);
     const entry = this.entries.get(window.id);
-    if (!entry || entry.window !== window || !frame || !this.isPrDocument(frame.url)) throw new Error("Use the owning Pull Requests window.");
+    if (
+      !entry ||
+      entry.window !== window ||
+      !frame ||
+      !this.isPrDocument(frame.url)
+    )
+      throw new Error("Use the owning Pull Requests window.");
+    /** 非同期の所有者解決を挟んでウィンドウを調べ、捕捉した世代・主体・リポジトリが有効か検証する。 */
     const assertCurrent = async () => {
+      /** 元のウィンドウとフレームが現在の登録および専用文書と一致するか確認する。 */
       const checkWindow = () => {
-        if (window.isDestroyed() || this.entries.get(window.id) !== entry || event.sender.isDestroyed()
-          || event.sender.mainFrame !== frame || !this.isPrDocument(frame.url)) throw new Error("The Pull Requests window is no longer current.");
+        if (
+          window.isDestroyed() ||
+          this.entries.get(window.id) !== entry ||
+          event.sender.isDestroyed() ||
+          event.sender.mainFrame !== frame ||
+          !this.isPrDocument(frame.url)
+        )
+          throw new Error("The Pull Requests window is no longer current.");
       };
       checkWindow();
       const current = await this.deps.resolveOwner(entry.source.actor);
       checkWindow();
-      if (!current || current.generation !== entry.source.generation || !isDeepStrictEqual(current.actor, entry.source.actor)
-        || current.repository.repositoryId !== entry.source.repository.repositoryId || current.repository.workspacePath !== entry.source.repository.workspacePath) {
-        throw new Error("The Pull Requests window's Session or repository changed. Reopen it from the Session.");
+      if (
+        !current ||
+        current.generation !== entry.source.generation ||
+        !isDeepStrictEqual(current.actor, entry.source.actor) ||
+        current.repository.repositoryId !==
+          entry.source.repository.repositoryId ||
+        current.repository.workspacePath !==
+          entry.source.repository.workspacePath
+      ) {
+        throw new Error(
+          "The Pull Requests window's Session or repository changed. Reopen it from the Session.",
+        );
       }
     };
     return { entry, assertCurrent };
@@ -117,9 +228,18 @@ export class LocalPrWindowService<Repo extends Repository> {
   /** 再取得が必要になったことだけを一斉通知する。開いている各ウィンドウは引き続き認可されたリポジトリを読み取る。 */
   notify(repositoryId: string): void {
     for (const { window, source } of this.entries.values()) {
-      if (source.repository.repositoryId !== repositoryId || window.isDestroyed() || window.webContents.isDestroyed() || window.webContents.isCrashed()) continue;
-      try { window.webContents.send(LOCAL_PR_CHANGED); }
-      catch { /* 通知中に renderer が閉じても、正本から再読み込みできる。 */ }
+      if (
+        source.repository.repositoryId !== repositoryId ||
+        window.isDestroyed() ||
+        window.webContents.isDestroyed() ||
+        window.webContents.isCrashed()
+      )
+        continue;
+      try {
+        window.webContents.send(LOCAL_PR_CHANGED);
+      } catch {
+        /* 通知中に renderer が閉じても、正本から再読み込みできる。 */
+      }
     }
   }
 
@@ -133,19 +253,35 @@ export class LocalPrWindowService<Repo extends Repository> {
   }
 
   /** リポジトリのビューを開く前に、それを所有する保存済みの Session を解決する。 */
-  private async open(event: IpcMainInvokeEvent, actor: MainSessionTarget): Promise<void> {
+  private async open(
+    event: IpcMainInvokeEvent,
+    actor: MainSessionTarget,
+  ): Promise<void> {
     const senderWindow = this.mainFrameWindow(event);
     const frame = event.senderFrame;
-    if (this.deps.sessionWindow(actor.sessionId) !== senderWindow) throw new Error("Only the owning Session can open Pull Requests.");
+    if (this.deps.sessionWindow(actor.sessionId) !== senderWindow)
+      throw new Error("Only the owning Session can open Pull Requests.");
     const source = await this.deps.resolveOwner(actor);
-    if (!source || senderWindow.isDestroyed() || this.deps.sessionWindow(actor.sessionId) !== senderWindow || event.sender.mainFrame !== frame) {
+    if (
+      !source ||
+      senderWindow.isDestroyed() ||
+      this.deps.sessionWindow(actor.sessionId) !== senderWindow ||
+      event.sender.mainFrame !== frame
+    ) {
       throw new Error("The Session's Git repository is unavailable.");
     }
 
     // 送信元が完全一致する場合だけ再利用する。同じリポジトリでも別の Session は独自のレビュー位置を持てる。
     for (const entry of this.entries.values()) {
-      if (!entry.window.isDestroyed() && entry.source.generation === source.generation && isDeepStrictEqual(entry.source.actor, actor)
-        && entry.source.repository.repositoryId === source.repository.repositoryId && entry.source.repository.workspacePath === source.repository.workspacePath) {
+      if (
+        !entry.window.isDestroyed() &&
+        entry.source.generation === source.generation &&
+        isDeepStrictEqual(entry.source.actor, actor) &&
+        entry.source.repository.repositoryId ===
+          source.repository.repositoryId &&
+        entry.source.repository.workspacePath ===
+          source.repository.workspacePath
+      ) {
         entry.window.show();
         entry.window.focus();
         return;
@@ -154,9 +290,15 @@ export class LocalPrWindowService<Repo extends Repository> {
     const window = this.deps.createWindow();
     const entry: Entry<Repo> = { window, source, approvalPending: false };
     this.entries.set(window.id, entry);
-    window.once("closed", () => { this.entries.delete(window.id); });
-    window.webContents.on("will-navigate", (navigation) => navigation.preventDefault());
-    window.webContents.on("will-redirect", (navigation) => navigation.preventDefault());
+    window.once("closed", () => {
+      this.entries.delete(window.id);
+    });
+    window.webContents.on("will-navigate", (navigation) =>
+      navigation.preventDefault(),
+    );
+    window.webContents.on("will-redirect", (navigation) =>
+      navigation.preventDefault(),
+    );
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     try {
       await this.deps.loadWindow(window);
@@ -169,34 +311,80 @@ export class LocalPrWindowService<Repo extends Repository> {
   }
 
   /** 表示中の組への GUI 承認を作成できるのは、このネイティブ操作だけ。 */
-  private async approve(entry: Entry<Repo>, raw: unknown, assertCurrent: () => Promise<void>): Promise<LocalPrResult<"approve">> {
+  private async approve(
+    entry: Entry<Repo>,
+    raw: unknown,
+    assertCurrent: () => Promise<void>,
+  ): Promise<LocalPrResult<"approve">> {
     const parsed = localPrGuiInput.approve.safeParse(raw);
-    if (!parsed.success) return failure("PR_INVALID_REQUEST", "Select the submission and target to approve.");
-    if (entry.approvalPending) return failure("PR_APPROVAL_PENDING", "An approval confirmation is already open.");
+    if (!parsed.success)
+      return failure(
+        "PR_INVALID_REQUEST",
+        "Select the submission and target to approve.",
+      );
+    if (entry.approvalPending)
+      return failure(
+        "PR_APPROVAL_PENDING",
+        "An approval confirmation is already open.",
+      );
     entry.approvalPending = true;
     const { actor, repository } = entry.source;
     const input: LocalPrInput<"approve"> = parsed.data;
     let confirmed = false;
     try {
-      const read = await this.deps.application.execute(repository, actor, "gui", "pr_get", { prId: input.prId }, assertCurrent);
+      const read = await this.deps.application.execute(
+        repository,
+        actor,
+        "gui",
+        "pr_get",
+        { prId: input.prId },
+        assertCurrent,
+      );
       if (!read.ok) return read;
       const pr: LocalPrData<"pr_get"> = read.data;
-      const version = pr.versions.find((item) => item.version === input.version);
-      if (pr.state !== "open" || pr.latestVersion !== input.version || pr.currentTargetCommit !== input.targetCommit
-        || version?.targetCommit !== input.targetCommit || version.headCommit !== input.headCommit) {
-        return failure("PR_APPROVAL_STALE", "The submission or target changed. Review the current diff before approving.");
+      const version = pr.versions.find(
+        (item) => item.version === input.version,
+      );
+      if (
+        pr.state !== "open" ||
+        pr.latestVersion !== input.version ||
+        pr.currentTargetCommit !== input.targetCommit ||
+        version?.targetCommit !== input.targetCommit ||
+        version.headCommit !== input.headCommit
+      ) {
+        return failure(
+          "PR_APPROVAL_STALE",
+          "The submission or target changed. Review the current diff before approving.",
+        );
       }
       await assertCurrent();
       const response = await dialog.showMessageBox(entry.window, {
-        type: "question", title: "Approve Pull Request", message: "Approve This Submission?",
+        type: "question",
+        title: "Approve Pull Request",
+        message: "Approve This Submission?",
         detail: `${pr.title}\nSubmission ${input.version}: ${input.headCommit}\n${pr.targetBranch}: ${input.targetCommit}`,
-        buttons: ["Cancel", "Approve"], cancelId: 0, defaultId: 0, noLink: true,
+        buttons: ["Cancel", "Approve"],
+        cancelId: 0,
+        defaultId: 0,
+        noLink: true,
       });
-      if (response.response !== 1) return failure("PR_APPROVAL_CANCELED", "Approval was canceled.");
+      if (response.response !== 1)
+        return failure("PR_APPROVAL_CANCELED", "Approval was canceled.");
       confirmed = true;
-      return await this.deps.application.execute(repository, actor, "gui", "approve", input, assertCurrent);
+      return await this.deps.application.execute(
+        repository,
+        actor,
+        "gui",
+        "approve",
+        input,
+        assertCurrent,
+      );
     } catch (error) {
-      return failure("PR_APPROVAL_FAILED", error instanceof Error ? error.message : String(error), confirmed ? "unknown" : "none");
+      return failure(
+        "PR_APPROVAL_FAILED",
+        error instanceof Error ? error.message : String(error),
+        confirmed ? "unknown" : "none",
+      );
     } finally {
       entry.approvalPending = false;
     }
@@ -206,13 +394,22 @@ export class LocalPrWindowService<Repo extends Repository> {
   private mainFrameWindow(event: IpcMainInvokeEvent): BrowserWindow {
     assertNotHtmlPreviewSender(event);
     const wnd = BrowserWindow.fromWebContents(event.sender);
-    if (!wnd || !event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error("Invalid Pull Requests window sender.");
+    if (
+      !wnd ||
+      !event.senderFrame ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error("Invalid Pull Requests window sender.");
     return wnd;
   }
 
   /** 制限された専用ウィンドウは、配布版または開発用の PR 文書だけを読み込む。 */
   private isPrDocument(value: string): boolean {
     const url = URL.parse(value);
-    return !!url && ["file:", "http:"].includes(url.protocol) && url.pathname.endsWith("/local-pr.html");
+    return (
+      !!url &&
+      ["file:", "http:"].includes(url.protocol) &&
+      url.pathname.endsWith("/local-pr.html")
+    );
   }
 }

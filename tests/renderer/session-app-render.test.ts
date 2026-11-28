@@ -4,10 +4,18 @@ import test from "node:test";
 import React from "react";
 import { renderToString } from "react-dom/server";
 
-const cssImports = registerHooks({ load(url, context, next) {
-  return url.endsWith(".css") ? { format: "module", shortCircuit: true, source: "" } : next(url, context);
-} });
-const { default: App } = await import("../../src/app/SessionWindowApp.js").finally(() => cssImports.deregister());
+const cssImports = registerHooks({
+  /** Node で描画するときは CSS だけを空モジュールに置き換え、実コンポーネントは読み込む。 */
+  load(url, context, next) {
+    return url.endsWith(".css")
+      ? { format: "module", shortCircuit: true, source: "" }
+      : next(url, context);
+  },
+});
+const { default: App } =
+  await import("../../src/app/SessionWindowApp.js").finally(() =>
+    cssImports.deregister(),
+  );
 
 // @test-value v2
 // kind = "contract"
@@ -21,6 +29,7 @@ const { default: App } = await import("../../src/app/SessionWindowApp.js").final
 // impact = "desktop起動直後に画面が落ちるか、指定したsessionを読込中であることが利用者へ伝わらない"
 // distinction = "Electron window stub下の初回renderを使い、browser runtimeでの遷移後renderとは分離する"
 // @end-test-value
+/** デスクトップの最初の描画で初期化前変数に触れず、読み込み領域と busy 状態を含む Session 画面を返す。 */
 test("App は desktop runtime の初回 render で TDZ 例外を出さない", () => {
   const previousWindow = globalThis.window;
 

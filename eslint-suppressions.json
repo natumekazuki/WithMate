@@ -74,19 +74,9 @@
       "count": 28
     }
   },
-  "src-electron/character/character-service.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 27
-    }
-  },
   "src-electron/character/character-storage.ts": {
     "jsdoc/require-jsdoc": {
       "count": 45
-    }
-  },
-  "src-electron/character/character-workspace-operation-coordinator.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
     }
   },
   "src-electron/files/file-root-git-changes-service.ts": {
@@ -329,71 +319,6 @@
       "count": 15
     }
   },
-  "src-electron/local-pr/local-pr-agent-runtime.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
-  "src-electron/local-pr/local-pr-application.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 12
-    }
-  },
-  "src-electron/local-pr/local-pr-ci-definition.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
-  "src-electron/local-pr/local-pr-ci-process.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
-  "src-electron/local-pr/local-pr-ci-service.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 10
-    }
-  },
-  "src-electron/local-pr/local-pr-diff.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
-  "src-electron/local-pr/local-pr-discussion.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "src-electron/local-pr/local-pr-git.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
-  "src-electron/local-pr/local-pr-preload.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 9
-    }
-  },
-  "src-electron/local-pr/local-pr-service.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 12
-    }
-  },
-  "src-electron/local-pr/local-pr-session-bridge.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
-  "src-electron/local-pr/local-pr-store.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
-  "src-electron/local-pr/local-pr-window.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 16
-    }
-  },
   "src-electron/main.ts": {
     "jsdoc/require-jsdoc": {
       "count": 713
@@ -489,11 +414,6 @@
       "count": 63
     }
   },
-  "src-electron/preload.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
   "src-electron/preload/auxiliary-api.ts": {
     "jsdoc/require-jsdoc": {
       "count": 19
@@ -509,34 +429,14 @@
       "count": 5
     }
   },
-  "src-electron/preload/ipc.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
   "src-electron/preload/navigation-api.ts": {
     "jsdoc/require-jsdoc": {
       "count": 28
     }
   },
-  "src-electron/preload/observability-api.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
-    }
-  },
-  "src-electron/preload/preload-api.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
   "src-electron/preload/profile-api.ts": {
     "jsdoc/require-jsdoc": {
       "count": 26
-    }
-  },
-  "src-electron/preload/renderer-error-logging.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
     }
   },
   "src-electron/preload/session-api.ts": {
@@ -594,29 +494,9 @@
       "count": 25
     }
   },
-  "src-electron/session/provider-payload-limits.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 25
-    }
-  },
   "src-electron/session/session-glossary-window-subscription.ts": {
     "jsdoc/require-jsdoc": {
       "count": 9
-    }
-  },
-  "src-electron/session/session-launch-selection-service.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 10
-    }
-  },
-  "src-electron/session/session-management-application.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 24
-    }
-  },
-  "src-electron/session/session-management-runtime-service.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 11
     }
   },
   "src-electron/session/session-monitor-context-menu-service.ts": {
@@ -627,11 +507,6 @@
   "src-electron/session/session-observability-service.ts": {
     "jsdoc/require-jsdoc": {
       "count": 24
-    }
-  },
-  "src-electron/session/session-operating-policy-service.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 11
     }
   },
   "src-electron/session/session-persistence-assembly.ts": {
@@ -669,16 +544,6 @@
       "count": 34
     }
   },
-  "src-electron/session/session-summary-adapter.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
-  "src-electron/session/session-summary-query.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 23
-    }
-  },
   "src-electron/session/session-turn-notification-service.ts": {
     "jsdoc/require-jsdoc": {
       "count": 55
@@ -692,21 +557,6 @@
   "src-electron/session/session-turn-queue-storage-v6.ts": {
     "jsdoc/require-jsdoc": {
       "count": 32
-    }
-  },
-  "src-electron/session/session-turn-service.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
-    }
-  },
-  "src-electron/session/session-turn-storage-v6.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 12
-    }
-  },
-  "src-electron/session/withmate-approval-review.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 19
     }
   },
   "src-electron/skills/custom-agent-discovery.ts": {
@@ -1169,11 +1019,6 @@
       "count": 169
     }
   },
-  "src/chat/AuxiliaryLaunchProviderDialog.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
   "src/chat/approval/action-dock-state.ts": {
     "jsdoc/require-jsdoc": {
       "count": 7
@@ -1189,24 +1034,9 @@
       "count": 14
     }
   },
-  "src/chat/auxiliary-launch-reconciliation.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
   "src/chat/auxiliary-launch-state.ts": {
     "jsdoc/require-jsdoc": {
       "count": 33
-    }
-  },
-  "src/chat/auxiliary-runtime-option-routing.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "src/chat/auxiliary/auxiliary-custom-agent-operation.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
     }
   },
   "src/chat/auxiliary/auxiliary-render-projections.ts": {
@@ -1232,11 +1062,6 @@
   "src/chat/auxiliary/auxiliary-session-update-operation.ts": {
     "jsdoc/require-jsdoc": {
       "count": 13
-    }
-  },
-  "src/chat/auxiliary/auxiliary-skill-prompt-operation.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
     }
   },
   "src/chat/auxiliary/use-auxiliary-draft-persistence.ts": {
@@ -1289,27 +1114,7 @@
       "count": 7
     }
   },
-  "src/chat/composer/composer-error-details.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
-    }
-  },
   "src/chat/composer/composer-icon.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "src/chat/composer/composer-preview-config.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
-  "src/chat/composer/composer-setting-select.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
-  "src/chat/composer/composer-textarea-focus.ts": {
     "jsdoc/require-jsdoc": {
       "count": 3
     }
@@ -1344,11 +1149,6 @@
       "count": 7
     }
   },
-  "src/chat/composer/session-instructions-control.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
   "src/chat/composer/use-session-composer-feature.ts": {
     "jsdoc/require-jsdoc": {
       "count": 40
@@ -1364,21 +1164,6 @@
       "count": 35
     }
   },
-  "src/chat/conversation/observe-session-result-read.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
-    }
-  },
-  "src/chat/conversation/reply-location.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
-  "src/chat/conversation/selection-action-overlay-context.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
   "src/chat/conversation/sent-delivery-row.tsx": {
     "jsdoc/require-jsdoc": {
       "count": 5
@@ -1392,11 +1177,6 @@
   "src/chat/conversation/session-chat-conversation-feature.ts": {
     "jsdoc/require-jsdoc": {
       "count": 3
-    }
-  },
-  "src/chat/conversation/session-content-find-bar.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
     }
   },
   "src/chat/conversation/session-message-collapse.ts": {
@@ -1422,11 +1202,6 @@
   "src/chat/conversation/turn-input-details.tsx": {
     "jsdoc/require-jsdoc": {
       "count": 24
-    }
-  },
-  "src/chat/conversation/use-conversation-query-pages.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
     }
   },
   "src/chat/conversation/use-issued-coordinations.ts": {
@@ -1654,24 +1429,9 @@
       "count": 21
     }
   },
-  "src/chat/use-auxiliary-launch-dialog-state.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
-    }
-  },
   "src/chat/use-auxiliary-workspace.ts": {
     "jsdoc/require-jsdoc": {
       "count": 57
-    }
-  },
-  "src/chat/use-composer-preview-resolution.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "src/chat/use-conversation-composer-state.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
     }
   },
   "src/chat/use-message-view-transition.ts": {
@@ -1727,26 +1487,6 @@
   "src/file-explorer/structured-text-preview.ts": {
     "jsdoc/require-jsdoc": {
       "count": 13
-    }
-  },
-  "src/glossary/MessageGlossaryAnnotations.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 15
-    }
-  },
-  "src/glossary/SessionGlossaryPane.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
-    }
-  },
-  "src/glossary/glossary-annotation-projection.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 30
-    }
-  },
-  "src/glossary/use-session-glossary.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 10
     }
   },
   "src/home/HomeApp.tsx": {
@@ -2284,19 +2024,9 @@
       "count": 8
     }
   },
-  "tests/main/app-lifecycle-deps.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 10
-    }
-  },
   "tests/main/app-lifecycle-service.test.ts": {
     "jsdoc/require-jsdoc": {
       "count": 113
-    }
-  },
-  "tests/main/app-login-item.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 8
     }
   },
   "tests/main/app-quit-composition.test.ts": {
@@ -2447,11 +2177,6 @@
   "tests/main/copilot-cancel-lifecycle.test.ts": {
     "jsdoc/require-jsdoc": {
       "count": 65
-    }
-  },
-  "tests/main/current-execution-selections.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
     }
   },
   "tests/main/custom-agent-discovery.test.ts": {
@@ -2819,11 +2544,6 @@
       "count": 43
     }
   },
-  "tests/main/session-character-usage-v6.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
   "tests/main/session-definition-start-persistence.test.ts": {
     "jsdoc/require-jsdoc": {
       "count": 7
@@ -2897,11 +2617,6 @@
   "tests/main/session-folder-cleanup.test.ts": {
     "jsdoc/require-jsdoc": {
       "count": 25
-    }
-  },
-  "tests/main/session-glossary-window-subscription.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 9
     }
   },
   "tests/main/session-history-read.test.ts": {
@@ -3099,11 +2814,6 @@
       "count": 17
     }
   },
-  "tests/main/session-turn-service.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
   "tests/main/session-turn-storage-v6-migration.test.ts": {
     "jsdoc/require-jsdoc": {
       "count": 4
@@ -3137,11 +2847,6 @@
   "tests/main/shared-session-directories.test.ts": {
     "jsdoc/require-jsdoc": {
       "count": 9
-    }
-  },
-  "tests/main/skill-discovery-request.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
     }
   },
   "tests/main/skill-discovery.test.ts": {
@@ -3197,16 +2902,6 @@
   "tests/main/window-broadcast-service.test.ts": {
     "jsdoc/require-jsdoc": {
       "count": 69
-    }
-  },
-  "tests/main/window-dialog-service.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
-  "tests/main/window-entry-loader.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
     }
   },
   "tests/main/windows-file-drop-clipboard-writer.test.ts": {
@@ -3272,11 +2967,6 @@
   "tests/renderer/auxiliary-workspace.test.ts": {
     "jsdoc/require-jsdoc": {
       "count": 138
-    }
-  },
-  "tests/renderer/boot-app.test.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
     }
   },
   "tests/renderer/button-content.test.tsx": {
@@ -3729,11 +3419,6 @@
       "count": 18
     }
   },
-  "tests/renderer/renderer-withmate-api.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
   "tests/renderer/reply-location.test.ts": {
     "jsdoc/require-jsdoc": {
       "count": 5
@@ -3752,11 +3437,6 @@
   "tests/renderer/sent-instruction-reader-fixture.ts": {
     "jsdoc/require-jsdoc": {
       "count": 3
-    }
-  },
-  "tests/renderer/session-app-render.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
     }
   },
   "tests/renderer/session-chat-layout-hooks.test.tsx": {
@@ -3794,16 +3474,6 @@
       "count": 19
     }
   },
-  "tests/renderer/session-delayed-delivery.test.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "tests/renderer/session-entry-csp.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
   "tests/renderer/session-file-explorer-pane.test.tsx": {
     "jsdoc/require-jsdoc": {
       "count": 72
@@ -3832,11 +3502,6 @@
   "tests/renderer/session-glossary-pane.test.tsx": {
     "jsdoc/require-jsdoc": {
       "count": 10
-    }
-  },
-  "tests/renderer/session-instructions-control.test.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
     }
   },
   "tests/renderer/session-live-run-state.test.ts": {
@@ -3979,11 +3644,6 @@
       "count": 4
     }
   },
-  "tests/renderer/turn-input-details.test.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
   "tests/renderer/use-auxiliary-creation.test.tsx": {
     "jsdoc/require-jsdoc": {
       "count": 37
@@ -4017,11 +3677,6 @@
   "tests/renderer/virtual-list.test.ts": {
     "jsdoc/require-jsdoc": {
       "count": 9
-    }
-  },
-  "tests/renderer/withmate-window-types.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
     }
   },
   "tests/renderer/workspace-changes-pane.test.tsx": {

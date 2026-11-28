@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import {
@@ -9,12 +16,15 @@ import type { SessionGlossaryPaneProps } from "./SessionGlossaryPane.js";
 import { createGlossaryAnnotationMatcher } from "./glossary-annotation-projection.js";
 import { isGlossarySearchRevisionCurrent } from "../chat/runtime/session-ui-projection.js";
 
-type SessionGlossaryApi = Pick<WithMateWindowApi,
-  "getSessionGlossaryProjection"
+/** Session に紐付く用語集の投影・検索・変更購読に必要な API。 */
+type SessionGlossaryApi = Pick<
+  WithMateWindowApi,
+  | "getSessionGlossaryProjection"
   | "searchSessionGlossary"
   | "subscribeSessionGlossary"
 >;
 
+/** 用語集の利用対象にする Session と、そのワークスペースおよびブランチの文脈。 */
 export type SessionGlossarySelection = {
   id: string;
   revision: string;
@@ -22,6 +32,7 @@ export type SessionGlossarySelection = {
   branch: string;
 };
 
+/** 現在の投影と検索結果を、取得状態、陳腐化、選択中の用語とともに表示へ渡す。 */
 export type SessionGlossaryView = {
   projection: SessionGlossaryProjection | null;
   projectionLoading: boolean;
@@ -35,6 +46,7 @@ export type SessionGlossaryView = {
   selectedTerm: string | null;
 };
 
+/** 現在の Session 用に用語集の投影とページ検索を管理し、注釈とペインを同じ対象に紐付ける。 */
 export function useSessionGlossary({
   api,
   selectedSession,
@@ -44,7 +56,8 @@ export function useSessionGlossary({
   selectedSession: SessionGlossarySelection | null;
   onActivatePane: () => void;
 }) {
-  const [projection, setProjection] = useState<SessionGlossaryProjection | null>(null);
+  const [projection, setProjection] =
+    useState<SessionGlossaryProjection | null>(null);
   const [projectionLoading, setProjectionLoading] = useState(false);
   const [projectionError, setProjectionError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -81,8 +94,13 @@ export function useSessionGlossary({
       };
     }
 
+    /** 選択中の Session に属し、採用済みの通知より古くない投影だけを反映する。 */
     const applyProjection = (nextProjection: SessionGlossaryProjection) => {
-      if (!active || nextProjection.sessionId !== selectedSession.id || nextProjection.sequence < highestSequence) {
+      if (
+        !active ||
+        nextProjection.sessionId !== selectedSession.id ||
+        nextProjection.sequence < highestSequence
+      ) {
         return;
       }
       highestSequence = nextProjection.sequence;
@@ -91,23 +109,32 @@ export function useSessionGlossary({
       setProjectionError("");
     };
     const unsubscribe = api.subscribeSessionGlossary(applyProjection);
+    /** 一度に一件だけ投影を読み、開始後に新しい投影を受け取っていれば遅い失敗は表示しない。 */
     const loadProjection = async () => {
       if (!active || pending) return;
       pending = true;
       const receivedAtStart = receivedProjection;
       setProjectionLoading(true);
       try {
-        applyProjection(await api.getSessionGlossaryProjection(selectedSession.id));
+        applyProjection(
+          await api.getSessionGlossaryProjection(selectedSession.id),
+        );
       } catch (error) {
         if (active && receivedProjection === receivedAtStart) {
-          setProjectionError(error instanceof Error ? error.message : "Could not load the glossary.");
+          setProjectionError(
+            error instanceof Error
+              ? error.message
+              : "Could not load the glossary.",
+          );
         }
       } finally {
         pending = false;
         if (active) setProjectionLoading(false);
       }
     };
-    retryProjectionRef.current = () => { void loadProjection(); };
+    retryProjectionRef.current = () => {
+      void loadProjection();
+    };
     void loadProjection();
 
     return () => {
@@ -124,7 +151,13 @@ export function useSessionGlossary({
     let total = 0;
     let retryOffset = 0;
     const query = searchQuery.trim();
-    if (!api || !selectedSession || projection?.sessionId !== selectedSession.id || projection.state.status !== "valid" || !query) {
+    if (
+      !api ||
+      !selectedSession ||
+      projection?.sessionId !== selectedSession.id ||
+      projection.state.status !== "valid" ||
+      !query
+    ) {
       setSearchResult(null);
       setSearchLoading(false);
       setSearchError("");
@@ -133,24 +166,40 @@ export function useSessionGlossary({
       };
     }
 
-    setSearchResult((current) => current?.api === api
-      && current.sessionId === selectedSession.id
-      && current.scopeRevision === projection.scopeRevision
-      && current.query === query ? current : null);
+    setSearchResult((current) =>
+      current?.api === api &&
+      current.sessionId === selectedSession.id &&
+      current.scopeRevision === projection.scopeRevision &&
+      current.query === query
+        ? current
+        : null,
+    );
     setSearchError("");
     const revision = projection.state.revision;
+    /** 現在の版で検索したページだけを反映し、再試行は失敗したオフセットから行えるようにする。 */
     const loadSearch = async (offset: number) => {
       if (!active || pending) return;
       pending = true;
       retryOffset = offset;
       setSearchLoading(true);
       try {
-        const result = await api.searchSessionGlossary(selectedSession.id, { query, offset, pageSize: 100 });
+        const result = await api.searchSessionGlossary(selectedSession.id, {
+          query,
+          offset,
+          pageSize: 100,
+        });
         if (!active) return;
         if (!result.ok) {
           setSearchError(result.message);
-        } else if (!isGlossarySearchRevisionCurrent(result.revision, projection.state.revision)) {
-          setSearchError("The glossary changed during the search. Retry to load current results.");
+        } else if (
+          !isGlossarySearchRevisionCurrent(
+            result.revision,
+            projection.state.revision,
+          )
+        ) {
+          setSearchError(
+            "The glossary changed during the search. Retry to load current results.",
+          );
         } else {
           loadedCount = offset + result.entries.length;
           total = result.total;
@@ -160,19 +209,29 @@ export function useSessionGlossary({
             scopeRevision: projection.scopeRevision,
             query,
             revision,
-            entries: offset === 0 ? result.entries : [...(current?.entries ?? []), ...result.entries],
+            entries:
+              offset === 0
+                ? result.entries
+                : [...(current?.entries ?? []), ...result.entries],
             total: result.total,
           }));
           setSearchError("");
         }
       } catch (error) {
-        if (active) setSearchError(error instanceof Error ? error.message : "Could not search the glossary.");
+        if (active)
+          setSearchError(
+            error instanceof Error
+              ? error.message
+              : "Could not search the glossary.",
+          );
       } finally {
         pending = false;
         if (active) setSearchLoading(false);
       }
     };
-    retrySearchRef.current = () => { void loadSearch(retryOffset); };
+    retrySearchRef.current = () => {
+      void loadSearch(retryOffset);
+    };
     loadMoreRef.current = () => {
       if (loadedCount < total) void loadSearch(loadedCount);
     };
@@ -183,33 +242,57 @@ export function useSessionGlossary({
       retrySearchRef.current = null;
       loadMoreRef.current = null;
     };
-  }, [api, projection?.scopeRevision, projection?.state.revision, projection?.state.status, searchQuery.trim(), selectedSession?.id]);
+  }, [
+    api,
+    projection?.scopeRevision,
+    projection?.state.revision,
+    projection?.state.status,
+    searchQuery.trim(),
+    selectedSession?.id,
+  ]);
 
-  const applicableSearch = searchResult?.api === api
-    && searchResult?.sessionId === selectedSession?.id
-    && searchResult?.scopeRevision === projection?.scopeRevision
-    && searchResult?.query === searchQuery.trim()
-    && projection?.state.status === "valid"
-    ? searchResult : null;
+  const applicableSearch =
+    searchResult?.api === api &&
+    searchResult?.sessionId === selectedSession?.id &&
+    searchResult?.scopeRevision === projection?.scopeRevision &&
+    searchResult?.query === searchQuery.trim() &&
+    projection?.state.status === "valid"
+      ? searchResult
+      : null;
   const searchEntries = applicableSearch?.entries ?? [];
   const searchTotal = applicableSearch?.total ?? 0;
-  const searchStale = applicableSearch !== null && applicableSearch.revision !== projection?.state.revision;
+  const searchStale =
+    applicableSearch !== null &&
+    applicableSearch.revision !== projection?.state.revision;
 
   useEffect(() => {
-    if (selectedTerm && projection?.state.status === "valid"
-      && !projection.state.entries.some((entry) => entry.term === selectedTerm)
-      && !searchEntries.some((entry) => entry.term === selectedTerm)) {
+    if (
+      selectedTerm &&
+      projection?.state.status === "valid" &&
+      !projection.state.entries.some((entry) => entry.term === selectedTerm) &&
+      !searchEntries.some((entry) => entry.term === selectedTerm)
+    ) {
       setSelectedTerm(null);
     }
   }, [projection, searchEntries, selectedTerm]);
 
-  const annotationState = projection?.sessionId === selectedSession?.id && projection?.state.status === "valid"
-    ? projection.state : undefined;
-  const annotationScope = projection?.sessionId === selectedSession?.id ? projection?.scopeRevision : undefined;
+  const annotationState =
+    projection?.sessionId === selectedSession?.id &&
+    projection?.state.status === "valid"
+      ? projection.state
+      : undefined;
+  const annotationScope =
+    projection?.sessionId === selectedSession?.id
+      ? projection?.scopeRevision
+      : undefined;
   const annotationMatcher = useMemo(
-    () => annotationState
-      ? createGlossaryAnnotationMatcher(annotationState.entries, annotationState.revision)
-      : undefined,
+    () =>
+      annotationState
+        ? createGlossaryAnnotationMatcher(
+            annotationState.entries,
+            annotationState.revision,
+          )
+        : undefined,
     [annotationState?.revision, annotationScope, selectedSession?.id],
   );
 
@@ -217,27 +300,46 @@ export function useSessionGlossary({
   useLayoutEffect(() => {
     activationRef.current = { projection, selectedSession, onActivatePane };
   }, [projection, selectedSession, onActivatePane]);
-  useLayoutEffect(() => () => {
-    activationRef.current = { projection: null, selectedSession: null, onActivatePane: () => undefined };
-  }, []);
-  const onActivateGlossaryEntry = useCallback((canonicalTerm: string) => {
-    const current = activationRef.current;
-    if (
-      current.selectedSession?.id !== selectedSession?.id
-      || current.projection?.sessionId !== selectedSession?.id
-      || current.projection?.scopeRevision !== annotationScope
-      || current.projection?.state.status !== "valid"
-      || !current.projection.state.entries.some((entry) => entry.term === canonicalTerm)
-    ) {
-      return;
-    }
-    setSelectedTerm(canonicalTerm);
-    current.onActivatePane();
-  }, [annotationScope, selectedSession?.id]);
+  useLayoutEffect(
+    () => () => {
+      activationRef.current = {
+        projection: null,
+        selectedSession: null,
+        /** 破棄後に以前の注釈から呼ばれてもペインを開かない。 */
+        onActivatePane: () => undefined,
+      };
+    },
+    [],
+  );
+  const onActivateGlossaryEntry = useCallback(
+    (canonicalTerm: string) => {
+      const current = activationRef.current;
+      if (
+        current.selectedSession?.id !== selectedSession?.id ||
+        current.projection?.sessionId !== selectedSession?.id ||
+        current.projection?.scopeRevision !== annotationScope ||
+        current.projection?.state.status !== "valid" ||
+        !current.projection.state.entries.some(
+          (entry) => entry.term === canonicalTerm,
+        )
+      ) {
+        return;
+      }
+      setSelectedTerm(canonicalTerm);
+      current.onActivatePane();
+    },
+    [annotationScope, selectedSession?.id],
+  );
 
-  const onRetryProjection = useCallback(() => retryProjectionRef.current?.(), []);
+  const onRetryProjection = useCallback(
+    () => retryProjectionRef.current?.(),
+    [],
+  );
   const onRetrySearch = useCallback(() => retrySearchRef.current?.(), []);
-  const onLoadMoreSearchResults = useCallback(() => loadMoreRef.current?.(), []);
+  const onLoadMoreSearchResults = useCallback(
+    () => loadMoreRef.current?.(),
+    [],
+  );
 
   const paneProps = {
     projection,
@@ -255,6 +357,7 @@ export function useSessionGlossary({
     onRetryProjection,
     onRetrySearch,
     onSelectTerm: setSelectedTerm,
+    /** 開いている用語の詳細を閉じて一覧に戻す。 */
     onBackToList: () => setSelectedTerm(null),
   } satisfies SessionGlossaryPaneProps;
 
@@ -278,6 +381,7 @@ export function useSessionGlossary({
       onRetryProjection,
       onRetrySearch,
       onSelectTerm: setSelectedTerm,
+      /** 検索条件を維持したまま、詳細の選択だけを解除する。 */
       onBackToList: () => setSelectedTerm(null),
       onActivateGlossaryEntry,
     },

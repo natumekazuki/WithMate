@@ -22,6 +22,7 @@ import type {
   GlossaryMessageProjection,
 } from "./glossary-annotation-projection.js";
 
+/** 用語注釈の変換が参照する、要素・テキスト・属性・子ノードの部分構造。 */
 type HastNode = {
   type: string;
   tagName?: string;
@@ -30,38 +31,59 @@ type HastNode = {
   children?: HastNode[];
 };
 
+/** 一回の描画で生成した注釈を、置き換えた要素と同じインデックス順で保持する。 */
 type GlossaryAnnotationRenderScope = {
   annotations: GlossaryAnnotationRange[];
 };
 
+/** 一つのメッセージ内で注釈の DOM 要素とフォーカス位置を管理し、用語の選択を所有元へ返す。 */
 type GlossaryAnnotationController = {
   renderScope: GlossaryAnnotationRenderScope;
   activeIndex: number;
   setActiveIndex: (index: number) => void;
   registerElement: (index: number, element: HTMLSpanElement | null) => void;
-  moveFocus: (currentIndex: number, command: "previous" | "next" | "first" | "last") => void;
+  moveFocus: (
+    currentIndex: number,
+    command: "previous" | "next" | "first" | "last",
+  ) => void;
   activate: (canonicalTerm: string) => void;
 };
 
+/** Markdown の変換処理と、生成した注釈要素を操作するコントローラーの組。 */
 export type MessageGlossaryAnnotationProjection = {
   controller: GlossaryAnnotationController | null;
   rehypePlugin: Plugin | null;
 };
 
-const GlossaryAnnotationContext = createContext<GlossaryAnnotationController | null>(null);
+const GlossaryAnnotationContext =
+  createContext<GlossaryAnnotationController | null>(null);
 const GLOSSARY_ANNOTATION_PROPERTY = "data-glossary-annotation-index";
-const GLOSSARY_ANNOTATION_EXCLUDED_TAGS = new Set(["a", "code", "pre", "script", "style"]);
+const GLOSSARY_ANNOTATION_EXCLUDED_TAGS = new Set([
+  "a",
+  "code",
+  "pre",
+  "script",
+  "style",
+]);
 
+/** 数式や Mermaid の表示領域を識別し、その内部を通常の本文として注釈しないようにする。 */
 function hasExcludedGlossaryProjectionClass(node: HastNode): boolean {
   const className = node.properties?.className;
-  const classes = Array.isArray(className) ? className : typeof className === "string" ? className.split(/\s+/u) : [];
-  return classes.includes("katex")
-    || classes.includes("math")
-    || classes.includes("math-inline")
-    || classes.includes("math-display")
-    || classes.includes("message-mermaid");
+  const classes = Array.isArray(className)
+    ? className
+    : typeof className === "string"
+      ? className.split(/\s+/u)
+      : [];
+  return (
+    classes.includes("katex") ||
+    classes.includes("math") ||
+    classes.includes("math-inline") ||
+    classes.includes("math-display") ||
+    classes.includes("message-mermaid")
+  );
 }
 
+/** 描画用のテキストノードで一致した範囲だけを注釈要素で包み、元の表示文字列は変えない。 */
 function createGlossaryAnnotationPlugin(
   projection: GlossaryMessageProjection,
   renderScope: GlossaryAnnotationRenderScope,
@@ -70,10 +92,12 @@ function createGlossaryAnnotationPlugin(
     renderScope.annotations.length = 0;
     const budget = projection.begin();
 
+    /** リンクやコードなどの除外領域は子孫も走査せず、残る領域では同じ予算で一致を調べる。 */
     const visit = (node: HastNode) => {
       if (
-        node.type === "element"
-        && (GLOSSARY_ANNOTATION_EXCLUDED_TAGS.has(node.tagName ?? "") || hasExcludedGlossaryProjectionClass(node))
+        node.type === "element" &&
+        (GLOSSARY_ANNOTATION_EXCLUDED_TAGS.has(node.tagName ?? "") ||
+          hasExcludedGlossaryProjectionClass(node))
       ) {
         return;
       }
@@ -96,7 +120,10 @@ function createGlossaryAnnotationPlugin(
         let cursor = 0;
         for (const match of matches) {
           if (match.start > cursor) {
-            replacements.push({ type: "text", value: child.value.slice(cursor, match.start) });
+            replacements.push({
+              type: "text",
+              value: child.value.slice(cursor, match.start),
+            });
           }
           const annotationIndex = renderScope.annotations.length;
           renderScope.annotations.push(match);
@@ -104,7 +131,12 @@ function createGlossaryAnnotationPlugin(
             type: "element",
             tagName: "span",
             properties: { [GLOSSARY_ANNOTATION_PROPERTY]: annotationIndex },
-            children: [{ type: "text", value: child.value.slice(match.start, match.end) }],
+            children: [
+              {
+                type: "text",
+                value: child.value.slice(match.start, match.end),
+              },
+            ],
           });
           cursor = match.end;
         }
@@ -121,37 +153,53 @@ function createGlossaryAnnotationPlugin(
   };
 }
 
+/** ツールチップが画面内に収まる位置を選び、下側に入らない場合は注釈の上側を使う。 */
 function resolveTooltipPosition(
   anchorRect: DOMRect,
   tooltipRect: Pick<DOMRect, "width" | "height">,
 ): CSSProperties {
   const viewportPadding = 8;
   const offset = 8;
-  const width = Math.min(tooltipRect.width || 360, 360, Math.max(0, window.innerWidth - viewportPadding * 2));
-  const height = Math.min(tooltipRect.height || 240, 240, Math.max(0, window.innerHeight - viewportPadding * 2));
+  const width = Math.min(
+    tooltipRect.width || 360,
+    360,
+    Math.max(0, window.innerWidth - viewportPadding * 2),
+  );
+  const height = Math.min(
+    tooltipRect.height || 240,
+    240,
+    Math.max(0, window.innerHeight - viewportPadding * 2),
+  );
   const left = Math.min(
     Math.max(viewportPadding, anchorRect.left),
     Math.max(viewportPadding, window.innerWidth - width - viewportPadding),
   );
   const below = anchorRect.bottom + offset;
   const above = anchorRect.top - height - offset;
-  const top = below + height <= window.innerHeight - viewportPadding
-    ? below
-    : Math.max(viewportPadding, above);
+  const top =
+    below + height <= window.innerHeight - viewportPadding
+      ? below
+      : Math.max(viewportPadding, above);
   return { left, top, visibility: "visible" };
 }
 
-function shouldIgnoreGlossaryAnnotationKey(event: ReactKeyboardEvent<HTMLSpanElement>): boolean {
-  return event.defaultPrevented
-    || event.nativeEvent.isComposing
-    || event.key === "Dead"
-    || event.getModifierState("AltGraph")
-    || event.altKey
-    || event.ctrlKey
-    || event.metaKey
-    || event.shiftKey;
+/** 処理済みキー、入力変換中のキー、修飾付きの操作を注釈の移動や選択に使わない。 */
+function shouldIgnoreGlossaryAnnotationKey(
+  event: ReactKeyboardEvent<HTMLSpanElement>,
+): boolean {
+  return (
+    event.defaultPrevented ||
+    event.nativeEvent.isComposing ||
+    event.key === "Dead" ||
+    event.getModifierState("AltGraph") ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey
+  );
 }
 
+/** 一致箇所を操作できる要素にし、ホバーやフォーカス時に用語の定義を補足表示する。 */
 function GlossaryAnnotationElement({
   annotationIndex,
   children,
@@ -165,24 +213,38 @@ function GlossaryAnnotationElement({
   const tooltipRef = useRef<HTMLSpanElement | null>(null);
   const tooltipId = useId();
   const [tooltipVisible, setTooltipVisible] = useState(false);
-  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties>({ visibility: "hidden" });
+  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties>({
+    visibility: "hidden",
+  });
   const annotationCount = controller?.renderScope.annotations.length ?? 0;
-  const effectiveActiveIndex = controller && controller.activeIndex < annotationCount ? controller.activeIndex : 0;
+  const effectiveActiveIndex =
+    controller && controller.activeIndex < annotationCount
+      ? controller.activeIndex
+      : 0;
 
-  const setTargetElement = useCallback((element: HTMLSpanElement | null) => {
-    targetRef.current = element;
-    controller?.registerElement(annotationIndex, element);
-  }, [annotationIndex, controller]);
+  const setTargetElement = useCallback(
+    (element: HTMLSpanElement | null) => {
+      targetRef.current = element;
+      controller?.registerElement(annotationIndex, element);
+    },
+    [annotationIndex, controller],
+  );
 
   useLayoutEffect(() => {
     if (!tooltipVisible || typeof window === "undefined") {
       return;
     }
+    /** 現在の注釈とツールチップが存在するときだけ計測し、スクロールやリサイズに追従させる。 */
     const updatePosition = () => {
       const target = targetRef.current;
       const tooltip = tooltipRef.current;
       if (!target || !tooltip) return;
-      setTooltipStyle(resolveTooltipPosition(target.getBoundingClientRect(), tooltip.getBoundingClientRect()));
+      setTooltipStyle(
+        resolveTooltipPosition(
+          target.getBoundingClientRect(),
+          tooltip.getBoundingClientRect(),
+        ),
+      );
     };
     updatePosition();
     window.addEventListener("resize", updatePosition);
@@ -197,6 +259,7 @@ function GlossaryAnnotationElement({
     return <span>{children}</span>;
   }
 
+  /** メッセージ内の注釈移動と用語の選択を扱い、詳細表示が開いているときだけ Escape を消費する。 */
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLSpanElement>) => {
     if (shouldIgnoreGlossaryAnnotationKey(event)) return;
     let handled = true;
@@ -233,19 +296,26 @@ function GlossaryAnnotationElement({
     }
   };
 
-  const tooltip = tooltipVisible && typeof document !== "undefined" ? createPortal(
-    <span
-      ref={tooltipRef}
-      id={tooltipId}
-      className="glossary-annotation-tooltip"
-      role="tooltip"
-      style={tooltipStyle}
-    >
-      <span className="glossary-annotation-tooltip-term">{annotation.canonicalTerm}</span>
-      <span className="glossary-annotation-tooltip-definition">{annotation.definition}</span>
-    </span>,
-    document.body,
-  ) : null;
+  const tooltip =
+    tooltipVisible && typeof document !== "undefined"
+      ? createPortal(
+          <span
+            ref={tooltipRef}
+            id={tooltipId}
+            className="glossary-annotation-tooltip"
+            role="tooltip"
+            style={tooltipStyle}
+          >
+            <span className="glossary-annotation-tooltip-term">
+              {annotation.canonicalTerm}
+            </span>
+            <span className="glossary-annotation-tooltip-definition">
+              {annotation.definition}
+            </span>
+          </span>,
+          document.body,
+        )
+      : null;
 
   return (
     <>
@@ -276,10 +346,18 @@ function GlossaryAnnotationElement({
   );
 }
 
-export const GlossaryAnnotationSpan: NonNullable<Components["span"]> = ({ children, node, ...props }) => {
+/** 一致範囲のインデックスが付いた span だけを注釈にし、それ以外の span はそのまま描画する。 */
+export const GlossaryAnnotationSpan: NonNullable<Components["span"]> = ({
+  children,
+  node,
+  ...props
+}) => {
   const spanProps = props as Record<string, unknown>;
   const annotationIndexValue = spanProps[GLOSSARY_ANNOTATION_PROPERTY];
-  if (typeof annotationIndexValue === "number" && Number.isInteger(annotationIndexValue)) {
+  if (
+    typeof annotationIndexValue === "number" &&
+    Number.isInteger(annotationIndexValue)
+  ) {
     return (
       <GlossaryAnnotationElement annotationIndex={annotationIndexValue}>
         {children}
@@ -289,6 +367,7 @@ export const GlossaryAnnotationSpan: NonNullable<Components["span"]> = ({ childr
   return <span {...props}>{children}</span>;
 };
 
+/** メッセージの表示範囲と照合器に注釈を結び付け、範囲や本文が変わればフォーカス順を初期化する。 */
 export function useMessageGlossaryAnnotations(input: {
   matcher?: GlossaryAnnotationMatcher;
   scopeKey: string;
@@ -307,7 +386,10 @@ export function useMessageGlossaryAnnotations(input: {
   );
   const enabled = Boolean(input.onActivate);
   const rehypePlugin = useMemo(
-    () => messageProjection && enabled ? createGlossaryAnnotationPlugin(messageProjection, renderScope) : null,
+    () =>
+      messageProjection && enabled
+        ? createGlossaryAnnotationPlugin(messageProjection, renderScope)
+        : null,
     [messageProjection, enabled, renderScope],
   );
 
@@ -323,43 +405,61 @@ export function useMessageGlossaryAnnotations(input: {
     }
   });
 
-  const registerElement = useCallback((index: number, element: HTMLSpanElement | null) => {
-    elementsRef.current[index] = element;
-  }, []);
-  const moveFocus = useCallback((
-    currentIndex: number,
-    command: "previous" | "next" | "first" | "last",
-  ) => {
-    const annotationCount = renderScope.annotations.length;
-    if (annotationCount === 0) return;
-    const nextIndex = command === "first"
-      ? 0
-      : command === "last"
-        ? annotationCount - 1
-        : command === "previous"
-          ? (currentIndex - 1 + annotationCount) % annotationCount
-          : (currentIndex + 1) % annotationCount;
-    setActiveIndex(nextIndex);
-    elementsRef.current[nextIndex]?.focus();
-  }, [renderScope]);
-  const activate = useCallback((canonicalTerm: string) => {
-    input.onActivate?.(canonicalTerm);
-  }, [input.onActivate]);
+  const registerElement = useCallback(
+    (index: number, element: HTMLSpanElement | null) => {
+      elementsRef.current[index] = element;
+    },
+    [],
+  );
+  const moveFocus = useCallback(
+    (currentIndex: number, command: "previous" | "next" | "first" | "last") => {
+      const annotationCount = renderScope.annotations.length;
+      if (annotationCount === 0) return;
+      const nextIndex =
+        command === "first"
+          ? 0
+          : command === "last"
+            ? annotationCount - 1
+            : command === "previous"
+              ? (currentIndex - 1 + annotationCount) % annotationCount
+              : (currentIndex + 1) % annotationCount;
+      setActiveIndex(nextIndex);
+      elementsRef.current[nextIndex]?.focus();
+    },
+    [renderScope],
+  );
+  const activate = useCallback(
+    (canonicalTerm: string) => {
+      input.onActivate?.(canonicalTerm);
+    },
+    [input.onActivate],
+  );
   const controller = useMemo<GlossaryAnnotationController | null>(
-    () => rehypePlugin ? {
-      renderScope,
-      activeIndex,
-      setActiveIndex,
-      registerElement,
-      moveFocus,
+    () =>
+      rehypePlugin
+        ? {
+            renderScope,
+            activeIndex,
+            setActiveIndex,
+            registerElement,
+            moveFocus,
+            activate,
+          }
+        : null,
+    [
       activate,
-    } : null,
-    [activate, activeIndex, moveFocus, registerElement, rehypePlugin, renderScope],
+      activeIndex,
+      moveFocus,
+      registerElement,
+      rehypePlugin,
+      renderScope,
+    ],
   );
 
   return { controller, rehypePlugin };
 }
 
+/** Markdown の子要素を、同じメッセージ用の注釈コントローラーに接続する。 */
 export function MessageGlossaryAnnotationProvider({
   controller,
   children,

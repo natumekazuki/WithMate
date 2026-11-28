@@ -13,20 +13,31 @@ import { WindowDialogService } from "../../src-electron/windows/window-dialog-se
 // scope = "window-dialog-service"
 // lifecycle = "permanent"
 // @end-test-value
+/** 用途別のタイトル、初期パス、選択フィルターと選択結果を照合する。 */
 test("WindowDialogService は directory / file / image picker の選択結果を返す", async () => {
   const calls: Array<{ kind: "open"; options: unknown }> = [];
   const service = new WindowDialogService({
+    /** 呼び出し時のオプションを記録し、ピッカーの用途ごとに異なる選択結果を返す。 */
     async showOpenDialog(_targetWindow, options) {
       calls.push({ kind: "open", options });
-      if ((options as { title?: string }).title === "Select Working Directory") {
+      if (
+        (options as { title?: string }).title === "Select Working Directory"
+      ) {
         return { canceled: false, filePaths: ["C:/workspace"] };
       }
       const title = (options as { title?: string }).title;
       if (title?.includes("Icon") || title === "Select Image") {
         return { canceled: false, filePaths: ["C:/images/a.png"] };
       }
-      if ((options as { properties?: string[] }).properties?.includes("multiSelections")) {
-        return { canceled: false, filePaths: ["C:/file-a.txt", "C:/file-b.txt"] };
+      if (
+        (options as { properties?: string[] }).properties?.includes(
+          "multiSelections",
+        )
+      ) {
+        return {
+          canceled: false,
+          filePaths: ["C:/file-a.txt", "C:/file-b.txt"],
+        };
       }
       return { canceled: false, filePaths: ["C:/file.txt"] };
     },
@@ -36,26 +47,48 @@ test("WindowDialogService は directory / file / image picker の選択結果を
   const file = await service.pickFile(undefined, "C:/seed.txt");
   const files = await service.pickFiles(undefined, "C:/seed.txt");
   const image = await service.pickImageFile();
-  const characterIcon = await service.pickImageFile(undefined, undefined, "character-icon");
+  const characterIcon = await service.pickImageFile(
+    undefined,
+    undefined,
+    "character-icon",
+  );
 
   assert.equal(directory, "C:/workspace");
   assert.equal(file, "C:/file.txt");
   assert.deepEqual(files, ["C:/file-a.txt", "C:/file-b.txt"]);
   assert.equal(image, "C:/images/a.png");
   assert.equal(characterIcon, "C:/images/a.png");
-  assert.deepEqual(calls.map((entry) => (entry.options as { title?: string }).title), [
-    "Select Working Directory",
-    "Select File",
-    "Select Files",
-    "Select Image",
-    "Select Character Icon",
-  ]);
-  assert.equal((calls[0]?.options as { defaultPath?: string }).defaultPath, "C:/seed");
-  assert.equal((calls[1]?.options as { defaultPath?: string }).defaultPath, "C:/seed.txt");
-  assert.equal((calls[2]?.options as { defaultPath?: string }).defaultPath, "C:/seed.txt");
-  assert.deepEqual((calls[2]?.options as { properties?: string[] }).properties, ["openFile", "multiSelections"]);
+  assert.deepEqual(
+    calls.map((entry) => (entry.options as { title?: string }).title),
+    [
+      "Select Working Directory",
+      "Select File",
+      "Select Files",
+      "Select Image",
+      "Select Character Icon",
+    ],
+  );
+  assert.equal(
+    (calls[0]?.options as { defaultPath?: string }).defaultPath,
+    "C:/seed",
+  );
+  assert.equal(
+    (calls[1]?.options as { defaultPath?: string }).defaultPath,
+    "C:/seed.txt",
+  );
+  assert.equal(
+    (calls[2]?.options as { defaultPath?: string }).defaultPath,
+    "C:/seed.txt",
+  );
+  assert.deepEqual(
+    (calls[2]?.options as { properties?: string[] }).properties,
+    ["openFile", "multiSelections"],
+  );
   assert.deepEqual((calls[3]?.options as { filters?: unknown }).filters, [
-    { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] },
+    {
+      name: "Images",
+      extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"],
+    },
   ]);
   assert.deepEqual((calls[4]?.options as { filters?: unknown }).filters, [
     { name: "PNG / JPEG", extensions: ["png", "jpg", "jpeg"] },
@@ -72,8 +105,10 @@ test("WindowDialogService は directory / file / image picker の選択結果を
 // scope = "window-dialog-service-cancel"
 // lifecycle = "permanent"
 // @end-test-value
+/** キャンセル時は単一選択と複数選択でそれぞれ別の空値を返す。 */
 test("WindowDialogService は open dialog の cancel を null として返す", async () => {
   const service = new WindowDialogService({
+    /** 選択なしでキャンセルされたダイアログの応答を返す。 */
     async showOpenDialog() {
       return { canceled: true, filePaths: [] };
     },

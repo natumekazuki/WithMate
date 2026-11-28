@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CONVERSATION_QUERY_PAGE_SIZE, type ConversationQueryCancelRequest, type ConversationQueryOutcome, type ConversationQueryRequest, type ConversationQueryPage } from "../../../src-shared/session/conversation-page.js";
+import {
+  CONVERSATION_QUERY_PAGE_SIZE,
+  type ConversationQueryCancelRequest,
+  type ConversationQueryOutcome,
+  type ConversationQueryRequest,
+  type ConversationQueryPage,
+} from "../../../src-shared/session/conversation-page.js";
 
+/** 一回の検索に紐付く識別子、ページのスナップショット情報、読込中のオフセット。 */
 type Attempt<T> = {
   identity: string;
   requestId: string;
@@ -12,74 +19,145 @@ type Attempt<T> = {
 };
 
 /** 表示中のクエリが保持するのは、現在の結果ページとその前後のページだけ。 */
-export function useConversationQueryPages<T>({ identity, enabled, ordinal, read, cancel }: {
+export function useConversationQueryPages<T>({
+  identity,
+  enabled,
+  ordinal,
+  read,
+  cancel,
+}: {
   identity: string;
   enabled: boolean;
   ordinal: number;
-  read?: (request: ConversationQueryRequest) => Promise<ConversationQueryOutcome<T>>;
+  read?: (
+    request: ConversationQueryRequest,
+  ) => Promise<ConversationQueryOutcome<T>>;
   cancel?: (request: ConversationQueryCancelRequest) => Promise<void>;
 }) {
   const [producerId] = useState(() => crypto.randomUUID());
   const [revision, setRevision] = useState(0);
   const [renderVersion, redraw] = useState(0);
   const attemptRef = useRef<Attempt<T> | null>(null);
-  const [failure, setFailure] = useState<{ identity: string; message: string } | null>(null);
+  const [failure, setFailure] = useState<{
+    identity: string;
+    message: string;
+  } | null>(null);
   const readRef = useRef(read);
   readRef.current = read;
   const cancelRef = useRef(cancel);
   cancelRef.current = cancel;
-  const offset = Math.floor(Math.max(0, ordinal) / CONVERSATION_QUERY_PAGE_SIZE) * CONVERSATION_QUERY_PAGE_SIZE;
+  const offset =
+    Math.floor(Math.max(0, ordinal) / CONVERSATION_QUERY_PAGE_SIZE) *
+    CONVERSATION_QUERY_PAGE_SIZE;
   const desiredOffset = useRef(offset);
   desiredOffset.current = offset;
   const fetchPage = useCallback(async (attempt: Attempt<T>, start: number) => {
-    if (!attempt.active || attempt.pending.size >= 3 || attempt.pending.has(start) || attempt.pages.has(start) || !readRef.current) return;
+    if (
+      !attempt.active ||
+      attempt.pending.size >= 3 ||
+      attempt.pending.has(start) ||
+      attempt.pages.has(start) ||
+      !readRef.current
+    )
+      return;
     attempt.pending.add(start);
     redraw((value) => value + 1);
     try {
       const first = attempt.header;
-      const outcome = await readRef.current({ requestId: attempt.requestId, producerId: attempt.producerId, offset: start, stamp: first?.stamp });
+      const outcome = await readRef.current({
+        requestId: attempt.requestId,
+        producerId: attempt.producerId,
+        offset: start,
+        stamp: first?.stamp,
+      });
       if (!attempt.active || attemptRef.current !== attempt) return;
       if (outcome.status !== "complete") {
         attempt.active = false;
-        setFailure({ identity: attempt.identity, message: outcome.status === "invalidated" ? "Messages Changed. Retry The Query." : "Query Canceled. Retry To Continue." });
+        setFailure({
+          identity: attempt.identity,
+          message:
+            outcome.status === "invalidated"
+              ? "Messages Changed. Retry The Query."
+              : "Query Canceled. Retry To Continue.",
+        });
         return;
       }
       attempt.pages.set(start, outcome);
       attempt.header = { ...outcome, items: [] };
       for (const key of attempt.pages.keys()) {
-        if (Math.abs(key - desiredOffset.current) > CONVERSATION_QUERY_PAGE_SIZE) attempt.pages.delete(key);
+        if (
+          Math.abs(key - desiredOffset.current) > CONVERSATION_QUERY_PAGE_SIZE
+        )
+          attempt.pages.delete(key);
       }
     } catch (error) {
-      if (attempt.active && attemptRef.current === attempt) setFailure({ identity: attempt.identity, message: error instanceof Error ? error.message : String(error) });
+      if (attempt.active && attemptRef.current === attempt)
+        setFailure({
+          identity: attempt.identity,
+          message: error instanceof Error ? error.message : String(error),
+        });
     } finally {
       attempt.pending.delete(start);
-      if (attemptRef.current === attempt && attempt.active) redraw((value) => value + 1);
+      if (attemptRef.current === attempt && attempt.active)
+        redraw((value) => value + 1);
     }
   }, []);
   useEffect(() => {
     setFailure(null);
-    if (!enabled || !read) { attemptRef.current = null; return; }
-    const attempt: Attempt<T> = { identity, requestId: crypto.randomUUID(), producerId, pages: new Map(), pending: new Set(), active: true };
+    if (!enabled || !read) {
+      attemptRef.current = null;
+      return;
+    }
+    const attempt: Attempt<T> = {
+      identity,
+      requestId: crypto.randomUUID(),
+      producerId,
+      pages: new Map(),
+      pending: new Set(),
+      active: true,
+    };
     attemptRef.current = attempt;
     void fetchPage(attempt, 0);
     return () => {
       attempt.active = false;
-      void cancelRef.current?.({ requestId: attempt.requestId, producerId }).catch(() => {});
+      void cancelRef
+        .current?.({ requestId: attempt.requestId, producerId })
+        .catch(() => {});
     };
   }, [identity, enabled, !!read, revision, producerId, fetchPage]);
-  const attempt = enabled && attemptRef.current?.identity === identity ? attemptRef.current : null;
+  const attempt =
+    enabled && attemptRef.current?.identity === identity
+      ? attemptRef.current
+      : null;
   const page = attempt?.header;
   const totalCount = page?.totalCount ?? 0;
   const currentFailure = failure?.identity === identity ? failure.message : "";
   useEffect(() => {
     if (!attempt?.active || !page || failure?.identity === identity) return;
     let pruned = false;
-    for (const key of attempt.pages.keys()) if (Math.abs(key - offset) > CONVERSATION_QUERY_PAGE_SIZE) { attempt.pages.delete(key); pruned = true; }
+    for (const key of attempt.pages.keys())
+      if (Math.abs(key - offset) > CONVERSATION_QUERY_PAGE_SIZE) {
+        attempt.pages.delete(key);
+        pruned = true;
+      }
     if (pruned) redraw((value) => value + 1);
-    for (const start of [offset, offset - CONVERSATION_QUERY_PAGE_SIZE, offset + CONVERSATION_QUERY_PAGE_SIZE]) {
+    for (const start of [
+      offset,
+      offset - CONVERSATION_QUERY_PAGE_SIZE,
+      offset + CONVERSATION_QUERY_PAGE_SIZE,
+    ]) {
       if (start >= 0 && start < totalCount) void fetchPage(attempt, start);
     }
-  }, [attempt, offset, totalCount, !!page, failure, identity, fetchPage, renderVersion]);
+  }, [
+    attempt,
+    offset,
+    totalCount,
+    !!page,
+    failure,
+    identity,
+    fetchPage,
+    renderVersion,
+  ]);
   return {
     items: useMemo(() => {
       if (!attempt) return [];
@@ -87,7 +165,11 @@ export function useConversationQueryPages<T>({ identity, enabled, ordinal, read,
       const items: T[] = [];
       let previous: number | undefined;
       for (const [start, value] of pages) {
-        if (previous !== undefined && start !== previous + CONVERSATION_QUERY_PAGE_SIZE) break;
+        if (
+          previous !== undefined &&
+          start !== previous + CONVERSATION_QUERY_PAGE_SIZE
+        )
+          break;
         items.push(...value.items);
         previous = start;
       }
@@ -97,10 +179,17 @@ export function useConversationQueryPages<T>({ identity, enabled, ordinal, read,
     totalCount,
     anchorOrdinal: page?.anchorOrdinal,
     messageCount: page?.messageCount,
-    loading: enabled && !!read && !currentFailure && (!page || !!attempt?.pending.has(offset)),
+    loading:
+      enabled &&
+      !!read &&
+      !currentFailure &&
+      (!page || !!attempt?.pending.has(offset)),
     error: currentFailure,
+    /** 結果全体の位置に対応するページ内の項目を返す。ページ未取得なら undefined。 */
     itemAt: (index: number): T | undefined => {
-      const start = Math.floor(index / CONVERSATION_QUERY_PAGE_SIZE) * CONVERSATION_QUERY_PAGE_SIZE;
+      const start =
+        Math.floor(index / CONVERSATION_QUERY_PAGE_SIZE) *
+        CONVERSATION_QUERY_PAGE_SIZE;
       return attempt?.pages.get(start)?.items[index - start];
     },
     retry: useCallback(() => setRevision((value) => value + 1), []),

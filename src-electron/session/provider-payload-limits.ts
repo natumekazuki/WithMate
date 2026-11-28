@@ -1,19 +1,25 @@
+/** プロバイダー文字列から初期プレビューへ残す UTF-16 コード単位数の既定値。 */
 export const PROVIDER_TEXT_PREVIEW_LIMIT = 64 * 1024;
+/** ネイティブ項目の一覧を診断用の JSON にまとめる際の既定の文字数枠。 */
 export const PROVIDER_RAW_ITEMS_JSON_LIMIT = 512 * 1024;
+/** 一件のネイティブ項目を複製・短縮する際の既定の文字数枠。 */
 export const PROVIDER_RAW_ITEM_CLONE_LIMIT = 128 * 1024;
 
+/** 元の長さと省略の有無を含む、構造化された文字列プレビュー。 */
 type TruncatedText = {
   text: string;
   truncated: true;
   originalLength: number;
 };
 
+/** プロバイダーの項目を診断に残す形。種別のほか、取得時刻や短縮済みデータを持てる。 */
 export type BoundedProviderRawItem = {
   type: string;
   timestamp?: string;
   data?: Record<string, unknown>;
 };
 
+/** 一件の複製を通じて残り容量と切り詰めを追跡し、循環の検出や秘匿化に使う状態。 */
 type RawItemBudgetState = {
   remaining: number;
   textPreviewLimit?: number;
@@ -29,10 +35,12 @@ const RAW_ITEM_TRUNCATION_MARKER = {
 };
 const RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE = 1024;
 
+/** 元の長さと省略した長さを示す共通のプレビュー末尾を作る。 */
 function buildTruncationSuffix(originalLength: number, limit: number): string {
   return `\n...[truncated ${originalLength - limit} chars; originalLength=${originalLength}]`;
 }
 
+/** 文字列だけを対象にし、上限内はそのまま、超過時は先頭と省略表示を返す。 */
 export function toProviderTextPreview(
   value: string | null | undefined,
   limit = PROVIDER_TEXT_PREVIEW_LIMIT,
@@ -48,6 +56,7 @@ export function toProviderTextPreview(
   return `${value.slice(0, limit)}${buildTruncationSuffix(value.length, limit)}`;
 }
 
+/** 必要に応じて秘匿化してから短縮し、元の長さを残す必要がある場合は構造化して返す。 */
 function toTruncatedText(
   value: string,
   limit: number,
@@ -66,11 +75,16 @@ function toTruncatedText(
   };
 }
 
+/** 限定した値の JSON 上の長さを測る。値が JSON を生成しない場合は null 相当の長さを見積もる。 */
 function measureBoundedJson(value: unknown): number {
   return JSON.stringify(value)?.length ?? 4;
 }
 
-function consumeRawItemBudget(state: RawItemBudgetState, length: number): boolean {
+/** 容量があれば消費する。足りなければ残りを 0 にして切り詰めを記録する。 */
+function consumeRawItemBudget(
+  state: RawItemBudgetState,
+  length: number,
+): boolean {
   if (length > state.remaining) {
     state.remaining = 0;
     state.truncated = true;
@@ -81,14 +95,27 @@ function consumeRawItemBudget(state: RawItemBudgetState, length: number): boolea
   return true;
 }
 
-function cloneStringWithinRawItemBudget(value: string, state: RawItemBudgetState): unknown {
+/** 文字列を残り容量に合わせて短縮・秘匿化し、JSON 化の膨張で収まらなければさらに短い表示または省略印を使う。 */
+function cloneStringWithinRawItemBudget(
+  value: string,
+  state: RawItemBudgetState,
+): unknown {
   if (state.remaining <= 0) {
     state.truncated = true;
     return RAW_ITEM_TRUNCATION_MARKER;
   }
 
-  const previewLimit = Math.max(0, Math.min(state.textPreviewLimit ?? PROVIDER_TEXT_PREVIEW_LIMIT, state.remaining - 256));
-  let boundedValue = previewLimit > 0 ? toTruncatedText(value, previewLimit, state.sanitizeText) : RAW_ITEM_TRUNCATION_MARKER;
+  const previewLimit = Math.max(
+    0,
+    Math.min(
+      state.textPreviewLimit ?? PROVIDER_TEXT_PREVIEW_LIMIT,
+      state.remaining - 256,
+    ),
+  );
+  let boundedValue =
+    previewLimit > 0
+      ? toTruncatedText(value, previewLimit, state.sanitizeText)
+      : RAW_ITEM_TRUNCATION_MARKER;
   let length = measureBoundedJson(boundedValue);
   if (state.textPreviewLimit !== undefined && length > state.remaining) {
     // エスケープにより 1 コードユニットが JSON 上で最大 6 文字になることがある。
@@ -110,7 +137,11 @@ function cloneStringWithinRawItemBudget(value: string, state: RawItemBudgetState
   return RAW_ITEM_TRUNCATION_MARKER;
 }
 
-function clonePrimitiveWithinRawItemBudget(value: unknown, state: RawItemBudgetState): unknown {
+/** プリミティブの JSON 上の長さを消費し、残り容量を超える値を省略印に置き換える。 */
+function clonePrimitiveWithinRawItemBudget(
+  value: unknown,
+  state: RawItemBudgetState,
+): unknown {
   const length = measureBoundedJson(value);
   if (consumeRawItemBudget(state, length)) {
     return value;
@@ -119,7 +150,11 @@ function clonePrimitiveWithinRawItemBudget(value: unknown, state: RawItemBudgetS
   return RAW_ITEM_TRUNCATION_MARKER;
 }
 
-function cloneArrayWithinRawItemBudget(value: unknown[], state: RawItemBudgetState): unknown[] {
+/** 配列を順番に複製し、循環参照を切り、容量を使い切った後の要素数を省略印に記録する。 */
+function cloneArrayWithinRawItemBudget(
+  value: unknown[],
+  state: RawItemBudgetState,
+): unknown[] {
   if (state.seen.has(value)) {
     state.truncated = true;
     return [RAW_ITEM_TRUNCATION_MARKER];
@@ -152,6 +187,7 @@ function cloneArrayWithinRawItemBudget(value: unknown[], state: RawItemBudgetSta
   return entries;
 }
 
+/** 自身の列挙可能なプロパティだけを複製し、キーにも容量上限と秘匿化を適用して循環参照を切る。 */
 function cloneObjectWithinRawItemBudget(
   value: Record<string, unknown>,
   state: RawItemBudgetState,
@@ -175,7 +211,9 @@ function cloneObjectWithinRawItemBudget(
       omittedEntries += 1;
       continue;
     }
-    const projectedKey = state.sanitizeText ? state.sanitizeText(key, key.length) : key;
+    const projectedKey = state.sanitizeText
+      ? state.sanitizeText(key, key.length)
+      : key;
     const keyLength = measureBoundedJson(projectedKey);
     if (state.remaining <= keyLength) {
       state.truncated = true;
@@ -202,7 +240,11 @@ function cloneObjectWithinRawItemBudget(
   return output;
 }
 
-function cloneValueWithinRawItemBudget(value: unknown, state: RawItemBudgetState): unknown {
+/** JSON に残せる値を種別ごとに複製する。診断プレビューでは空のコンテナも容量として数える。 */
+function cloneValueWithinRawItemBudget(
+  value: unknown,
+  state: RawItemBudgetState,
+): unknown {
   // 短縮したログプレビューではノードごとにも容量を消費させ、
   // 空のコンテナや入れ子の区切り記号が抜粋の容量を占有しないようにする。
   if (state.textPreviewLimit !== undefined && !consumeRawItemBudget(state, 8)) {
@@ -213,9 +255,9 @@ function cloneValueWithinRawItemBudget(value: unknown, state: RawItemBudgetState
   }
 
   if (
-    value === null
-    || typeof value === "number"
-    || typeof value === "boolean"
+    value === null ||
+    typeof value === "number" ||
+    typeof value === "boolean"
   ) {
     return clonePrimitiveWithinRawItemBudget(value, state);
   }
@@ -225,12 +267,16 @@ function cloneValueWithinRawItemBudget(value: unknown, state: RawItemBudgetState
   }
 
   if (value && typeof value === "object") {
-    return cloneObjectWithinRawItemBudget(value as Record<string, unknown>, state);
+    return cloneObjectWithinRawItemBudget(
+      value as Record<string, unknown>,
+      state,
+    );
   }
 
   return undefined;
 }
 
+/** 一件を個別の容量枠内で複製し、どこかを短縮した場合は項目データに省略の印を加える。 */
 function cloneRawItemWithinBudget(
   item: BoundedProviderRawItem,
   budget: number,
@@ -244,7 +290,10 @@ function cloneRawItemWithinBudget(
     seen: new WeakSet<object>(),
     sanitizeText,
   };
-  const boundedItem = cloneValueWithinRawItemBudget(item, state) as BoundedProviderRawItem;
+  const boundedItem = cloneValueWithinRawItemBudget(
+    item,
+    state,
+  ) as BoundedProviderRawItem;
 
   if (state.truncated) {
     return {
@@ -263,6 +312,7 @@ function cloneRawItemWithinBudget(
   return boundedItem;
 }
 
+/** シリアライズに必要な余裕を確保したうえで、ネイティブ項目の表示用コピーを容量制限付きで作る。 */
 export function boundProviderRawItem(
   item: BoundedProviderRawItem,
   limit = PROVIDER_RAW_ITEM_CLONE_LIMIT,
@@ -277,6 +327,7 @@ export function boundProviderRawItem(
   );
 }
 
+/** 文字列以外は限定したコピーを JSON にしてから、同じ表示用の文字数制限を適用する。未定義値は表示しない。 */
 export function stringifyBoundedProviderValue(
   value: unknown,
   limit = PROVIDER_TEXT_PREVIEW_LIMIT,
@@ -299,6 +350,7 @@ export function stringifyBoundedProviderValue(
   return toProviderTextPreview(serialized, limit);
 }
 
+/** 項目を順番に取り込み、全体の上限を意識した診断用 JSON の配列を作る。 */
 export function stringifyBoundedProviderRawItems(
   items: BoundedProviderRawItem[],
   limit = PROVIDER_RAW_ITEMS_JSON_LIMIT,
@@ -310,20 +362,28 @@ export function stringifyBoundedProviderRawItems(
   return collector.stringify();
 }
 
+/** 限定済みの JSON 断片を保持し、既存項目を走査し直さず一覧を追加更新する。 */
 export class BoundedProviderRawItems {
   private readonly serializedItems: string[] = [];
   private omittedItems = 0;
   private currentLength = 2;
 
+  /** 空の JSON 配列から始め、最終のシリアライズに使う文字数枠を設定する。 */
   constructor(private readonly limit = PROVIDER_RAW_ITEMS_JSON_LIMIT) {}
 
+  /** 一件を残り容量に合わせて短縮し、区切りを含めて入る場合だけ順番どおりに追加する。 */
   append(item: BoundedProviderRawItem): void {
     const commaLength = this.currentLength === 2 ? 0 : 1;
     const remainingItemBudget = Math.max(
       0,
-      this.limit - this.currentLength - commaLength - RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE,
+      this.limit -
+        this.currentLength -
+        commaLength -
+        RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE,
     );
-    const serializedItem = JSON.stringify(cloneRawItemWithinBudget(item, remainingItemBudget));
+    const serializedItem = JSON.stringify(
+      cloneRawItemWithinBudget(item, remainingItemBudget),
+    );
     const nextLength = this.currentLength + commaLength + serializedItem.length;
     if (nextLength <= this.limit) {
       this.serializedItems.push(serializedItem);
@@ -333,23 +393,31 @@ export class BoundedProviderRawItems {
     }
   }
 
+  /** 全断片を JSON 配列にまとめる。省略があれば、末尾の項目より省略件数の表示を優先する。 */
   stringify(): string {
     let retainedCount = this.serializedItems.length;
     let currentLength = this.currentLength;
     let omittedItems = this.omittedItems;
-    const truncationMarker = () => JSON.stringify({
-      type: "withmate.raw_items_truncated",
-      data: { omittedItems, maxLength: this.limit },
-    });
+    /** 省略件数と設定した上限を記録する診断用の項目を組み立てる。 */
+    const truncationMarker = () =>
+      JSON.stringify({
+        type: "withmate.raw_items_truncated",
+        data: { omittedItems, maxLength: this.limit },
+      });
 
     if (omittedItems === 0) {
       return `[${this.serializedItems.join(",")}]`;
     }
 
     let marker = truncationMarker();
-    while (retainedCount > 0 && currentLength + 1 + marker.length > this.limit) {
+    while (
+      retainedCount > 0 &&
+      currentLength + 1 + marker.length > this.limit
+    ) {
       retainedCount -= 1;
-      currentLength -= (retainedCount === 0 ? 0 : 1) + this.serializedItems[retainedCount].length;
+      currentLength -=
+        (retainedCount === 0 ? 0 : 1) +
+        this.serializedItems[retainedCount].length;
       omittedItems += 1;
       marker = truncationMarker();
     }

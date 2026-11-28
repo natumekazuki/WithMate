@@ -4,7 +4,10 @@ import React, { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import { TurnExecutionDetails, TurnInputStatus } from "../../src/chat/conversation/turn-input-details.js";
+import {
+  TurnExecutionDetails,
+  TurnInputStatus,
+} from "../../src/chat/conversation/turn-input-details.js";
 
 // @test-value v2
 // kind = "contract"
@@ -18,12 +21,32 @@ import { TurnExecutionDetails, TurnInputStatus } from "../../src/chat/conversati
 // impact = "利用者が未送信や配送不明の指示を確認済み追加と誤認する"
 // distinction = "型検査と保存testでは入力枠の配送不明・未送信の説明を確認しない。小さいSSRで2状態を検証する"
 // @end-test-value
+/** 結果不明の追加指示と送られなかった指示を区別し、それぞれの理由を alert に残す。 */
 test("additional input failures remain visible", () => {
-  const cases = [["unknown", /not a confirmed addition/], ["not-sent", /not delivered to the Turn/]] as const;
+  const cases = [
+    ["unknown", /not a confirmed addition/],
+    ["not-sent", /not delivered to the Turn/],
+  ] as const;
   for (const [state, reason] of cases) {
-    const markup = renderToStaticMarkup(<TurnInputStatus message={{ role: "user", text: "instruction", turnInput: { turnId: "42", nativeTurnId: "native-turn-9", state, attachments: [] } }} />);
+    const markup = renderToStaticMarkup(
+      <TurnInputStatus
+        message={{
+          role: "user",
+          text: "instruction",
+          turnInput: {
+            turnId: "42",
+            nativeTurnId: "native-turn-9",
+            state,
+            attachments: [],
+          },
+        }}
+      />,
+    );
     const document = new JSDOM(markup).window.document;
-    assert.match(document.querySelector('[role="alert"]')?.textContent ?? "", reason);
+    assert.match(
+      document.querySelector('[role="alert"]')?.textContent ?? "",
+      reason,
+    );
   }
 });
 
@@ -39,35 +62,130 @@ test("additional input failures remain visible", () => {
 // impact = "利用者が実行設定と配送状態を取り違え、別の指示の結果を確認する"
 // distinction = "storageや型検査では応答から受付への接続とDOMの開閉・表示を確認できない"
 // @end-test-value
+/** 保存した応答を元の入力に対応付け、確定済みの実行設定と配送状態を別々に表示・開閉できることを確認する。 */
 test("response details keep captured settings and exact delivery state", async () => {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
   const keys = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"] as const;
-  const previous = new Map(keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  for (const [key, value] of [["window", dom.window], ["document", dom.window.document], ["IS_REACT_ACT_ENVIRONMENT", true]] as const) Object.defineProperty(globalThis, key, { value, configurable: true });
+  const previous = new Map(
+    keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of [
+    ["window", dom.window],
+    ["document", dom.window.document],
+    ["IS_REACT_ACT_ENVIRONMENT", true],
+  ] as const)
+    Object.defineProperty(globalThis, key, { value, configurable: true });
   const requests: { messageSeq: number }[] = [];
-  Object.defineProperty(dom.window, "withmate", { value: { readSessionExecution: async (_owner: string, operation: string, request: { messageSeq: number }) => {
-    assert.equal(operation, "get_execution"); requests.push(request);
-    return { ok: true, origin: null, receiptId: request.messageSeq === 7 ? null : "receipt", receiptState: "completed", turnId: "42", turnState: "completed", userMessageSeq: 6,
-      executionSettings: { source: "input", provider: "codex", model: "captured-model", approvalMode: "on-request", codexReviewer: "auto-review", codexSpeed: "fast", reasoningEffort: "xhigh", codexSandboxMode: "workspace-write", customAgentName: "" } };
-  } } });
+  Object.defineProperty(dom.window, "withmate", {
+    value: {
+      /** 応答と送信元入力の読取を記録し、受付がある元入力と実行時の固定設定を返す。 */
+      readSessionExecution: async (
+        _owner: string,
+        operation: string,
+        request: { messageSeq: number },
+      ) => {
+        assert.equal(operation, "get_execution");
+        requests.push(request);
+        return {
+          ok: true,
+          origin: null,
+          receiptId: request.messageSeq === 7 ? null : "receipt",
+          receiptState: "completed",
+          turnId: "42",
+          turnState: "completed",
+          userMessageSeq: 6,
+          executionSettings: {
+            source: "input",
+            provider: "codex",
+            model: "captured-model",
+            approvalMode: "on-request",
+            codexReviewer: "auto-review",
+            codexSpeed: "fast",
+            reasoningEffort: "xhigh",
+            codexSandboxMode: "workspace-write",
+            customAgentName: "",
+          },
+        };
+      },
+    },
+  });
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
-    await act(async () => root.render(<TurnExecutionDetails context={{ ownerSessionId: "main", target: { kind: "main", sessionId: "main", incarnationId: "inc" } }} message={{ role: "assistant", text: "saved response", historyIndex: 7 }} />));
-    assert.deepEqual(requests.map(request => request.messageSeq), [7, 6]);
-    const settings = dom.window.document.querySelector<HTMLDetailsElement>('details[aria-label="Execution Settings"]')!;
-    const state = dom.window.document.querySelector<HTMLDetailsElement>('details[aria-label="Input State"]')!;
-    assert.deepEqual([...settings.querySelectorAll("dt")].map(term => [term.textContent, term.nextElementSibling?.textContent]), [
-      ["provider", "Codex"], ["approval", "Provider Controlled"], ["reviewer", "auto-review"], ["speed", "fast"], ["model", "captured-model"], ["reasoning", "X High"], ["sandbox", "Workspace Write"],
-    ]);
-    assert.deepEqual([...state.querySelectorAll("dt")].map(term => [term.textContent, term.nextElementSibling?.textContent]), [["Receipt State", "Completed"], ["Turn State", "Completed"]]);
-    await act(async () => { settings.open = false; settings.dispatchEvent(new dom.window.Event("toggle")); });
-    assert.equal(settings.open, false); assert.equal(state.open, true);
-    await act(async () => { state.open = false; state.dispatchEvent(new dom.window.Event("toggle")); });
-    assert.equal(settings.open, false); assert.equal(state.open, false);
-    await act(async () => { settings.open = true; settings.dispatchEvent(new dom.window.Event("toggle")); });
-    assert.equal(settings.open, true); assert.equal(state.open, false);
+    await act(async () =>
+      root.render(
+        <TurnExecutionDetails
+          context={{
+            ownerSessionId: "main",
+            target: { kind: "main", sessionId: "main", incarnationId: "inc" },
+          }}
+          message={{
+            role: "assistant",
+            text: "saved response",
+            historyIndex: 7,
+          }}
+        />,
+      ),
+    );
+    assert.deepEqual(
+      requests.map((request) => request.messageSeq),
+      [7, 6],
+    );
+    const settings = dom.window.document.querySelector<HTMLDetailsElement>(
+      'details[aria-label="Execution Settings"]',
+    )!;
+    const state = dom.window.document.querySelector<HTMLDetailsElement>(
+      'details[aria-label="Input State"]',
+    )!;
+    assert.deepEqual(
+      [...settings.querySelectorAll("dt")].map((term) => [
+        term.textContent,
+        term.nextElementSibling?.textContent,
+      ]),
+      [
+        ["provider", "Codex"],
+        ["approval", "Provider Controlled"],
+        ["reviewer", "auto-review"],
+        ["speed", "fast"],
+        ["model", "captured-model"],
+        ["reasoning", "X High"],
+        ["sandbox", "Workspace Write"],
+      ],
+    );
+    assert.deepEqual(
+      [...state.querySelectorAll("dt")].map((term) => [
+        term.textContent,
+        term.nextElementSibling?.textContent,
+      ]),
+      [
+        ["Receipt State", "Completed"],
+        ["Turn State", "Completed"],
+      ],
+    );
+    await act(async () => {
+      settings.open = false;
+      settings.dispatchEvent(new dom.window.Event("toggle"));
+    });
+    assert.equal(settings.open, false);
+    assert.equal(state.open, true);
+    await act(async () => {
+      state.open = false;
+      state.dispatchEvent(new dom.window.Event("toggle"));
+    });
+    assert.equal(settings.open, false);
+    assert.equal(state.open, false);
+    await act(async () => {
+      settings.open = true;
+      settings.dispatchEvent(new dom.window.Event("toggle"));
+    });
+    assert.equal(settings.open, true);
+    assert.equal(state.open, false);
   } finally {
-    await act(async () => root.unmount()); dom.window.close();
-    for (const key of keys) { const descriptor = previous.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const key of keys) {
+      const descriptor = previous.get(key);
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
   }
 });

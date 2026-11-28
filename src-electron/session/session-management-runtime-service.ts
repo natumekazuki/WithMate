@@ -15,38 +15,64 @@ import {
   SessionManagementError,
   type SessionManagementApplicationDeps,
 } from "./session-management-application.js";
-import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/agent-runtime/runtime-turn-admission.js";
+import {
+  runWithRuntimeTurnAdmission,
+  RuntimeTurnInactiveError,
+} from "../platform/agent-runtime/runtime-turn-admission.js";
 import { capturePersistentStoreOwner } from "../storage/persistent-store-owner-guard.js";
 import { isSessionOperatingPolicyOperation } from "../../src-shared/session/session-operating-policy.js";
 import { isLocalPrAgentOperation } from "../../src-shared/local-pr/local-pr-agent-operations.js";
-import { executeLocalPrAgentOperation, type LocalPrAgentRuntimeDeps } from "../local-pr/local-pr-agent-runtime.js";
+import {
+  executeLocalPrAgentOperation,
+  type LocalPrAgentRuntimeDeps,
+} from "../local-pr/local-pr-agent-runtime.js";
 
+/** 認証済みの実行主体に対し、保存済みの関係と要求された操作範囲を取得する読み取り契約。 */
 type ScopeReader = SessionManagementApplicationDeps["readSessionScope"];
+/** V6 の Session 関係を読む Worker にアクセスできる、現在のストア所有者。 */
 type ScopeReaderOwner = {
-  storageWorker?: { stores: { session: { readSessionManagementScope: ScopeReader } } };
+  storageWorker?: {
+    stores: { session: { readSessionManagementScope: ScopeReader } };
+  };
 };
 
 /** 操作範囲の取得は、保存済みの関係を取得したストアの世代にひも付ける。 */
-export function createSessionManagementScopeReader(getActiveOwner: () => ScopeReaderOwner | null): ScopeReader {
+export function createSessionManagementScopeReader(
+  getActiveOwner: () => ScopeReaderOwner | null,
+): ScopeReader {
   return async (actor, selection) => {
-    const { owner, assertActive } = capturePersistentStoreOwner(getActiveOwner, "Session relationships");
-    if (!owner.storageWorker) throw new Error("Saved Session management requires V6 storage.");
-    const scope = await owner.storageWorker.stores.session.readSessionManagementScope(actor, selection);
+    const { owner, assertActive } = capturePersistentStoreOwner(
+      getActiveOwner,
+      "Session relationships",
+    );
+    if (!owner.storageWorker)
+      throw new Error("Saved Session management requires V6 storage.");
+    const scope =
+      await owner.storageWorker.stores.session.readSessionManagementScope(
+        actor,
+        selection,
+      );
     assertActive("Session relationships");
     return scope;
   };
 }
 
+/** HTTP 側でバインディングと実行中 Turn を確認し、認可済みの操作だけを Session または Local PR へ渡す。 */
 export class SessionManagementRuntimeService {
+  /** 操作の送出先、参照の認証、実行中 Turn の照合に使う依存を設定する。 */
   constructor(
     readonly deps: {
       application: SessionManagementApplication;
-      bindingRegistry: Pick<AgentRuntimeBindingRegistry, "resolve" | "getBindingRevocationState">;
+      bindingRegistry: Pick<
+        AgentRuntimeBindingRegistry,
+        "resolve" | "getBindingRevocationState"
+      >;
       providerAgentRuntimeTurns: ProviderAgentRuntimeTurnCoordinator;
       localPr?: LocalPrAgentRuntimeDeps;
     },
   ) {}
 
+  /** Session 操作パスを識別して POST、主体の保存済み識別情報、実行許可を検証する。対象外のパスは null を返す。 */
   async route(
     request: AgentRuntimeExtensionRequest,
   ): Promise<AgentRuntimeExtensionResponse | null> {
@@ -54,6 +80,7 @@ export class SessionManagementRuntimeService {
       new URL(request.path, "http://127.0.0.1").pathname,
     );
     if (!operation) return null;
+    /** 失敗を HTTP ステータスと操作結果へ写し、変更なしと変更結果不明を区別する。 */
     const failure = (
       status: number,
       code: string,
@@ -69,6 +96,7 @@ export class SessionManagementRuntimeService {
         "SESSION_INVALID_REQUEST",
         "Session operations require POST.",
       );
+    /** バインディング参照を、要求した Session 操作に対応する操作権限で照合する。 */
     const resolve = () =>
       this.deps.bindingRegistry.resolve(
         request.bindingReference,
@@ -102,6 +130,7 @@ export class SessionManagementRuntimeService {
         "SESSION_BINDING_INVALID",
         "The captured provider Turn is inactive.",
       );
+    /** 最初と同じバインディング世代・Turn ハンドルが有効かを確認し、異なれば操作の続行を拒否する。 */
     const assertCurrent = () => {
       const current = resolve();
       const turn = this.deps.providerAgentRuntimeTurns.admit({
@@ -121,42 +150,65 @@ export class SessionManagementRuntimeService {
           "The captured binding or provider Turn ended.",
         );
     };
-    const isInstructions = operation === "get_instructions" || operation === "set_instructions";
+    const isInstructions =
+      operation === "get_instructions" || operation === "set_instructions";
     try {
       // 指示の読み書きでは Worker で両方の有効期間を確認する。他の操作の既存の実行許可は変えない。
-      const bindingState = isInstructions ? this.deps.bindingRegistry.getBindingRevocationState(binding) : null;
+      const bindingState = isInstructions
+        ? this.deps.bindingRegistry.getBindingRevocationState(binding)
+        : null;
       if (isInstructions && !bindingState) throw new RuntimeTurnInactiveError();
       const isLocalPr = isLocalPrAgentOperation(operation);
+      /** 認証した主体と実行設定を保ったまま、Local PR または通常の Session 操作へ振り分ける。 */
       const execute = () =>
         // どちらの公開アダプターも、標準のバインディングと Turn の実行許可を確認してから PR アプリケーションに入る。
-        isLocalPr ? executeLocalPrAgentOperation({
-          deps: this.deps.localPr,
-          operation,
-          body: request.body,
-          binding: {
-            actor: actor.data,
-            workspacePath: binding.authoritySnapshot.sessionWorkspacePath,
-            providerId: admission.handle.providerId,
-            executionOptions: admission.handle.executionOptions,
-            assertCurrent,
-          },
-          readSavedScope: (target) => this.deps.application.deps.readSessionScope(target, null),
-        }) : this.deps.application.execute(operation, request.body, {
-          actor: actor.data,
-          assertCurrent,
-          actorExecution: admission.handle.executionOptions && {
-            providerId: admission.handle.providerId,
-            executionOptions: admission.handle.executionOptions,
-          },
-        });
+        isLocalPr
+          ? executeLocalPrAgentOperation({
+              deps: this.deps.localPr,
+              operation,
+              body: request.body,
+              binding: {
+                actor: actor.data,
+                workspacePath: binding.authoritySnapshot.sessionWorkspacePath,
+                providerId: admission.handle.providerId,
+                executionOptions: admission.handle.executionOptions,
+                assertCurrent,
+              },
+              /** Local PR の認可に使う保存済み関係を特定の対象について読み、一覧は取得しない。 */
+              readSavedScope: (target) =>
+                this.deps.application.deps.readSessionScope(target, null),
+            })
+          : this.deps.application.execute(operation, request.body, {
+              actor: actor.data,
+              assertCurrent,
+              actorExecution: admission.handle.executionOptions && {
+                providerId: admission.handle.providerId,
+                executionOptions: admission.handle.executionOptions,
+              },
+            });
       // 読み取りと対象範囲を限定した書き込み（指示の置換を含む）では、Worker に実行許可を引き継ぐ。
       // Coordination はコミット後にキューを起こす処理を、この送信元のスコープから切り離す。
-      const result = await (isLocalPr || SESSION_READ_OPERATIONS.includes(operation) ||
-      isSessionOperatingPolicyOperation(operation) || operation.startsWith("coordination_") || operation === "add_directory" || operation === "remove_directory" || operation === "set_instructions"
+      const result = await (isLocalPr ||
+      SESSION_READ_OPERATIONS.includes(operation) ||
+      isSessionOperatingPolicyOperation(operation) ||
+      operation.startsWith("coordination_") ||
+      operation === "add_directory" ||
+      operation === "remove_directory" ||
+      operation === "set_instructions"
         ? runWithRuntimeTurnAdmission(
             {
               state: admission.handle.revocationState,
-              ...(bindingState ? { binding: { state: bindingState, expiresAtMs: binding.expiresAt ? Date.parse(binding.expiresAt) : null } } : {}),
+              ...(bindingState
+                ? {
+                    binding: {
+                      state: bindingState,
+                      expiresAtMs: binding.expiresAt
+                        ? Date.parse(binding.expiresAt)
+                        : null,
+                    },
+                  }
+                : {}),
+              /** 送出後も認可が現在有効かを Worker の実行許可に伝える。失効は false にする。 */
               isCurrent: () => {
                 try {
                   assertCurrent();
@@ -172,12 +224,18 @@ export class SessionManagementRuntimeService {
       // 起点のプロバイダー Turn が終わっても、コミット済みの変更は適用済みのまま。
       if (SESSION_READ_OPERATIONS.includes(operation)) assertCurrent();
       // ワークスペースや識別情報の不一致は、アプリケーションへの送出前に判定される認証失敗。
-      if (!result.ok && isLocalPr && result.code === "SESSION_BINDING_INVALID") return { status: 401, value: result };
+      if (!result.ok && isLocalPr && result.code === "SESSION_BINDING_INVALID")
+        return { status: 401, value: result };
       return { status: result.ok ? 200 : 400, value: result };
     } catch (error) {
-      if (error instanceof RuntimeTurnInactiveError) return failure(401, "SESSION_BINDING_INVALID",
-        isInstructions ? "The captured binding or provider Turn ended before the operation was applied."
-          : "The captured provider Turn ended before the operation was applied.");
+      if (error instanceof RuntimeTurnInactiveError)
+        return failure(
+          401,
+          "SESSION_BINDING_INVALID",
+          isInstructions
+            ? "The captured binding or provider Turn ended before the operation was applied."
+            : "The captured provider Turn ended before the operation was applied.",
+        );
       if (SESSION_READ_OPERATIONS.includes(operation)) {
         try {
           assertCurrent();

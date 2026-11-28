@@ -5,12 +5,22 @@ import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 
+/** 保存済みのモデルを基準値として比較できる Codex セッションを作る。 */
 function createSession() {
   return buildNewSession({
-    id: "main-selection", taskTitle: "Selection", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main",
-    characterId: "character", character: "Character", characterIconPath: "",
-    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "untrusted",
-    provider: "codex", model: "model-a", reasoningEffort: "high",
+    id: "main-selection",
+    taskTitle: "Selection",
+    workspaceLabel: "workspace",
+    workspacePath: "C:/workspace",
+    branch: "main",
+    characterId: "character",
+    character: "Character",
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    approvalMode: "untrusted",
+    provider: "codex",
+    model: "model-a",
+    reasoningEffort: "high",
   });
 }
 
@@ -24,18 +34,31 @@ function createSession() {
 // scope = "current-execution-selections"
 // lifecycle = "permanent"
 // @end-test-value
+/** 保存スナップショットで名前とメッセージを更新しても現在のモデル選択は維持され、所有者の再作成やストア参照の破棄時に持ち越されない。 */
 it("現在選択と保存snapshotを分けてownerとgenerationの寿命を守る", () => {
   const context = new MainStoreContext();
   const session = createSession();
   context.setSessions([session]);
-  const options = captureSessionExecutionOptions({ ...session, model: "model-b" });
+  const options = captureSessionExecutionOptions({
+    ...session,
+    model: "model-b",
+  });
   context.executionSelections.remember(session, options);
-  context.setSessions([{ ...session, taskTitle: "Renamed", messages: [{ role: "user", text: "hello" }] }]);
+  context.setSessions([
+    {
+      ...session,
+      taskTitle: "Renamed",
+      messages: [{ role: "user", text: "hello" }],
+    },
+  ]);
   assert.equal(context.sessions[0]?.model, "model-b");
   assert.equal(context.sessions[0]?.taskTitle, "Renamed");
   assert.equal(context.sessions[0]?.messages[0]?.text, "hello");
   assert.equal(context.executionSelections.apply(session).model, "model-b");
-  assert.equal(context.executionSelections.latestForProvider("codex")?.model, "model-b");
+  assert.equal(
+    context.executionSelections.latestForProvider("codex")?.model,
+    "model-b",
+  );
   context.setSessions([{ ...session, incarnationId: "new-owner" }]);
   assert.equal(context.sessions[0]?.model, "model-a");
   assert.equal(context.executionSelections.latestForProvider("codex"), null);
@@ -53,15 +76,30 @@ it("現在選択と保存snapshotを分けてownerとgenerationの寿命を守�
 // scope = "current-execution-selections"
 // lifecycle = "permanent"
 // @end-test-value
+/** Auxiliary のモデル選択を親と別の作成時刻の会話から区別し、同一 ID の親を再作成すると旧選択が破棄されることを確認する。 */
 it("Auxiliaryの現在選択を親ownerへ閉じる", () => {
   const context = new MainStoreContext();
   const session = createSession();
   context.setSessions([session]);
-  const auxiliary = { ...session, id: "aux-selection", parentSessionId: session.id, createdAt: "2026-09-27T00:00:00Z" } as unknown as AuxiliarySessionSummary;
-  context.executionSelections.remember(auxiliary, captureSessionExecutionOptions({ ...session, model: "aux-b" }));
+  const auxiliary = {
+    ...session,
+    id: "aux-selection",
+    parentSessionId: session.id,
+    createdAt: "2026-09-27T00:00:00Z",
+  } as unknown as AuxiliarySessionSummary;
+  context.executionSelections.remember(
+    auxiliary,
+    captureSessionExecutionOptions({ ...session, model: "aux-b" }),
+  );
   assert.equal(context.executionSelections.apply(auxiliary).model, "aux-b");
   assert.equal(context.executionSelections.apply(session).model, "model-a");
-  assert.equal(context.executionSelections.apply({ ...auxiliary, createdAt: "2026-09-28T00:00:00Z" }).model, "model-a");
+  assert.equal(
+    context.executionSelections.apply({
+      ...auxiliary,
+      createdAt: "2026-09-28T00:00:00Z",
+    }).model,
+    "model-a",
+  );
   context.setSessions([{ ...session, incarnationId: "new-parent" }]);
   assert.equal(context.executionSelections.apply(auxiliary).model, "model-a");
   assert.equal(context.executionSelections.latestForProvider("codex"), null);

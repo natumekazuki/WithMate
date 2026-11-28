@@ -1,15 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildChatEntrySearch, WindowEntryLoader } from "../../src-electron/windows/window-entry-loader.js";
+import {
+  buildChatEntrySearch,
+  WindowEntryLoader,
+} from "../../src-electron/windows/window-entry-loader.js";
 
+/** 開発用 URL と配布用ファイルの読み込みを同じ履歴で比較できるようにする。 */
 function createWindowStub() {
-  const calls: Array<{ kind: "url" | "file"; value: string; search?: string }> = [];
+  const calls: Array<{ kind: "url" | "file"; value: string; search?: string }> =
+    [];
   return {
     window: {
+      /** 開発サーバーへ渡す検索文字列付き URL を記録する。 */
       async loadURL(url: string) {
         calls.push({ kind: "url", value: url });
       },
+      /** 配布用 HTML のパスと検索文字列を個別に記録する。 */
       async loadFile(filePath: string, options?: { search?: string }) {
         calls.push({ kind: "file", value: filePath, search: options?.search });
       },
@@ -28,6 +35,7 @@ function createWindowStub() {
 // scope = "scripts/tests/window-entry-loader.test.ts"
 // lifecycle = "permanent"
 // @end-test-value
+/** 開発時は各画面のエントリーを URL で開き、ID とトークンを符号化する。 */
 test("WindowEntryLoader は dev server 使用時に loadURL する", async () => {
   const stub = createWindowStub();
   const loader = new WindowEntryLoader({
@@ -36,7 +44,10 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
   });
 
   await loader.loadHomeEntry(stub.window, "settings");
-  await loader.loadChatEntry(stub.window, { kind: "agent", sessionId: "session 1" });
+  await loader.loadChatEntry(stub.window, {
+    kind: "agent",
+    sessionId: "session 1",
+  });
   await loader.loadDiffEntry(stub.window, "diff#1");
   await loader.loadFilePreviewEntry(stub.window, "preview#1");
   await loader.loadLocalPrEntry(stub.window);
@@ -46,12 +57,21 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
 
   assert.deepEqual(stub.calls, [
     { kind: "url", value: "http://localhost:5173?mode=settings" },
-    { kind: "url", value: "http://localhost:5173/session.html?sessionId=session%201" },
+    {
+      kind: "url",
+      value: "http://localhost:5173/session.html?sessionId=session%201",
+    },
     { kind: "url", value: "http://localhost:5173/diff.html?token=diff%231" },
-    { kind: "url", value: "http://localhost:5173/file-preview.html?token=preview%231" },
+    {
+      kind: "url",
+      value: "http://localhost:5173/file-preview.html?token=preview%231",
+    },
     { kind: "url", value: "http://localhost:5173/local-pr.html" },
     { kind: "url", value: "http://localhost:5173/boot.html" },
-    { kind: "url", value: "http://localhost:5173/character-editor.html?characterId=char%201" },
+    {
+      kind: "url",
+      value: "http://localhost:5173/character-editor.html?characterId=char%201",
+    },
     { kind: "url", value: "http://localhost:5173/character-editor.html" },
   ]);
 });
@@ -66,10 +86,18 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
 // scope = "scripts/tests/window-entry-loader.test.ts"
 // lifecycle = "permanent"
 // @end-test-value
+/** 親セッションだけの場合と補助セッションを選ぶ場合の検索文字列を照合する。 */
 test("buildChatEntrySearch は chat mode ごとの session.html query を組み立てる", () => {
-  assert.equal(buildChatEntrySearch({ kind: "agent", sessionId: "session 1" }), "?sessionId=session%201");
   assert.equal(
-    buildChatEntrySearch({ kind: "agent", sessionId: "session 1", auxiliarySessionId: "aux 1" }),
+    buildChatEntrySearch({ kind: "agent", sessionId: "session 1" }),
+    "?sessionId=session%201",
+  );
+  assert.equal(
+    buildChatEntrySearch({
+      kind: "agent",
+      sessionId: "session 1",
+      auxiliarySessionId: "aux 1",
+    }),
     "?sessionId=session%201&auxiliarySessionId=aux%201",
   );
 });
@@ -85,6 +113,7 @@ test("buildChatEntrySearch は chat mode ごとの session.html query を組み�
 // lifecycle = "permanent"
 // distinction = "通常のchat mode query testとは分離し、新規Windowのentry loaderがdev/prod共通queryを保持することを専用に検証する"
 // @end-test-value
+/** URL 読み込みとファイル読み込みのどちらでも補助セッションの初期選択を保つ。 */
 test("WindowEntryLoader はAuxiliary対象のagent queryをdev/prodで保持する", async () => {
   const devStub = createWindowStub();
   const devLoader = new WindowEntryLoader({
@@ -109,15 +138,20 @@ test("WindowEntryLoader はAuxiliary対象のagent queryをdev/prodで保持す�
     auxiliarySessionId: "auxiliary 1",
   });
 
-  assert.deepEqual(devStub.calls, [{
-    kind: "url",
-    value: "http://localhost:5173/session.html?sessionId=session%201&auxiliarySessionId=auxiliary%201",
-  }]);
-  assert.deepEqual(productionStub.calls, [{
-    kind: "file",
-    value: "F:\\dist\\session.html",
-    search: "?sessionId=session%201&auxiliarySessionId=auxiliary%201",
-  }]);
+  assert.deepEqual(devStub.calls, [
+    {
+      kind: "url",
+      value:
+        "http://localhost:5173/session.html?sessionId=session%201&auxiliarySessionId=auxiliary%201",
+    },
+  ]);
+  assert.deepEqual(productionStub.calls, [
+    {
+      kind: "file",
+      value: "F:\\dist\\session.html",
+      search: "?sessionId=session%201&auxiliarySessionId=auxiliary%201",
+    },
+  ]);
 });
 
 // @test-value v2
@@ -130,6 +164,7 @@ test("WindowEntryLoader はAuxiliary対象のagent queryをdev/prodで保持す�
 // scope = "scripts/tests/window-entry-loader.test.ts"
 // lifecycle = "permanent"
 // @end-test-value
+/** 配布時は出力先の HTML を開き、画面モードやトークンを検索文字列として渡す。 */
 test("WindowEntryLoader は production build で loadFile する", async () => {
   const stub = createWindowStub();
   const loader = new WindowEntryLoader({
@@ -147,7 +182,11 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
     { kind: "file", value: "F:\\dist\\index.html", search: undefined },
     { kind: "file", value: "F:\\dist\\index.html", search: "?mode=settings" },
     { kind: "file", value: "F:\\dist\\boot.html", search: undefined },
-    { kind: "file", value: "F:\\dist\\file-preview.html", search: "?token=preview%231" },
+    {
+      kind: "file",
+      value: "F:\\dist\\file-preview.html",
+      search: "?token=preview%231",
+    },
     {
       kind: "file",
       value: "F:\\dist\\character-editor.html",

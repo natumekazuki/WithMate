@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 
+/** 現在の表示内容の検索語・結果状態と、結果移動や閉じる操作を受け取る。 */
 export type SessionContentFindBarProps = {
   open: boolean;
   query: string;
@@ -15,6 +16,7 @@ export type SessionContentFindBarProps = {
   onClose: () => void;
 };
 
+/** 開くと検索語を選択し、閉じると元のフォーカスへ戻す。結果未取得と一致なしは別表示にする。 */
 export function SessionContentFindBar({
   open,
   query,
@@ -34,7 +36,10 @@ export function SessionContentFindBar({
 
   useEffect(() => {
     if (open && !wasOpenRef.current) {
-      restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      restoreFocusRef.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
       inputRef.current?.focus();
       inputRef.current?.select();
     } else if (!open && wasOpenRef.current) {
@@ -44,16 +49,23 @@ export function SessionContentFindBar({
     wasOpenRef.current = open;
   }, [open]);
 
-  useEffect(() => () => {
-    restoreFocusRef.current?.focus();
-  }, []);
+  useEffect(
+    () => () => {
+      restoreFocusRef.current?.focus();
+    },
+    [],
+  );
 
   if (!open) {
     return null;
   }
 
   return (
-    <div className="session-content-find" role="search" aria-busy={loading || undefined}>
+    <div
+      className="session-content-find"
+      role="search"
+      aria-busy={loading || undefined}
+    >
       <input
         ref={inputRef}
         type="search"
@@ -75,12 +87,40 @@ export function SessionContentFindBar({
         }}
       />
       <span className="session-content-find-count" role="status">
-        {loading ? <LoadingIndicator inline label="Finding Messages" /> : unavailable ? "—" : matchCount > 0 ? `${currentMatch + 1}/${matchCount}` : "0/0"}
-        {!loading && !unavailable && matchDescription ? <span className="session-content-find-description">{matchDescription}</span> : null}
+        {loading ? (
+          <LoadingIndicator inline label="Finding Messages" />
+        ) : unavailable ? (
+          "—"
+        ) : matchCount > 0 ? (
+          `${currentMatch + 1}/${matchCount}`
+        ) : (
+          "0/0"
+        )}
+        {!loading && !unavailable && matchDescription ? (
+          <span className="session-content-find-description">
+            {matchDescription}
+          </span>
+        ) : null}
       </span>
-      <button type="button" onClick={onPrevious} disabled={matchCount === 0 || unavailable} aria-label="Previous match">↑</button>
-      <button type="button" onClick={onNext} disabled={matchCount === 0 || unavailable} aria-label="Next match">↓</button>
-      <button type="button" onClick={onClose} aria-label="Close find">×</button>
+      <button
+        type="button"
+        onClick={onPrevious}
+        disabled={matchCount === 0 || unavailable}
+        aria-label="Previous match"
+      >
+        ↑
+      </button>
+      <button
+        type="button"
+        onClick={onNext}
+        disabled={matchCount === 0 || unavailable}
+        aria-label="Next match"
+      >
+        ↓
+      </button>
+      <button type="button" onClick={onClose} aria-label="Close find">
+        ×
+      </button>
     </div>
   );
 }

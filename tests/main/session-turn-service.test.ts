@@ -4,9 +4,16 @@ import type { SessionTurnInput } from "../../src-shared/session/session-turn-sta
 import { SessionTurnService } from "../../src-electron/session/session-turn-service.js";
 
 const input: SessionTurnInput = {
-  sessionId: "session-1", createdAt: "2026-10-07T00:00:00.000Z", phase: "running",
-  provider: "codex", model: "model", reasoningEffort: "medium", approvalMode: "on-request",
-  userMessageSeq: 0, threadId: "thread", errorMessage: "",
+  sessionId: "session-1",
+  createdAt: "2026-10-07T00:00:00.000Z",
+  phase: "running",
+  provider: "codex",
+  model: "model",
+  reasoningEffort: "medium",
+  approvalMode: "on-request",
+  userMessageSeq: 0,
+  threadId: "thread",
+  errorMessage: "",
 };
 
 // @test-value v2
@@ -19,19 +26,32 @@ const input: SessionTurnInput = {
 // scope = "session turn persistence notification"
 // lifecycle = "permanent"
 // @end-test-value
+/** 作成の保存完了前は通知せず、保存された同じターンを返却・通知し、キャンセル更新も同じ ID で通知する。 */
 test("SessionTurnServiceは保存後に作成と更新を通知する", async () => {
   let resolveCreate!: (turn: typeof input & { id: number }) => void;
   const persisted = { ...input, id: 7 };
   const notifications: unknown[] = [];
-  const service = new SessionTurnService({
-    createSessionTurn: () => new Promise((resolve) => { resolveCreate = resolve; }),
-    updateSessionTurn: (id, next) => ({ ...next, id }),
-  }, (turn) => notifications.push(turn));
+  const service = new SessionTurnService(
+    {
+      /** 検証側が保存完了の時点を選べるよう、作成の永続化を保留する。 */
+      createSessionTurn: () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+      /** 指定 ID を保ったまま、更新後の保存結果を返す。 */
+      updateSessionTurn: (id, next) => ({ ...next, id }),
+    },
+    (turn) => notifications.push(turn),
+  );
   const creating = service.createSessionTurn(input);
   assert.deepEqual(notifications, []);
   resolveCreate(persisted);
   assert.equal(await creating, persisted);
-  const updated = await service.updateSessionTurn(7, { ...input, phase: "canceled", errorMessage: "canceled" });
+  const updated = await service.updateSessionTurn(7, {
+    ...input,
+    phase: "canceled",
+    errorMessage: "canceled",
+  });
   assert.deepEqual(notifications, [persisted, updated]);
   assert.equal(updated.id, 7);
   assert.equal(updated.phase, "canceled");
@@ -47,14 +67,32 @@ test("SessionTurnServiceは保存後に作成と更新を通知する", async ()
 // scope = "session turn persistence failure"
 // lifecycle = "permanent"
 // @end-test-value
+/** 作成・更新の保存例外は元のエラーのまま伝わり、どちらの失敗も成功通知を発行しない。 */
 test("SessionTurnServiceは保存失敗を補完しない", async () => {
   const failure = new Error("unknown persistence outcome");
   let notifications = 0;
-  const service = new SessionTurnService({
-    createSessionTurn: async () => { throw failure; },
-    updateSessionTurn: async () => { throw failure; },
-  }, () => { notifications += 1; });
-  await assert.rejects(service.createSessionTurn(input), (error) => error === failure);
-  await assert.rejects(service.updateSessionTurn(7, input), (error) => error === failure);
+  const service = new SessionTurnService(
+    {
+      /** 作成時の保存失敗を返す。 */
+      createSessionTurn: async () => {
+        throw failure;
+      },
+      /** 更新時にも作成と同じ保存エラーを返す。 */
+      updateSessionTurn: async () => {
+        throw failure;
+      },
+    },
+    () => {
+      notifications += 1;
+    },
+  );
+  await assert.rejects(
+    service.createSessionTurn(input),
+    (error) => error === failure,
+  );
+  await assert.rejects(
+    service.updateSessionTurn(7, input),
+    (error) => error === failure,
+  );
   assert.equal(notifications, 0);
 });
