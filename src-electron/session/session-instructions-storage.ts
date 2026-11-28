@@ -50,9 +50,20 @@ export class SessionInstructionsStorage {
     const body = validateSessionInstructions(input);
     const byteLength = sessionInstructionsByteLength(body);
     const owner = ownerRow(target);
-    const update = this.db.prepare(`UPDATE ${owner.table} SET instructions_json = ? WHERE ${owner.where}`);
-    // Agent requests carry revocation to the worker; GUI edits have no Turn dependency.
-    assertRuntimeTurnAdmission();
-    return Number(update.run(JSON.stringify(body), ...owner.params).changes) === 1 ? { byteLength } : null;
+    const encoded = JSON.stringify(body);
+    // Check admission after acquiring the write lock; waiting for SQLite does not keep a grant active.
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      assertRuntimeTurnAdmission();
+      const changes = this.db.prepare(`UPDATE ${owner.table} SET instructions_json = ? WHERE ${owner.where}`)
+        .run(encoded, ...owner.params).changes;
+      assertRuntimeTurnAdmission();
+      this.db.exec("COMMIT");
+      return Number(changes) === 1 ? { byteLength } : null;
+    } catch (error) {
+      // Reject an unapplied or rolled-back change without replacing the previous body.
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 }

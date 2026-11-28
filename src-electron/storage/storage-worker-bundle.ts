@@ -6,7 +6,9 @@ import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage
 import { SessionExecutionReadStorage } from "./session-execution-read.js";
 import { CoordinationStorageV7 } from "../coordination/coordination-storage-v7.js";
 import { LocalPrStorage, type LocalPrStore } from "../local-pr/local-pr-store.js";
-import { assertRuntimeTurnAdmission, currentRuntimeTurnAdmissionState, runWithRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
+import {
+  assertRuntimeTurnAdmission, currentWorkerRuntimeTurnAdmission, runWithRuntimeTurnAdmission, type WorkerRuntimeTurnAdmission,
+} from "../platform/agent-runtime/runtime-turn-admission.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { AppSettingsStorage } from "../app/app-settings-storage.js";
 import { MateStorage } from "../mate/mate-storage.js";
@@ -120,6 +122,11 @@ type StorageInstances = Record<keyof typeof STORE_METHODS, object>;
 let instances: StorageInstances | null = null;
 let conversationQueries: ConversationQueryCoordinator | null = null;
 
+/** A Worker admission flag is one shared integer, stored by its authority owner. */
+function isRevocationState(value: unknown): value is SharedArrayBuffer {
+  return value instanceof SharedArrayBuffer && value.byteLength === Int32Array.BYTES_PER_ELEMENT;
+}
+
 function createStoreHandlers(data: StorageWorkerEntryData) {
   if (!data.dbPath || !data.userDataPath) {
     throw new Error("V6 storage worker requires dbPath and userDataPath.");
@@ -175,7 +182,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
     },
     "store.call": (payload: unknown) => {
       if (!payload || typeof payload !== "object") throw new Error("Storage worker payload is invalid.");
-      const input = payload as { store?: string; method?: string; args?: unknown[]; runtimeTurnAdmissionState?: SharedArrayBuffer };
+      const input = payload as { store?: string; method?: string; args?: unknown[]; runtimeTurnAdmission?: WorkerRuntimeTurnAdmission };
       if (!(input.store && input.method && Array.isArray(input.args)) || !Object.prototype.hasOwnProperty.call(STORE_METHODS, input.store)) {
         throw new Error("Storage worker store command is invalid.");
       }
@@ -185,9 +192,14 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
       const method = store[input.method];
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
-      if ((input.store === "settings" || input.store === "coordination" || input.store === "execution" || input.store === "instructions" || input.store === "localPr" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory") && input.runtimeTurnAdmissionState !== undefined) {
-        if (!(input.runtimeTurnAdmissionState instanceof SharedArrayBuffer) || input.runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) throw new Error("Runtime turn admission state is invalid.");
-        return runWithRuntimeTurnAdmission({ state: input.runtimeTurnAdmissionState }, () => method.apply(store, input.args!));
+      if ((input.store === "settings" || input.store === "coordination" || input.store === "execution" || input.store === "instructions" || input.store === "localPr" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory") && input.runtimeTurnAdmission !== undefined) {
+        const authority = input.runtimeTurnAdmission;
+        // Validate the exact flags received at the Worker boundary before evaluating them.
+        if (!authority || !isRevocationState(authority.state) || (authority.binding !== undefined && (
+          !authority.binding || !isRevocationState(authority.binding.state)
+          || (authority.binding.expiresAtMs !== null && !Number.isFinite(authority.binding.expiresAtMs))
+        ))) throw new Error("Runtime turn admission state is invalid.");
+        return runWithRuntimeTurnAdmission(authority, () => method.apply(store, input.args!));
       }
       return method.apply(store, input.args);
     },
@@ -246,10 +258,10 @@ export function createV6StorageWorkerBundle(options: {
             && (coordinationInput.request.operation !== "get" || coordinationInput.actor.kind !== "user");
           const needsTurnAdmission = (store === "settings" && ["setSelectionPolicy", "setWorktreeRoot", "setWorktreeRepository"].includes(property)) || store === "coordination" || store === "execution" || store === "instructions" || store === "localPr" || property === "setSessionAdditionalDirectories" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
           if (needsTurnAdmission) assertRuntimeTurnAdmission();
-          const runtimeTurnAdmissionState = needsTurnAdmission ? currentRuntimeTurnAdmissionState() : undefined;
+          const runtimeTurnAdmission = needsTurnAdmission ? currentWorkerRuntimeTurnAdmission() : undefined;
           return client.call(property === "cancelConversationQuery" ? "conversation.cancel"
             : property === "searchConversation" || property === "listConversationNavigator" ? "conversation.query" : "store.call",
-            property === "cancelConversationQuery" ? args[0] : { store, method: property, args, ...(runtimeTurnAdmissionState ? { runtimeTurnAdmissionState } : {}) }, {
+            property === "cancelConversationQuery" ? args[0] : { store, method: property, args, ...(runtimeTurnAdmission ? { runtimeTurnAdmission } : {}) }, {
             mutation: store === "coordination" ? coordinationMutation : store === "instructions" ? property === "set" : MUTATIONS.has(property),
             operation: `${store}.${property}`,
           });

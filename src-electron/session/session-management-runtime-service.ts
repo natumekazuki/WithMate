@@ -41,7 +41,7 @@ export class SessionManagementRuntimeService {
   constructor(
     readonly deps: {
       application: SessionManagementApplication;
-      bindingRegistry: Pick<AgentRuntimeBindingRegistry, "resolve">;
+      bindingRegistry: Pick<AgentRuntimeBindingRegistry, "resolve" | "getBindingRevocationState">;
       providerAgentRuntimeTurns: ProviderAgentRuntimeTurnCoordinator;
       localPr?: LocalPrAgentRuntimeDeps;
     },
@@ -121,7 +121,11 @@ export class SessionManagementRuntimeService {
           "The captured binding or provider Turn ended.",
         );
     };
+    const isInstructions = operation === "get_instructions" || operation === "set_instructions";
     try {
+      // Instructions use both lifetimes at the Worker. Leave the existing admission of other operations unchanged.
+      const bindingState = isInstructions ? this.deps.bindingRegistry.getBindingRevocationState(binding) : null;
+      if (isInstructions && !bindingState) throw new RuntimeTurnInactiveError();
       const isLocalPr = isLocalPrAgentOperation(operation);
       const execute = () =>
         // Both public adapters enter the PR application only after standard binding and Turn admission.
@@ -152,6 +156,7 @@ export class SessionManagementRuntimeService {
         ? runWithRuntimeTurnAdmission(
             {
               state: admission.handle.revocationState,
+              ...(bindingState ? { binding: { state: bindingState, expiresAtMs: binding.expiresAt ? Date.parse(binding.expiresAt) : null } } : {}),
               isCurrent: () => {
                 try {
                   assertCurrent();
@@ -170,7 +175,9 @@ export class SessionManagementRuntimeService {
       if (!result.ok && isLocalPr && result.code === "SESSION_BINDING_INVALID") return { status: 401, value: result };
       return { status: result.ok ? 200 : 400, value: result };
     } catch (error) {
-      if (error instanceof RuntimeTurnInactiveError) return failure(401, "SESSION_BINDING_INVALID", "The captured provider Turn ended before the operation was applied.");
+      if (error instanceof RuntimeTurnInactiveError) return failure(401, "SESSION_BINDING_INVALID",
+        isInstructions ? "The captured binding or provider Turn ended before the operation was applied."
+          : "The captured provider Turn ended before the operation was applied.");
       if (SESSION_READ_OPERATIONS.includes(operation)) {
         try {
           assertCurrent();

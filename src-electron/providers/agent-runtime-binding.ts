@@ -75,6 +75,7 @@ type ActiveBinding = {
   record: AgentRuntimeBindingRecord;
   reference: string;
   authorityFingerprint: string;
+  revocationState: SharedArrayBuffer;
 };
 
 function hashBindingReference(reference: string): string {
@@ -193,6 +194,7 @@ export class AgentRuntimeBindingRegistry {
       record,
       reference: bindingReference,
       authorityFingerprint: nextAuthorityFingerprint,
+      revocationState: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
     };
     if (existing) {
       this.removeActiveBinding(key, existing);
@@ -309,6 +311,12 @@ export class AgentRuntimeBindingRegistry {
     return active.record.executionGeneration;
   }
 
+  /** Captures the shared revocation state of an already authenticated, exact binding. */
+  getBindingRevocationState(binding: ResolvedAgentRuntimeBinding): SharedArrayBuffer | null {
+    const active = this.bindingsByKey.get(bindingKey(binding.actorSessionId, binding.providerId));
+    return active?.record.executionGeneration === binding.executionGeneration ? active.revocationState : null;
+  }
+
   private project(active: ActiveBinding, transport: "env"): ProviderAgentRuntimeBindingProjection {
     return {
       bindingId: active.record.bindingId,
@@ -331,6 +339,8 @@ export class AgentRuntimeBindingRegistry {
   }
 
   private removeActiveBinding(key: string, active: ActiveBinding): void {
+    // Already-dispatched work must observe revocation even when the originating Turn stays active.
+    Atomics.store(new Int32Array(active.revocationState), 0, 1);
     this.bindingsByKey.delete(key);
     this.keysByReferenceHash.delete(active.record.bindingReferenceHash);
   }

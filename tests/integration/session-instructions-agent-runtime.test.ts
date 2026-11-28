@@ -52,6 +52,7 @@ test("bundled CLI and managed HTTP MCP only read and replace their bound Session
   const turns = new ProviderAgentRuntimeTurnCoordinator();
   const instructions = bundle.stores.instructions;
   let beforeWrite: (() => Promise<void>) | undefined;
+  let afterQueuedWrite: (() => void) | undefined;
   const unused = () => { throw new Error("Unexpected operation"); };
   const application = new SessionManagementApplication({
     readSessionScope: bundle.stores.session.readSessionManagementScope,
@@ -66,6 +67,19 @@ test("bundled CLI and managed HTTP MCP only read and replace their bound Session
     setInstructions: async (target, body) => {
       // Holding a write at its effect boundary lets the test revoke the original provider Turn.
       await beforeWrite?.();
+      if (afterQueuedWrite) {
+        // A fresh Worker cannot dispatch until the main thread processes its ready event.
+        const delayed = createV6StorageWorkerBundle({ dbPath: join(directory, APP_DATABASE_V6_FILENAME), userDataPath: directory });
+        try {
+          const request = delayed.stores.instructions.set(target, body);
+          afterQueuedWrite();
+          const saved = await request;
+          assert.ok(saved);
+          return saved;
+        } finally {
+          await delayed.client.close();
+        }
+      }
       const saved = await instructions.set(target, body);
       assert.ok(saved);
       return saved;
@@ -204,6 +218,19 @@ test("bundled CLI and managed HTTP MCP only read and replace their bound Session
     assert.equal(expired.code, "SESSION_BINDING_INVALID");
     assert.equal(expired.effect, "none");
     assert.equal(await instructions.get(auxTarget), "");
+
+    // Revoking only the binding after queueing the command must also block the pending write.
+    // Native completion can close the MCP connection without ending application-save admission.
+    runtime.managedMcp.closeConnection(mainRuntime.turn);
+    beforeWrite = undefined;
+    afterQueuedWrite = () => bindings.revokeProviderExecution(mainTarget.sessionId, "codex");
+    const bindingRevoked = await cliSet(mainRuntime, { body: "must not replace existing instructions" });
+    assert.equal(bindingRevoked.exit, 1, bindingRevoked.stdout);
+    assert.deepEqual(JSON.parse(bindingRevoked.stdout), {
+      ok: false, code: "SESSION_BINDING_INVALID", effect: "none",
+      message: "The captured binding or provider Turn ended before the operation was applied.",
+    });
+    assert.equal(turns.admit({ actorSessionId: mainTarget.sessionId, providerId: "codex", turnCapability: mainRuntime.turn.capability }).ok, true);
     assert.equal(await instructions.get(mainTarget), mainBody);
   } finally {
     await mainRuntime.client.close();

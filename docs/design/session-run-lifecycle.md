@@ -110,7 +110,7 @@ Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確�
 
 ローカルPRの`session.pr_*` MCPと`withmate-session pr-*` CLIも同じbound runtimeを使う。操作対象は資格情報が指す実行中TurnのSessionと、その保存済みWorkspaceから解決したrepositoryに限る。呼出側からSession・cwd・GUIで選択中のrepositoryを指定できない。AgentはPRを提出し、GUIのユーザー承認を待ってから、承認対象の版をWithMate PR経由でmergeする。承認・取消、下書き操作、GUIからの議論送信はAgent APIに公開しない。WithMate以外のGit操作は技術的に遮断しない。
 
-固定指示の取得はMCPの `session.get_instructions`／CLIの `withmate-session get-instructions`（入力 `{}`、成功 `{ok: true, body}`）。全置換は `session.set_instructions`／`withmate-session set-instructions`（JSON入力 `{"body":"..."}`、成功 `{ok: true, byteLength}`）を使う。対象は実行中Turnの認証済みSession自身に固定し、別Sessionの指定を受け付けない。MainとAuxiliaryの本文は独立し、本文は `self`／`get`／`list` の通常metadataや更新成功応答に含めない。必要なときだけ取得・更新する。
+固定指示の取得はMCPの `session.get_instructions`／CLIの `withmate-session get-instructions`（入力 `{}`、成功 `{ok: true, body}`）。全置換は `session.set_instructions`／`withmate-session set-instructions`（JSON入力 `{"body":"..."}`、成功 `{ok: true, byteLength}`）を使う。対象は実行中Turnの認証済みSession自身に固定し、別Sessionの指定を受け付けない。WorkerはbindingとTurnの失効を反映し、未確定の更新を拒否する。MainとAuxiliaryの本文は独立し、本文は `self`／`get`／`list` の通常metadataや更新成功応答に含めない。必要なときだけ取得・更新する。
 
 本文は空白・改行を含め、UTF-8で8,192バイトまで保存できる。超過時は保存内容を変えずに拒否する。空文字による解除を含め、保存した変更は次に開始するTurnから反映し、実行中Turnや保存済み履歴は変えない。更新結果が不明なときは再送前に保存本文を取得する。
 

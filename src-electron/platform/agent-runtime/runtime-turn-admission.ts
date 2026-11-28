@@ -1,7 +1,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-export type RuntimeTurnAdmission = {
+/** Serializable authority for work crossing the main/Worker boundary. */
+export type WorkerRuntimeTurnAdmission = {
   state: SharedArrayBuffer;
+  binding?: { state: SharedArrayBuffer; expiresAtMs: number | null };
+};
+
+export type RuntimeTurnAdmission = WorkerRuntimeTurnAdmission & {
   isCurrent?: () => boolean;
   /** Diagnostic-only; reporting must not alter the operation or its public response. */
   onOperationError?: (error: unknown) => void;
@@ -30,13 +35,19 @@ export function assertRuntimeTurnAdmission(): void {
   if (context && (
     context.isCurrent?.() === false
     || Atomics.load(new Int32Array(context.state), 0) !== 0
+    || (context.binding && (
+      Atomics.load(new Int32Array(context.binding.state), 0) !== 0
+      || (context.binding.expiresAtMs !== null && Date.now() >= context.binding.expiresAtMs)
+    ))
   )) {
     throw new RuntimeTurnInactiveError();
   }
 }
 
-export function currentRuntimeTurnAdmissionState(): SharedArrayBuffer | undefined {
-  return admission.getStore()?.state;
+/** Transfers only the shared revocation flags and expiry, not the credentials or callbacks. */
+export function currentWorkerRuntimeTurnAdmission(): WorkerRuntimeTurnAdmission | undefined {
+  const context = admission.getStore();
+  return context && { state: context.state, ...(context.binding ? { binding: context.binding } : {}) };
 }
 
 /** Accepted durable work is no longer owned by the initiating runtime Turn. */
