@@ -5883,7 +5883,9 @@ function datetime(params) {
 	return /* @__PURE__ */ _isoDateTime(ZodISODateTime, params);
 }
 // src-shared/glossary/glossary-contract.ts
+/** 用語集ランタイムの通信に含める版。YAML自体の版とは別に扱う。 */
 var GLOSSARY_RUNTIME_SCHEMA_VERSION = "withmate-glossary-v1";
+/** ファイル・登録件数・入力フィールド・一覧ページの処理上限。 */
 var GLOSSARY_LIMITS = {
 	maxFileBytes: 2097152,
 	maxEntries: 2e3,
@@ -5895,6 +5897,7 @@ var GLOSSARY_LIMITS = {
 	maxPageSize: 200
 };
 // src-shared/glossary/glossary-operation-schema.ts
+/** 対象の種類に応じてチェックアウトIDまたはパスを要求する通信スキーマ。 */
 var glossaryCheckoutSelectorSchema = discriminatedUnion("kind", [
 	object$1({ kind: literal("primary") }).strict(),
 	object$1({
@@ -5906,6 +5909,7 @@ var glossaryCheckoutSelectorSchema = discriminatedUnion("kind", [
 		path: string().min(1).max(8192)
 	}).strict()
 ]);
+/** 通信で受け取る語・別名・定義の型と粗い長さ制限。保存時の正規化とは別。 */
 var glossaryEntryInputSchema = object$1({
 	term: string().min(1).max(GLOSSARY_LIMITS.maxTermCodePoints * 4),
 	aliases: array(string().min(1).max(GLOSSARY_LIMITS.maxTermCodePoints * 4)).max(GLOSSARY_LIMITS.maxAliasesPerEntry).optional(),
@@ -5920,6 +5924,7 @@ var pageShape = {
 	offset: number().int().nonnegative().optional(),
 	pageSize: number().int().min(1).max(GLOSSARY_LIMITS.maxPageSize).optional()
 };
+/** 用語集操作ごとの通信入力。更新・削除には版と明示依頼の指定が必要。 */
 var glossaryOperationRequestSchemas = {
 	list_targets: object$1({
 		schemaVersion,
@@ -5952,6 +5957,7 @@ var glossaryOperationRequestSchemas = {
 	}).strict(),
 	validate: selectedRequest
 };
+/** 用語集操作名を、正規のバージョン付きHTTPパスに対応付ける。 */
 var GLOSSARY_RUNTIME_OPERATION_PATHS = {
 	list_targets: "/v1/glossary/list-targets",
 	list: "/v1/glossary/list",

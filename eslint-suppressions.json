@@ -834,16 +834,6 @@
       "count": 7
     }
   },
-  "src-shared/glossary/glossary-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 33
-    }
-  },
-  "src-shared/glossary/glossary-operation-schema.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 8
-    }
-  },
   "src-shared/ipc/withmate-ipc-channels.ts": {
     "jsdoc/require-jsdoc": {
       "count": 193
