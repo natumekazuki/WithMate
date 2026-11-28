@@ -161,7 +161,7 @@ export const localPrGuiInput = {
   save_draft: commentInput.extend({ commentId: id.optional() }),
   discard_draft: z.strictObject({ ...prId, commentId: id }),
   publish_drafts: z.strictObject({ ...prId, commentIds: z.array(id).min(1).max(50) }),
-  session_choices: z.strictObject({ query: z.string().max(300).optional(), offset: z.number().int().nonnegative().optional() }),
+  session_choices: z.strictObject({ query: z.string().max(300).optional(), offset: z.number().int().nonnegative().optional(), preferred: sessionTargetSchema.optional() }),
   discuss: z.strictObject({ ...prVersion, target: sessionTargetSchema, commentIds: z.array(id).max(50), message: text(20000), requestId: id }),
 } as const;
 
@@ -172,7 +172,7 @@ export const localPrGuiData = {
   save_draft: localPrCommentSchema,
   discard_draft: z.strictObject({ commentId: id }),
   publish_drafts: z.strictObject({ comments: z.array(localPrCommentSchema) }),
-  session_choices: z.strictObject({ sessions: z.array(z.strictObject({ target: sessionTargetSchema, title: z.string() })), hasMore: z.boolean() }),
+  session_choices: z.strictObject({ sessions: z.array(z.strictObject({ target: sessionTargetSchema, title: z.string(), character: z.string().optional(), iconPath: z.string().optional() })), hasMore: z.boolean() }),
   discuss: z.strictObject({ receiptId: z.string() }),
 } as const satisfies Record<keyof typeof localPrGuiInput, z.ZodType>;
 
@@ -197,7 +197,9 @@ export type LocalPrCiRun = z.infer<typeof localPrCiRunSchema>;
 /** Renderer calls have a fixed repository/source Session on the Main-owned Window. */
 export type LocalPrWindowApi = {
   execute<T extends LocalPrOperation>(operation: T, input: LocalPrInput<T>): Promise<LocalPrResult<T>>;
-  pickImage(): Promise<string | null>;
+  pickAttachment(kind: "file" | "folder" | "image" | "session-copy" | "session-file" | "session-folder" | "session-image"): Promise<string[]>;
+  savePastedFile(request: Omit<import("../window/withmate-window-types.js").SavePastedSessionFileRequest, "sessionId">): Promise<import("../window/withmate-window-types.js").SavePastedSessionFileResult>;
+  isClipboardFileBacked(file: File): boolean;
   inspectImage(target: string): Promise<SessionFileDescriptor>;
   readImageChunk(request: Omit<SessionImageChunkRequest, "sessionId" | "baseResource">): Promise<SessionFileChunkResult>;
   subscribeChanged(listener: () => void): () => void;

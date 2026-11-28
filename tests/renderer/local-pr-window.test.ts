@@ -68,6 +68,7 @@ test("local PR labels, dates, and independent window refreshes retain their boun
   let fail = false;
   let reads = 0;
   const merges: unknown[] = [];
+  const picked: string[] = [];
   let finishMerge: (() => void) | undefined;
   let finishLog: (() => void) | undefined;
   const execute = async (operation: string, input: unknown) => {
@@ -145,11 +146,20 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     }
     if (operation === "pr_branches")
       return { ok: true, data: { branches: [], head: null, headBranch: null } };
+    if (operation === "session_choices") {
+      const request = input as { query?: string; offset?: number };
+      const entries = Array.from({ length: 51 }, (_, index) => ({ target: { ...author, sessionId: `agent-${index}` }, title: `Session ${index}`, character: `Character ${index}`, iconPath: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" }))
+        .filter((entry) => `${entry.title} ${entry.character}`.toLowerCase().includes((request.query ?? "").toLowerCase()));
+      const offset = request.offset ?? 0;
+      return { ok: true, data: { sessions: entries.slice(offset, offset + 50), hasMore: entries.length > offset + 50 } };
+    }
     return { ok: true, data: { sessions: [], hasMore: false } };
   };
   const api: LocalPrWindowApi = {
     execute: execute as unknown as LocalPrWindowApi["execute"],
-    pickImage: async () => null,
+    pickAttachment: async (kind) => { picked.push(kind); return ["C:/fixture/review.png"]; },
+    savePastedFile: async () => "C:/fixture.png",
+    isClipboardFileBacked: () => false,
     inspectImage: async () => { throw new Error("No image in this fixture."); },
     readImageChunk: async () => { throw new Error("No image in this fixture."); },
     subscribeChanged(callback) {
@@ -209,6 +219,22 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     assert.match(first.textContent ?? "", /src\/my-file\.ts\s*Modified/);
     await act(async () => button("Send to Agent").click());
     assert.equal(first.querySelectorAll("dialog[open]").length, 1);
+    const agent = Array.from(first.querySelectorAll<HTMLButtonElement>(".local-pr-session-choices button"))[0];
+    assert.ok(agent?.querySelector(".character-avatar img"));
+    await act(async () => agent.click());
+    assert.equal(agent.getAttribute("aria-pressed"), "true");
+    await act(async () => button("Next").click());
+    assert.match(first.querySelector(".local-pr-session-choices")?.textContent ?? "", /Session 50/);
+    assert.equal(first.querySelector(".local-pr-session-choices button")?.getAttribute("aria-pressed"), "false");
+    const search = first.querySelector<HTMLInputElement>("input[maxlength='300']");
+    assert.ok(search);
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
+      setter?.call(search, "Character 42");
+      search.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    assert.match(first.querySelector(".local-pr-session-choices")?.textContent ?? "", /Session 42/);
     await act(async () => button("Cancel").click());
     assert.equal(first.querySelectorAll("dialog").length, 0);
     await act(async () => {
@@ -320,6 +346,22 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     });
     assert.match(first.textContent ?? "", /Merged/);
     assert.doesNotMatch(first.textContent ?? "", /Target Branch Has Changed/);
+    await act(async () => button("New PR").click());
+    const attach = first.querySelector<HTMLButtonElement>("button[aria-label='Attach']");
+    assert.ok(attach);
+    await act(async () => attach.click());
+    assert.equal(dom.window.document.querySelectorAll("[role='menuitem']").length, 7);
+    const image = dom.window.document.querySelector<HTMLButtonElement>("[aria-label='Attach the original image as a reference']");
+    assert.ok(image);
+    const previousAnimationFrame = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = (callback) => { callback(0); return 0; };
+    try {
+      await act(async () => image.click());
+      assert.deepEqual(picked, ["image"]);
+      assert.match(first.querySelector<HTMLTextAreaElement>("textarea[aria-labelledby='local-pr-description-label']")?.value ?? "", /review\.png/);
+    } finally {
+      globalThis.requestAnimationFrame = previousAnimationFrame;
+    }
   } finally {
     await act(async () => roots.forEach((root) => root.unmount()));
     await vite.close();

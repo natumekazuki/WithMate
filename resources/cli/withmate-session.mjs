@@ -6134,7 +6134,8 @@ var localPrAgentData = {
 	commentIds: array(id$2).min(1).max(50)
 }), strictObject({
 	query: string().max(300).optional(),
-	offset: number().int().nonnegative().optional()
+	offset: number().int().nonnegative().optional(),
+	preferred: sessionTargetSchema.optional()
 }), strictObject({
 	...prVersion,
 	target: sessionTargetSchema,
@@ -6145,7 +6146,9 @@ var localPrAgentData = {
 ({ ...localPrAgentData }), strictObject({ commentId: id$2 }), strictObject({ comments: array(localPrCommentSchema) }), strictObject({
 	sessions: array(strictObject({
 		target: sessionTargetSchema,
-		title: string()
+		title: string(),
+		character: string().optional(),
+		iconPath: string().optional()
 	})),
 	hasMore: boolean()
 }), strictObject({ receiptId: string() });

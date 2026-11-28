@@ -807,30 +807,44 @@ async function chooseLocalPrSessions(repository: LocalPrRepository, input: Local
   const mains = await owner.sessionStorage.listSessionSummaries();
   const query = input.query?.trim().toLowerCase() ?? "";
   const active = mains.filter((session) => session.sessionKind === "default" && session.accessMode === "active");
-  const matches = new Map<string, Promise<boolean>>();
-  for (const session of active) {
-    if (!matches.has(session.workspacePath)) matches.set(session.workspacePath, resolveLocalPrRepository(session.workspacePath).then(
-      (value) => value.repositoryId === repository.repositoryId,
-      () => false,
-    ));
+  const parents = new Map(active.map((session) => [session.id, session]));
+  const candidates: Array<{ workspacePath: string; target: SessionTarget; title: string; character: string; iconPath: string }> = [];
+  for (const main of active) {
+    if (`${main.taskTitle} ${main.character}`.toLowerCase().includes(query)) candidates.push({ workspacePath: main.workspacePath, title: main.taskTitle, character: main.character, iconPath: main.characterIconPath, target: { kind: "main", sessionId: main.id, incarnationId: getSessionIncarnationId(main) } });
   }
-  const eligible = new Map<string, (typeof active)[number]>();
-  for (const session of active) {
-    if (await matches.get(session.workspacePath)) eligible.set(session.id, session);
+  // Bound SQLite parameters even when the user has thousands of saved Sessions.
+  const auxiliaries = [];
+  for (let start = 0; start < active.length; start += 500) {
+    auxiliaries.push(...await requireAuxiliarySessionService().listAuxiliarySessionSummaries(active.slice(start, start + 500).map((session) => session.id)));
   }
-  const sessions: Array<{ target: SessionTarget; title: string }> = [];
-  for (const main of eligible.values()) {
-    if (main.taskTitle.toLowerCase().includes(query)) sessions.push({ title: main.taskTitle, target: { kind: "main", sessionId: main.id, incarnationId: getSessionIncarnationId(main) } });
-  }
-  const auxiliaries = await requireAuxiliarySessionService().listAuxiliarySessionSummaries([...eligible.keys()]);
   for (const auxiliary of auxiliaries) {
-    const parent = eligible.get(auxiliary.parentSessionId);
-    if (parent && `${parent.taskTitle} / ${auxiliary.title}`.toLowerCase().includes(query)) sessions.push({ title: `${parent.taskTitle} / ${auxiliary.title}`, target: {
+    const parent = parents.get(auxiliary.parentSessionId);
+    if (parent && `${parent.taskTitle} / ${auxiliary.title} ${auxiliary.character ?? parent.character}`.toLowerCase().includes(query)) candidates.push({ workspacePath: parent.workspacePath, title: `${parent.taskTitle} / ${auxiliary.title}`, character: auxiliary.character ?? parent.character, iconPath: auxiliary.characterIconPath ?? parent.characterIconPath, target: {
       kind: "auxiliary", sessionId: auxiliary.id, incarnationId: auxiliary.createdAt, mainSessionId: parent.id, mainIncarnationId: getSessionIncarnationId(parent),
     } });
   }
-  assertPersistentStoreOwnerIsActive(owner, "PR Session choices");
+  const isPreferred = (target: SessionTarget) => target.kind === input.preferred?.kind
+    && target.sessionId === input.preferred.sessionId
+    && target.incarnationId === input.preferred.incarnationId
+    && (target.kind === "main" || (input.preferred.kind === "auxiliary" && target.mainSessionId === input.preferred.mainSessionId && target.mainIncarnationId === input.preferred.mainIncarnationId));
+  candidates.sort((a, b) => Number(isPreferred(b.target)) - Number(isPreferred(a.target)));
   const offset = input.offset ?? 0;
+  const matches = new Map<string, Promise<boolean>>();
+  const sessions: Array<{ target: SessionTarget; title: string; character: string; iconPath: string }> = [];
+  // Resolve only enough candidates for the requested page, with bounded Git concurrency.
+  for (let start = 0; start < candidates.length && sessions.length <= offset + 50; start += 16) {
+    const batch = candidates.slice(start, start + 16);
+    const results = await Promise.all(batch.map((candidate) => {
+      let match = matches.get(candidate.workspacePath);
+      if (!match) {
+        match = resolveLocalPrRepository(candidate.workspacePath).then((value) => value.repositoryId === repository.repositoryId, () => false);
+        matches.set(candidate.workspacePath, match);
+      }
+      return match;
+    }));
+    batch.forEach(({ workspacePath: _workspacePath, ...candidate }, index) => { if (results[index]) sessions.push(candidate); });
+  }
+  assertPersistentStoreOwnerIsActive(owner, "PR Session choices");
   return { ok: true, data: { sessions: sessions.slice(offset, offset + 50), hasMore: sessions.length > offset + 50 } };
 }
 
@@ -863,7 +877,21 @@ const localPrWindowService: LocalPrWindowService<LocalPrRepository> = new LocalP
   }),
   loadWindow: (window) => requireWindowEntryLoader().loadLocalPrEntry(window),
   application: localPrApplication,
-  pickImage: (window, workspacePath) => requireWindowDialogService().pickImageFile(window, workspacePath),
+  savePastedFile: savePastedSessionFile,
+  pickAttachment: async (window, workspacePath, sessionId, kind, assertCurrent) => {
+    if (kind === "session-file") return pickSessionFiles(window, sessionId);
+    if (kind === "session-folder") { const path = await pickSessionFolder(window, sessionId); return path ? [path] : []; }
+    if (kind === "session-image") { const path = await pickSessionImageFile(window, sessionId); return path ? [path] : []; }
+    if (kind === "session-copy") {
+      const paths = await requireWindowDialogService().pickFiles(window, workspacePath);
+      await assertCurrent();
+      return paths.length ? copyFilesToSessionFiles(sessionId, paths) : [];
+    }
+    const path = kind === "folder" ? await requireWindowDialogService().pickDirectory(window, workspacePath)
+      : kind === "image" ? await requireWindowDialogService().pickImageFile(window, workspacePath)
+      : await requireWindowDialogService().pickFile(window, workspacePath);
+    return path ? [path] : [];
+  },
   imageReader: createSessionFileExplorerService,
 });
 

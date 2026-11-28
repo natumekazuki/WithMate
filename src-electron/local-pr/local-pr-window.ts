@@ -2,7 +2,8 @@ import { BrowserWindow, dialog, type IpcMainInvokeEvent } from "electron";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import { localPrGuiInput, type LocalPrData, type LocalPrInput, type LocalPrOperation, type LocalPrResult } from "../../src-shared/local-pr/local-pr-contract.js";
-import { LOCAL_PR_CHANGED, LOCAL_PR_EXECUTE, LOCAL_PR_INSPECT_IMAGE, LOCAL_PR_OPEN_WINDOW, LOCAL_PR_PICK_IMAGE, LOCAL_PR_READ_IMAGE_CHUNK, localPrImageChunkInput, localPrImageInput, openLocalPrWindowInput } from "../../src-shared/local-pr/local-pr-ipc.js";
+import { LOCAL_PR_CHANGED, LOCAL_PR_EXECUTE, LOCAL_PR_INSPECT_IMAGE, LOCAL_PR_OPEN_WINDOW, LOCAL_PR_PICK_ATTACHMENT, LOCAL_PR_READ_IMAGE_CHUNK, LOCAL_PR_SAVE_PASTED_FILE, localPrAttachmentKind, localPrPastedFileInput, localPrImageChunkInput, localPrImageInput, openLocalPrWindowInput } from "../../src-shared/local-pr/local-pr-ipc.js";
+import type { SavePastedSessionFileRequest, SavePastedSessionFileResult } from "../../src-shared/window/withmate-window-types.js";
 import type { MainSessionTarget } from "../../src-shared/session/session-target.js";
 import { assertNotHtmlPreviewSender } from "../files/html-preview-isolation.js";
 import type { SessionFileExplorerService } from "../files/session-file-explorer-service.js";
@@ -23,19 +24,29 @@ export class LocalPrWindowService<Repo extends Repository> {
     createWindow(): BrowserWindow;
     loadWindow(window: BrowserWindow): Promise<void>;
     application: Pick<LocalPrApplication<Repo>, "execute">;
-    pickImage(window: BrowserWindow, workspacePath: string): Promise<string | null>;
+    pickAttachment(window: BrowserWindow, workspacePath: string, sessionId: string, kind: ReturnType<typeof localPrAttachmentKind.parse>, assertCurrent: () => Promise<void>): Promise<string[]>;
+    savePastedFile(request: SavePastedSessionFileRequest): Promise<SavePastedSessionFileResult>;
     imageReader(): Pick<SessionFileExplorerService, "inspectImage" | "readImageChunk">;
   }) {}
 
   /** Register only narrow IPC with a separate renderer and explicit main-frame checks. */
   register(ipc: IpcHandleRegistrar): void {
     ipc.handle(LOCAL_PR_OPEN_WINDOW, (event, raw) => this.open(event, openLocalPrWindowInput.parse(raw)));
-    ipc.handle(LOCAL_PR_PICK_IMAGE, async (event) => {
+    ipc.handle(LOCAL_PR_SAVE_PASTED_FILE, async (event, raw) => {
       const { entry, assertCurrent } = this.requirePrWindow(event);
+      const input = localPrPastedFileInput.parse(raw);
       await assertCurrent();
-      const result = await this.deps.pickImage(entry.window, entry.source.repository.workspacePath);
+      const result = await this.deps.savePastedFile({ ...input, sessionId: entry.source.actor.sessionId });
       await assertCurrent();
       return result;
+    });
+    ipc.handle(LOCAL_PR_PICK_ATTACHMENT, async (event, raw) => {
+      const { entry, assertCurrent } = this.requirePrWindow(event);
+      const kind = localPrAttachmentKind.parse(raw);
+      await assertCurrent();
+      const paths = await this.deps.pickAttachment(entry.window, entry.source.repository.workspacePath, entry.source.actor.sessionId, kind, assertCurrent);
+      await assertCurrent();
+      return paths;
     });
     ipc.handle(LOCAL_PR_INSPECT_IMAGE, async (event, raw) => {
       const { entry, assertCurrent } = this.requirePrWindow(event);

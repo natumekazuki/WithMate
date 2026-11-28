@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithRef, type CSSProperties, type ReactNode } from "react";
 import { ChatDockSplitter } from "../chat/chat-window.js";
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
+import { CharacterAvatar } from "../ui/ui-utils.js";
 import { commentThreads, isSameSession, unifiedReviewRows } from "./local-pr-review.js";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
@@ -21,7 +22,7 @@ import "./local-pr.css";
 type Mode = "full" | "previous";
 type Tab = "overview" | "changes" | "checks";
 type Failure = { message: string; effect: "none" | "unknown" };
-type OpenReview = { commentIds: string[]; version: number };
+type OpenReview = { commentIds: string[]; version: number; message?: string };
 
 const prStateLabels: Record<LocalPrDetail["state"], string> = {
   open: "Open",
@@ -317,9 +318,9 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
     setTab("overview");
   }
 
-  function startReview(commentIds: string[], reviewVersion: number) {
+  function startReview(commentIds: string[], reviewVersion: number, message?: string) {
     setFailure(null);
-    setReview({ commentIds: pendingReview?.commentIds ?? commentIds, version: pendingReview?.version ?? reviewVersion });
+    setReview({ commentIds: pendingReview?.commentIds ?? commentIds, version: pendingReview?.version ?? reviewVersion, message });
   }
 
   return (
@@ -507,7 +508,7 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                     refresh={refresh}
                     run={run}
                     busy={busy || detail.loading || !!detail.error}
-                    openReview={(commentIds) => startReview(commentIds, currentVersion.version)}
+                    openReview={(commentIds, message) => startReview(commentIds, currentVersion.version, message)}
                     nameAgent={nameAgent}
                     initialComment={
                       anchorComment?.version === currentVersion.version
@@ -573,7 +574,7 @@ function Changes({
   run: Run;
   busy: boolean;
   initialComment: LocalPrComment | null;
-  openReview: (ids: string[]) => void;
+  openReview: (ids: string[], message?: string) => void;
   nameAgent: (target: SessionTarget) => string;
 }) {
   const [mode, setMode] = useState<Mode>(
@@ -793,6 +794,12 @@ function Changes({
                       }
                       className={`local-pr-code-row local-pr-row-${row.kind}${matched ? " local-pr-row-anchor" : ""}`}
                       style={{ transform: `translateY(${item.start}px)` }}
+                      onDoubleClick={(event) => {
+                        if (busy || event.target instanceof window.Element && event.target.closest("button")) return;
+                        const side = row.kind === "delete" ? "before" : "after";
+                        const number = side === "before" ? row.leftNumber : row.rightNumber;
+                        if (number != null) selectLine(side, number, event.shiftKey);
+                      }}
                     >
                       {(["before", "after"] as const).map((side) => {
                         const number = side === "before" ? row.leftNumber : row.rightNumber;
@@ -847,6 +854,15 @@ function Changes({
                     })
                   }
                 >Save Draft</ActionButton>
+                <ActionButton disabled={busy || !body.trim() || rangeError}
+                  onAction={() => run("save_draft", { prId: pr.id, version, body, anchor: draftAnchor }).then((result) => {
+                    if (result) {
+                      setBody("");
+                      setDraftAnchor(null);
+                      openReview([result.id], body);
+                    }
+                  })}
+                >Send to Agent</ActionButton>
                 <button disabled={busy} onClick={() => { setDraftAnchor(null); setRangeError(false); setBody(""); }}>Cancel</button>
               </div>
             </section>}
@@ -1475,13 +1491,19 @@ function SendReview({ api, pr, selection, pending, failure, busy, nameAgent, sen
 }) {
   const [preferences, setPreferences] = useState<{ selection: OpenReview; ids: string[] } | null>(null);
   const selected = pending?.commentIds ?? (preferences?.selection === selection ? preferences.ids : selection.commentIds);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(selection.message ?? "");
   const [query, setQuery] = useState("");
-  const [choice, setChoice] = useState<{ target: SessionTarget; title: string } | null>(null);
+  const [search, setSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [choice, setChoice] = useState<{ target: SessionTarget; title: string; character?: string; iconPath?: string } | null>(null);
   const [retry, setRetry] = useState(0);
-  const choicesLoad = useCallback(() => api.execute("session_choices", { query }), [api, query]);
-  const choices = useRead(`sessions:${query}`, choicesLoad, retry);
   const candidate = pr.versions.find((item) => item.version === selection.version)?.submittedBy;
+  useEffect(() => {
+    const timer = window.setTimeout(() => { setOffset(0); setSearch(query); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+  const choicesLoad = useCallback(() => api.execute("session_choices", { query: search, offset, preferred: candidate }), [api, search, offset, candidate]);
+  const choices = useRead(`sessions:${search}:${offset}`, choicesLoad, retry);
   const pendingChoice = pending && choices.data?.sessions.find((item) => isSameSession(item.target, pending.target));
   const recipient = pending ? pendingChoice : choice;
   const comments = [...pr.comments].sort((a, b) => b.version - a.version);
@@ -1500,23 +1522,21 @@ function SendReview({ api, pr, selection, pending, failure, busy, nameAgent, sen
         <h3 id="local-pr-send-heading">Send Review · v{selection.version}</h3>
         <button disabled={busy} onClick={onCancel}>{pending ? "Close" : "Cancel"}</button>
       </div>
-      <div className="local-pr-review-recipient">
-        <label>Find Session <input value={query} maxLength={300} disabled={!!pending || busy} onChange={(event) => { setQuery(event.target.value); setChoice(null); }} /></label>
-        <label>Send to Session
-          <select value={recipient ? JSON.stringify(recipient.target) : ""} disabled={!!pending || busy || choices.loading || !!choices.error} onChange={(event) => {
-            setChoice(choices.data?.sessions.find((item) => JSON.stringify(item.target) === event.target.value) ?? null);
-          }}>
-            <option value="">{pending ? pending.target.sessionId : "Select Session"}</option>
-            {choices.data?.sessions.map((item) => (
-              <option key={JSON.stringify(item.target)} value={JSON.stringify(item.target)}>
-                {item.title}{candidate && isSameSession(candidate, item.target) ? " · Submitted This Version" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+      <label>Find Session <input value={query} maxLength={300} disabled={!!pending || busy} onChange={(event) => { setQuery(event.target.value); setChoice(null); }} /></label>
+      {pending && <p>{pendingChoice?.title ?? pending.target.sessionId}</p>}
+      <div className="local-pr-session-choices" role="group" aria-label="Send to Session">
+        {choices.data?.sessions.map((item) => <button type="button" key={JSON.stringify(item.target)}
+          aria-pressed={!!recipient && isSameSession(item.target, recipient.target)} disabled={!!pending || busy || query !== search || choices.loading}
+          onClick={() => setChoice(item)}>
+          <CharacterAvatar character={{ name: item.character ?? item.title, iconPath: item.iconPath ?? "" }} size="tiny" />
+          <span><strong>{item.title}</strong><small>{item.character}{candidate && isSameSession(candidate, item.target) ? " · Submitted This Version" : ""}</small></span>
+        </button>)}
       </div>
+      {(offset > 0 || choices.data?.hasMore) && <div className="local-pr-actions">
+        <button disabled={busy || query !== search || choices.loading || offset === 0} onClick={() => { setChoice(null); setOffset((n) => Math.max(0, n - 50)); }}>Previous</button>
+        <button disabled={busy || query !== search || choices.loading || !choices.data?.hasMore} onClick={() => { setChoice(null); setOffset((n) => n + 50); }}>Next</button>
+      </div>}
       <ReadState state={choices} retry={() => setRetry((n) => n + 1)} />
-      {choices.data?.hasMore && <p>Refine the search to find more Sessions.</p>}
       {comments.length > 0 && <details className="local-pr-review-selection" open={!!selection.commentIds.length || !!pending || undefined}>
         <summary>{selected.length} {selected.length === 1 ? "Comment" : "Comments"} Selected</summary>
         <div className="local-pr-selected-comments">
