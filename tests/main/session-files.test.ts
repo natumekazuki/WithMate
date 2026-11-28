@@ -10,6 +10,7 @@ import {
   resolveSessionFilesDirectory,
 } from "../../src-electron/files/session-files.js";
 
+/** SessionFolder の新規作成と既存フォルダーの確保を分け、既存の資料を失わないことを確認する。 */
 describe("session files directory", () => {
   // @test-value v2
   // kind = "contract"
@@ -23,8 +24,11 @@ describe("session files directory", () => {
   // impact = "別Sessionの保存物を破壊せずcollisionを明示する"
   // distinction = "filesystemの既存file保持とpublic rejectionを同一testで確認する"
   // @end-test-value
+  /** 同じ Session ID の新規作成は衝突として拒否し、すでにあるファイルをそのまま残す。 */
   it("createSessionFilesDirectory は既存 SessionFolder を再利用しない", async () => {
-    const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-session-files-"));
+    const userDataPath = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-files-"),
+    );
     const sessionId = "launch-collision";
     const directoryPath = resolveSessionFilesDirectory(userDataPath, sessionId);
     const retainedFilePath = path.join(directoryPath, "result.txt");
@@ -58,17 +62,26 @@ describe("session files directory", () => {
   // impact = "初回turnで提供したpathを使用できないか、保存済みのSession filesを失う"
   // distinction = "新規作成の排他的な衝突検査とは異なる、既存Sessionのidempotentな補完を実filesystemで確認する"
   // @end-test-value
+  /** 確保処理はフォルダーを初回に作成し、二回目は同じパスを返して保存済みファイルを維持する。 */
   it("ensureSessionFilesDirectory は未作成なら作成し、既存内容を保持する", async () => {
-    const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-session-files-"));
+    const userDataPath = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-files-"),
+    );
     const sessionId = "launch-existing";
     const directoryPath = resolveSessionFilesDirectory(userDataPath, sessionId);
     const retainedFilePath = path.join(directoryPath, "result.txt");
 
     try {
-      assert.equal(ensureSessionFilesDirectory(userDataPath, sessionId), directoryPath);
+      assert.equal(
+        ensureSessionFilesDirectory(userDataPath, sessionId),
+        directoryPath,
+      );
       assert.equal((await stat(directoryPath)).isDirectory(), true);
       await writeFile(retainedFilePath, "retained", "utf8");
-      assert.equal(ensureSessionFilesDirectory(userDataPath, sessionId), directoryPath);
+      assert.equal(
+        ensureSessionFilesDirectory(userDataPath, sessionId),
+        directoryPath,
+      );
       assert.equal(await readFile(retainedFilePath, "utf8"), "retained");
     } finally {
       await rm(userDataPath, { recursive: true, force: true });

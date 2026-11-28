@@ -14,6 +14,7 @@ import test from "node:test";
 // lifecycle = "permanent"
 // distinction = "message rendering内容やscroll eventではなく、avatarの位置拘束とresponsive fallbackを確認する"
 // @end-test-value
+/** 仮想行の位置更新方式と、メッセージ一覧でアバターが追従する指定を確認する。狭い画面では追従を無効にする。 */
 test("長い assistant message の avatar stack は message list 内で row に拘束して追従する", async () => {
   const [componentSource, stylesSource] = await Promise.all([
     readFile("src/chat/conversation/session-message-column.tsx", "utf8"),

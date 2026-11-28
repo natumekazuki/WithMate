@@ -13,19 +13,60 @@ import { projectClaudeQuotaTelemetry } from "../../src-electron/providers/claude
 // lifecycle = "permanent"
 // distinction = "SDK型検査ではruntime応答から共通型への値変換を保証できない"
 // @end-test-value
+/** プラン別・モデル別の利用枠の期間と使用率を投影し、未提供のリセット日時は補わない。 */
 it("projects Claude plan and model windows without invented reset dates", () => {
-  const keys = ["five_hour", "seven_day", "seven_day_oauth_apps", "seven_day_opus", "seven_day_sonnet"];
-  const telemetry = projectClaudeQuotaTelemetry({ rate_limits_available: true, rate_limits: {
-    ...Object.fromEntries(keys.map((key, index) => [key, { utilization: index * 25, resets_at: null }])),
-    model_scoped: [{ display_name: "Fable", utilization: 32, resets_at: "2026-10-18T00:00:00Z" }],
-    extra_usage: { utilization: 50, used_credits: 12, monthly_limit: 20 },
-  } });
+  const keys = [
+    "five_hour",
+    "seven_day",
+    "seven_day_oauth_apps",
+    "seven_day_opus",
+    "seven_day_sonnet",
+  ];
+  const telemetry = projectClaudeQuotaTelemetry({
+    rate_limits_available: true,
+    rate_limits: {
+      ...Object.fromEntries(
+        keys.map((key, index) => [
+          key,
+          { utilization: index * 25, resets_at: null },
+        ]),
+      ),
+      model_scoped: [
+        {
+          display_name: "Fable",
+          utilization: 32,
+          resets_at: "2026-10-18T00:00:00Z",
+        },
+      ],
+      extra_usage: { utilization: 50, used_credits: 12, monthly_limit: 20 },
+    },
+  });
   assert.equal(telemetry?.status, "ready");
   assert.deepEqual(telemetry?.snapshots, []);
-  assert.deepEqual(telemetry?.rateLimits?.map(({ quotaKey, usedPercentage, resetDate, windowDurationMinutes }) => ({ quotaKey, usedPercentage, resetDate, windowDurationMinutes })), [
-    ...keys.map((quotaKey, index) => ({ quotaKey, usedPercentage: index * 25, resetDate: undefined, windowDurationMinutes: index ? 10_080 : 300 })),
-    { quotaKey: "model_scoped:Fable", usedPercentage: 32, resetDate: "2026-10-18T00:00:00Z", windowDurationMinutes: 10_080 },
-  ]);
+  assert.deepEqual(
+    telemetry?.rateLimits?.map(
+      ({ quotaKey, usedPercentage, resetDate, windowDurationMinutes }) => ({
+        quotaKey,
+        usedPercentage,
+        resetDate,
+        windowDurationMinutes,
+      }),
+    ),
+    [
+      ...keys.map((quotaKey, index) => ({
+        quotaKey,
+        usedPercentage: index * 25,
+        resetDate: undefined,
+        windowDurationMinutes: index ? 10_080 : 300,
+      })),
+      {
+        quotaKey: "model_scoped:Fable",
+        usedPercentage: 32,
+        resetDate: "2026-10-18T00:00:00Z",
+        windowDurationMinutes: 10_080,
+      },
+    ],
+  );
 });
 
 // @test-value v2
@@ -39,11 +80,27 @@ it("projects Claude plan and model windows without invented reset dates", () => 
 // lifecycle = "permanent"
 // distinction = "外部SDKのruntimeデータはTypeScriptの型だけでは検証できない"
 // @end-test-value
+/** 利用枠が非対応なら null を返し、利用可能とされた枠で欠損・範囲外・形式不正の値があれば拒否する。 */
 it("distinguishes unsupported Claude accounts from malformed available limits", () => {
-  assert.equal(projectClaudeQuotaTelemetry({ rate_limits_available: false, rate_limits: null }), null);
-  for (const rate_limits of [null, {}, { five_hour: { utilization: null, resets_at: null } },
-    ...[-1, 101, NaN, Infinity, "50"].map((utilization) => ({ five_hour: { utilization, resets_at: null } })),
-    { five_hour: { utilization: 50, resets_at: "invalid" } }, { model_scoped: {} }]) {
-    assert.throws(() => projectClaudeQuotaTelemetry({ rate_limits_available: true, rate_limits }));
+  assert.equal(
+    projectClaudeQuotaTelemetry({
+      rate_limits_available: false,
+      rate_limits: null,
+    }),
+    null,
+  );
+  for (const rate_limits of [
+    null,
+    {},
+    { five_hour: { utilization: null, resets_at: null } },
+    ...[-1, 101, NaN, Infinity, "50"].map((utilization) => ({
+      five_hour: { utilization, resets_at: null },
+    })),
+    { five_hour: { utilization: 50, resets_at: "invalid" } },
+    { model_scoped: {} },
+  ]) {
+    assert.throws(() =>
+      projectClaudeQuotaTelemetry({ rate_limits_available: true, rate_limits }),
+    );
   }
 });

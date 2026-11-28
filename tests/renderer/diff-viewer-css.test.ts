@@ -14,9 +14,11 @@ import test from "node:test";
 // lifecycle = "permanent"
 // distinction = "DOMの差分内容や実機スクロール操作ではなく、本文領域のCSS containment契約を確認する"
 // @end-test-value
+/** インライン差分の外枠が高さを親に揃え、残りの行高を本文側へ割り当てて外枠をはみ出さない CSS 宣言を確認する。 */
 test("DiffViewer の inline view は本文を高さ制約付きスクロール領域にする", async () => {
   const css = await readStylesheet();
-  const inlineViewRule = css.match(/\.diff-inline-view\s*\{(?<body>[^}]+)\}/)?.groups?.body ?? "";
+  const inlineViewRule =
+    css.match(/\.diff-inline-view\s*\{(?<body>[^}]+)\}/)?.groups?.body ?? "";
 
   assert.match(inlineViewRule, /display:\s*grid;/);
   assert.match(inlineViewRule, /grid-template-rows:\s*minmax\(0,\s*1fr\);/);
@@ -36,15 +38,25 @@ test("DiffViewer の inline view は本文を高さ制約付きスクロール�
 // impact = "長い変更行や追加・削除の空側があっても行単位の比較と原文の閲覧を維持する"
 // distinction = "既存のmode切替testとinline高さtestは本文CSSを検査しない。軽量な宣言検査で契約を守り、実寸・同期操作はbrowser描画確認で別途検証する"
 // @end-test-value
+/** 差分セルを固定の一行高で折り返さず、内側の幅と本文側の横スクロールで長い行を表示できる構成を確認する。 */
 test("DiffViewer の本文は折り返さず1行高で横スクロールする", async () => {
   const css = await readStylesheet();
-  const cellRule = css.match(/\.diff-line-number,\s*\.diff-pane-cell\s*\{(?<body>[^}]+)\}/)?.groups?.body ?? "";
-  const bodyRule = css.match(/\.diff-pane-body\s*\{(?<body>[^}]+)\}/)?.groups?.body ?? "";
-  const innerRule = css.match(/\.diff-pane-head-inner,\s*\.diff-pane-body-inner\s*\{(?<body>[^}]+)\}/)?.groups?.body ?? "";
+  const cellRule =
+    css.match(/\.diff-line-number,\s*\.diff-pane-cell\s*\{(?<body>[^}]+)\}/)
+      ?.groups?.body ?? "";
+  const bodyRule =
+    css.match(/\.diff-pane-body\s*\{(?<body>[^}]+)\}/)?.groups?.body ?? "";
+  const innerRule =
+    css.match(
+      /\.diff-pane-head-inner,\s*\.diff-pane-body-inner\s*\{(?<body>[^}]+)\}/,
+    )?.groups?.body ?? "";
 
   assert.match(cellRule, /white-space:\s*pre;/);
   assert.match(cellRule, /height:\s*calc\(1\.5em\s*\+\s*8px\);/);
   assert.match(bodyRule, /overflow-x:\s*auto;/);
   assert.match(innerRule, /width:\s*max-content;/);
-  assert.match(innerRule, /min-width:\s*calc\(100%\s*\+\s*var\(--diff-overflow-width,\s*0px\)\);/);
+  assert.match(
+    innerRule,
+    /min-width:\s*calc\(100%\s*\+\s*var\(--diff-overflow-width,\s*0px\)\);/,
+  );
 });

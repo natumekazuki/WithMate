@@ -3,7 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { ModelCatalogStorage, type CachedProviderModels } from "../../src-electron/settings/model-catalog-storage.js";
+import {
+  ModelCatalogStorage,
+  type CachedProviderModels,
+} from "../../src-electron/settings/model-catalog-storage.js";
 
 // @test-value v2
 // kind = "contract"
@@ -17,19 +20,37 @@ import { ModelCatalogStorage, type CachedProviderModels } from "../../src-electr
 // impact = "workspace切替または再起動後に別接続のモデル候補や不正なdepthを提示する"
 // distinction = "型検査とSQLite schema検査はJSON metadataの往復とcontext間の保存分離を検証しない"
 // @end-test-value
+/** 再オープン後もプロバイダーと接続先別に SDK 候補・既定深度などを保持し、指定プロバイダーの削除で他のキャッシュを残す。 */
 test("モデルcacheは接続contextを分離してSDK metadataを再open後も保持する", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-model-cache-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-model-cache-"),
+  );
   const dbPath = path.join(directory, "withmate.db");
   let storage = new ModelCatalogStorage(dbPath);
   const first: CachedProviderModels = {
     provider: {
-      id: "opencode", label: "OpenCode", defaultModelId: "sdk/model",
+      id: "opencode",
+      label: "OpenCode",
+      defaultModelId: "sdk/model",
       defaultReasoningEffort: "adaptive",
-      models: [{ id: "sdk/model", label: "SDK Model", sourceLabel: "SDK", reasoningEfforts: ["adaptive"], defaultReasoningEffort: "adaptive" }],
+      models: [
+        {
+          id: "sdk/model",
+          label: "SDK Model",
+          sourceLabel: "SDK",
+          reasoningEfforts: ["adaptive"],
+          defaultReasoningEffort: "adaptive",
+        },
+      ],
     },
-    contextKey: "workspace-a", fetchedAt: "2026-10-27T00:00:00.000Z",
+    contextKey: "workspace-a",
+    fetchedAt: "2026-10-27T00:00:00.000Z",
   };
-  const second = { ...first, contextKey: "workspace-b", provider: { ...first.provider, models: [] } };
+  const second = {
+    ...first,
+    contextKey: "workspace-b",
+    provider: { ...first.provider, models: [] },
+  };
   const other = { ...first, provider: { ...first.provider, id: "codex" } };
   try {
     assert.deepEqual(storage.getCatalog(), { providers: [] });

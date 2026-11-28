@@ -19,52 +19,210 @@ import { normalizeMessage } from "../../src-shared/session/session-state.js";
 // impact = "取得した出力の欠落・二重化と途中経過を確定回答として回収する誤認を防ぐ"
 // distinction = "stream表示・artifactの既存testは保存用共通出力単位と最終回答根拠を観測しない"
 // @end-test-value
+/** プロバイダーごとのメッセージ識別と最終回答の判定を確認し、未知の出力や失敗した Turn を既知の回答区分と混同しない。 */
 test("provider boundaries preserve identity, unknown phases and independent text finality", () => {
-  const codex = new CodexProjectionOwner({ sessionId: "session", threadId: "thread", turnId: "native", apiKey: "", progress: false });
-  const send = (method: string, item: object) => codex.apply({ method, params: { threadId: "thread", turnId: "native", item } });
-  send("item/completed", { type: "agentMessage", id: "progress", text: "working", phase: "commentary" });
-  send("item/completed", { type: "agentMessage", id: "partial-phase", text: "in progress answer", phase: "partial_answer" });
-  send("item/started", { type: "agentMessage", id: "answer", text: "draft", phase: "final_answer" });
-  send("item/completed", { type: "agentMessage", id: "answer", text: "answer", phase: "final_answer" });
-  send("item/completed", { type: "agentMessage", id: "unknown", text: "other", phase: "future_phase" });
-  codex.apply({ method: "turn/completed", params: { threadId: "thread", turn: { id: "native", status: "failed", error: { message: "after output" } } } });
+  const codex = new CodexProjectionOwner({
+    sessionId: "session",
+    threadId: "thread",
+    turnId: "native",
+    apiKey: "",
+    progress: false,
+  });
+  /** 共通のネイティブ Thread と Turn を補い、Codex の項目イベントを実投影へ渡す。 */
+  const send = (method: string, item: object) =>
+    codex.apply({
+      method,
+      params: { threadId: "thread", turnId: "native", item },
+    });
+  send("item/completed", {
+    type: "agentMessage",
+    id: "progress",
+    text: "working",
+    phase: "commentary",
+  });
+  send("item/completed", {
+    type: "agentMessage",
+    id: "partial-phase",
+    text: "in progress answer",
+    phase: "partial_answer",
+  });
+  send("item/started", {
+    type: "agentMessage",
+    id: "answer",
+    text: "draft",
+    phase: "final_answer",
+  });
+  send("item/completed", {
+    type: "agentMessage",
+    id: "answer",
+    text: "answer",
+    phase: "final_answer",
+  });
+  send("item/completed", {
+    type: "agentMessage",
+    id: "unknown",
+    text: "other",
+    phase: "future_phase",
+  });
+  codex.apply({
+    method: "turn/completed",
+    params: {
+      threadId: "thread",
+      turn: {
+        id: "native",
+        status: "failed",
+        error: { message: "after output" },
+      },
+    },
+  });
   const native = codex.finish([]);
   assert.equal(native.terminalStatus, "failed");
-  assert.deepEqual(native.output.units.map((unit) => [unit.id, unit.role, unit.completion, unit.final]), [["progress", "progress", "complete", false], ["partial-phase", "answer", "complete", false], ["answer", "answer", "complete", true], ["unknown", "unclassified", "complete", false]]);
+  assert.deepEqual(
+    native.output.units.map((unit) => [
+      unit.id,
+      unit.role,
+      unit.completion,
+      unit.final,
+    ]),
+    [
+      ["progress", "progress", "complete", false],
+      ["partial-phase", "answer", "complete", false],
+      ["answer", "answer", "complete", true],
+      ["unknown", "unclassified", "complete", false],
+    ],
+  );
   assert.equal(native.output.finality, "identified");
-  assert.equal(native.output.units.filter((unit) => unit.final).map((unit) => native.assistantText.slice(unit.start, unit.end)).join(), "answer");
+  assert.equal(
+    native.output.units
+      .filter((unit) => unit.final)
+      .map((unit) => native.assistantText.slice(unit.start, unit.end))
+      .join(),
+    "answer",
+  );
 
   const copilot = new CopilotOutputProjection();
-  const emit = (id: string, type: string, data: object) => copilot.apply({ id, type, data } as SessionEvent);
-  emit("start", "assistant.message_start", { messageId: "a", phase: "response" });
-  emit("delta", "assistant.message_delta", { messageId: "a", deltaContent: "draft" });
-  emit("delta", "assistant.message_delta", { messageId: "a", deltaContent: "draft" });
-  emit("done", "assistant.message", { messageId: "a", content: "same", phase: "response" });
+  /** イベント ID と種類の違いを保持し、Copilot のセッション投影へ入力する。 */
+  const emit = (id: string, type: string, data: object) =>
+    copilot.apply({ id, type, data } as SessionEvent);
+  emit("start", "assistant.message_start", {
+    messageId: "a",
+    phase: "response",
+  });
+  emit("delta", "assistant.message_delta", {
+    messageId: "a",
+    deltaContent: "draft",
+  });
+  emit("delta", "assistant.message_delta", {
+    messageId: "a",
+    deltaContent: "draft",
+  });
+  emit("done", "assistant.message", {
+    messageId: "a",
+    content: "same",
+    phase: "response",
+  });
   emit("done2", "assistant.message", { messageId: "b", content: "same" });
-  emit("draft2", "assistant.message_delta", { messageId: "c", deltaContent: "partial" });
-  emit("tool-child", "assistant.message", { messageId: "tool-child", content: "child text", parentToolCallId: "tool" });
-  copilot.apply({ id: "agent-child", type: "assistant.message", agentId: "child", data: { messageId: "agent-child", content: "child text" } } as SessionEvent);
+  emit("draft2", "assistant.message_delta", {
+    messageId: "c",
+    deltaContent: "partial",
+  });
+  emit("tool-child", "assistant.message", {
+    messageId: "tool-child",
+    content: "child text",
+    parentToolCallId: "tool",
+  });
+  copilot.apply({
+    id: "agent-child",
+    type: "assistant.message",
+    agentId: "child",
+    data: { messageId: "agent-child", content: "child text" },
+  } as SessionEvent);
   assert.equal(copilot.lastNonEmptyText, "partial");
   const projected = copilot.project();
   assert.equal(projected.assistantText, "same\n\nsame\n\npartial");
-  assert.deepEqual(projected.output.units.map((unit) => [unit.messageId, unit.phase, unit.completion, unit.final]), [["a", "response", "complete", false], ["b", null, "complete", false], ["c", null, "partial", false]]);
+  assert.deepEqual(
+    projected.output.units.map((unit) => [
+      unit.messageId,
+      unit.phase,
+      unit.completion,
+      unit.final,
+    ]),
+    [
+      ["a", "response", "complete", false],
+      ["b", null, "complete", false],
+      ["c", null, "partial", false],
+    ],
+  );
   assert.equal(projected.output.finality, "unknown");
-  emit("answer1", "assistant.message", { messageId: "d", content: "chunk one", originatingMessageId: "request", turnId: "native-final" });
-  emit("answer2", "assistant.message", { messageId: "e", content: "chunk two", originatingMessageId: "request", turnId: "native-final" });
+  emit("answer1", "assistant.message", {
+    messageId: "d",
+    content: "chunk one",
+    originatingMessageId: "request",
+    turnId: "native-final",
+  });
+  emit("answer2", "assistant.message", {
+    messageId: "e",
+    content: "chunk two",
+    originatingMessageId: "request",
+    turnId: "native-final",
+  });
   copilot.completeRequest("request");
-  assert.deepEqual(copilot.project().output.units.filter((unit) => unit.final).map((unit) => unit.id), ["d", "e"]);
+  assert.deepEqual(
+    copilot
+      .project()
+      .output.units.filter((unit) => unit.final)
+      .map((unit) => unit.id),
+    ["d", "e"],
+  );
 
   const opencode = new OpenCodeTurnProjection("root");
-  opencode.apply({ id: "text", type: "session.text.ended", data: { sessionID: "root", assistantMessageID: "one", ordinal: 0, text: "part one" } } as OpenCodeEvent);
+  opencode.apply({
+    id: "text",
+    type: "session.text.ended",
+    data: {
+      sessionID: "root",
+      assistantMessageID: "one",
+      ordinal: 0,
+      text: "part one",
+    },
+  } as OpenCodeEvent);
   assert.equal(opencode.output().output.finality, "unknown");
   opencode.replaceMessages([
-    { id: "one", type: "assistant", time: { created: 0, completed: 1 }, finish: "length", content: [{ type: "text", text: "part one" }] },
-    { id: "two", type: "assistant", time: { created: 1, completed: 2 }, finish: "stop", content: [{ type: "text", text: "part two" }, { type: "text", text: "tail" }] },
+    {
+      id: "one",
+      type: "assistant",
+      time: { created: 0, completed: 1 },
+      finish: "length",
+      content: [{ type: "text", text: "part one" }],
+    },
+    {
+      id: "two",
+      type: "assistant",
+      time: { created: 1, completed: 2 },
+      finish: "stop",
+      content: [
+        { type: "text", text: "part two" },
+        { type: "text", text: "tail" },
+      ],
+    },
   ] as SessionMessageInfo[]);
   const output = opencode.output();
   assert.equal(output.assistantText, "part one\n\npart two\n\ntail");
-  assert.deepEqual(output.output.units.map((unit) => unit.id), ["one:0", "two:0", "two:1"]);
+  assert.deepEqual(
+    output.output.units.map((unit) => unit.id),
+    ["one:0", "two:0", "two:1"],
+  );
   assert.equal(output.output.finality, "identified");
-  assert.deepEqual(output.output.units.filter((unit) => unit.final).map((unit) => unit.id), ["one:0", "two:0", "two:1"]);
-  assert.deepEqual(normalizeMessage({ role: "assistant", text: output.assistantText, output: output.output })?.output, output.output);
+  assert.deepEqual(
+    output.output.units.filter((unit) => unit.final).map((unit) => unit.id),
+    ["one:0", "two:0", "two:1"],
+  );
+  assert.deepEqual(
+    normalizeMessage({
+      role: "assistant",
+      text: output.assistantText,
+      output: output.output,
+    })?.output,
+    output.output,
+  );
 });

@@ -12,42 +12,78 @@ import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-
 import { openAppDatabase } from "../../src-electron/storage/sqlite-connection.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { SessionInstructionsTarget } from "../../src-shared/session/session-instructions.js";
-import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  getSessionIncarnationId,
+} from "../../src-shared/session/session-state.js";
 
 /** 列の追加を伴う移行、置換エラー、再オープンを経ても既存の会話が維持され、所有者間で指示が共有されないことを確認する。 */
 it("persists exact UTF-8 instructions for Main and Auxiliary through the storage worker", async () => {
   const userDataPath = await mkdtemp(join(tmpdir(), "withmate-instructions-"));
   const dbPath = join(userDataPath, APP_DATABASE_V6_FILENAME);
+  /** 同じ隔離 DB を対象に新しい Worker を開き、移行と永続化後の読み戻しを別の Worker 世代で検証する。 */
   const open = () => createV6StorageWorkerBundle({ dbPath, userDataPath });
   const parent = buildNewSession({
-    id: "main", taskTitle: "Main", workspacePath: userDataPath, workspaceLabel: "Workspace", branch: "",
-    characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#ffffff", sub: "#000000" },
+    id: "main",
+    taskTitle: "Main",
+    workspacePath: userDataPath,
+    workspaceLabel: "Workspace",
+    branch: "",
+    characterId: "mate",
+    character: "Mate",
+    characterIconPath: "",
+    characterThemeColors: { main: "#ffffff", sub: "#000000" },
     approvalMode: "on-request",
   });
   const auxiliary: AuxiliarySession = {
-    id: "aux", parentSessionId: parent.id, title: "Auxiliary", runState: "idle",
-    provider: "codex", catalogRevision: parent.catalogRevision, model: parent.model, reasoningEffort: parent.reasoningEffort,
-    approvalMode: parent.approvalMode, codexSandboxMode: parent.codexSandboxMode, codexSpeed: parent.codexSpeed, codexReviewer: parent.codexReviewer, customAgentName: "",
-    threadId: "aux-thread", composerDraft: "aux-draft", messages: [], displayAfterMessageIndex: null,
-    createdAt: "2026-11-28T06:00:00.000Z", updatedAt: "2026-11-28T06:00:00.000Z",
+    id: "aux",
+    parentSessionId: parent.id,
+    title: "Auxiliary",
+    runState: "idle",
+    provider: "codex",
+    catalogRevision: parent.catalogRevision,
+    model: parent.model,
+    reasoningEffort: parent.reasoningEffort,
+    approvalMode: parent.approvalMode,
+    codexSandboxMode: parent.codexSandboxMode,
+    codexSpeed: parent.codexSpeed,
+    codexReviewer: parent.codexReviewer,
+    customAgentName: "",
+    threadId: "aux-thread",
+    composerDraft: "aux-draft",
+    messages: [],
+    displayAfterMessageIndex: null,
+    createdAt: "2026-11-28T06:00:00.000Z",
+    updatedAt: "2026-11-28T06:00:00.000Z",
   };
   let bundle = open();
   try {
     // 既存の所有者行を持つ合成 V6 データベースを作り、機能追加前のスキーマを再現する。
     await bundle.initialize();
     const storedParent = await bundle.stores.session.upsertSession({
-      ...parent, threadId: "main-thread", messages: [{ role: "user", text: "saved message" }],
+      ...parent,
+      threadId: "main-thread",
+      messages: [{ role: "user", text: "saved message" }],
     });
-    const main = { kind: "main", sessionId: parent.id, incarnationId: getSessionIncarnationId(storedParent) } as const;
+    const main = {
+      kind: "main",
+      sessionId: parent.id,
+      incarnationId: getSessionIncarnationId(storedParent),
+    } as const;
     const aux: Extract<SessionInstructionsTarget, { kind: "auxiliary" }> = {
-      kind: "auxiliary", sessionId: auxiliary.id, incarnationId: auxiliary.createdAt,
-      mainSessionId: parent.id, mainIncarnationId: main.incarnationId,
+      kind: "auxiliary",
+      sessionId: auxiliary.id,
+      incarnationId: auxiliary.createdAt,
+      mainSessionId: parent.id,
+      mainIncarnationId: main.incarnationId,
     };
     await bundle.stores.auxiliary.upsertAuxiliarySession(auxiliary);
     await bundle.client.close();
     const db = openAppDatabase(dbPath);
     try {
-      db.exec("ALTER TABLE sessions_v6 DROP COLUMN instructions_json; ALTER TABLE auxiliary_sessions DROP COLUMN instructions_json");
+      db.exec(
+        "ALTER TABLE sessions_v6 DROP COLUMN instructions_json; ALTER TABLE auxiliary_sessions DROP COLUMN instructions_json",
+      );
     } finally {
       db.close();
     }
@@ -62,19 +98,35 @@ it("persists exact UTF-8 instructions for Main and Auxiliary through the storage
     assert.equal(Buffer.byteLength(limit), 8192);
     assert.deepEqual(await instructions.set(main, limit), { byteLength: 8192 });
     const auxBody = "  補助🧭\r\n末尾\u0000  ";
-    assert.deepEqual(await instructions.set(aux, auxBody), { byteLength: Buffer.byteLength(auxBody) });
-    await assert.rejects(instructions.set(main, limit + "x"), /8,192-byte limit/);
+    assert.deepEqual(await instructions.set(aux, auxBody), {
+      byteLength: Buffer.byteLength(auxBody),
+    });
+    await assert.rejects(
+      instructions.set(main, limit + "x"),
+      /8,192-byte limit/,
+    );
     await assert.rejects(instructions.set(aux, null), /must be text/);
-    for (const stale of [{ ...main, incarnationId: "stale" }, { ...aux, incarnationId: "stale" },
-      { ...aux, mainSessionId: "different-main" }, { ...aux, mainIncarnationId: "stale" }]) {
+    for (const stale of [
+      { ...main, incarnationId: "stale" },
+      { ...aux, incarnationId: "stale" },
+      { ...aux, mainSessionId: "different-main" },
+      { ...aux, mainIncarnationId: "stale" },
+    ]) {
       assert.equal(await instructions.get(stale), null);
       assert.equal(await instructions.set(stale, "not applied"), null);
     }
 
-    await session.setSessionTitle(main.sessionId, main.incarnationId, "Renamed Main");
+    await session.setSessionTitle(
+      main.sessionId,
+      main.incarnationId,
+      "Renamed Main",
+    );
     await auxiliaryStore.updateAuxiliaryTitleIfMatches({
-      auxiliarySessionId: auxiliary.id, parentSessionId: parent.id, createdAt: auxiliary.createdAt,
-      title: "Renamed Auxiliary", updatedAt: auxiliary.updatedAt,
+      auxiliarySessionId: auxiliary.id,
+      parentSessionId: parent.id,
+      createdAt: auxiliary.createdAt,
+      title: "Renamed Auxiliary",
+      updatedAt: auxiliary.updatedAt,
     });
     assert.equal(await instructions.get(main), limit);
     assert.equal(await instructions.get(aux), auxBody);
@@ -92,14 +144,18 @@ it("persists exact UTF-8 instructions for Main and Auxiliary through the storage
     await assert.rejects(pending, RuntimeTurnInactiveError);
     await bundle.initialize();
     const reopenedMain = await bundle.stores.session.getSession(parent.id);
-    const reopenedAux = await bundle.stores.auxiliary.getAuxiliarySession(auxiliary.id);
+    const reopenedAux = await bundle.stores.auxiliary.getAuxiliarySession(
+      auxiliary.id,
+    );
     assert.equal(reopenedMain?.messages[0]?.text, "saved message");
     assert.equal(reopenedMain?.threadId, "main-thread");
     assert.equal(reopenedAux?.threadId, "aux-thread");
     assert.equal(reopenedAux?.composerDraft, "aux-draft");
     assert.equal(await bundle.stores.instructions.get(main), limit);
     assert.equal(await bundle.stores.instructions.get(aux), auxBody);
-    assert.deepEqual(await bundle.stores.instructions.set(aux, ""), { byteLength: 0 });
+    assert.deepEqual(await bundle.stores.instructions.set(aux, ""), {
+      byteLength: 0,
+    });
     assert.equal(await bundle.stores.instructions.get(aux), "");
     assert.equal(await bundle.stores.instructions.get(main), limit);
   } finally {

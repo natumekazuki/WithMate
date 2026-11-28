@@ -13,6 +13,7 @@ import { resolveChatHeaderVisibility } from "../../src/chat/chat-header-visibili
 // scope = "main-header-capabilities"
 // lifecycle = "permanent"
 // @end-test-value
+/** 通常 Session は名前変更と削除を既定で表示し、削除できないときも名前変更は維持する。 */
 test("resolveChatHeaderVisibility は通常 session の header 操作を capability で返す", () => {
   assert.deepEqual(resolveChatHeaderVisibility({}), {
     showRenameButton: true,
@@ -34,12 +35,16 @@ test("resolveChatHeaderVisibility は通常 session の header 操作を capabil
 // scope = "auxiliary-header-capabilities"
 // lifecycle = "permanent"
 // @end-test-value
+/** Auxiliary 表示中は削除可能な親であっても、親の名前変更と削除をどちらも表示しない。 */
 test("resolveChatHeaderVisibility は Auxiliary mode で parent 操作を隠す", () => {
-  assert.deepEqual(resolveChatHeaderVisibility({
-    isAuxiliaryMode: true,
-    canDeleteSession: true,
-  }), {
-    showRenameButton: false,
-    showDeleteButton: false,
-  });
+  assert.deepEqual(
+    resolveChatHeaderVisibility({
+      isAuxiliaryMode: true,
+      canDeleteSession: true,
+    }),
+    {
+      showRenameButton: false,
+      showDeleteButton: false,
+    },
+  );
 });

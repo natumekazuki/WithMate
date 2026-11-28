@@ -2,13 +2,22 @@ import type { Element, Root, RootContent } from "hast";
 import rehypeKatex from "rehype-katex";
 import type { Plugin } from "unified";
 
+/** 既知の数式クラスを持つ要素が、自身または配下にあるかを判定する。 */
 function containsMath(node: RootContent): boolean {
   if (node.type !== "element") return false;
   const classes = node.properties.className;
-  return (Array.isArray(classes) && classes.some((value) => ["language-math", "math-inline", "math-display"].includes(String(value))))
-    || node.children.some(containsMath);
+  return (
+    (Array.isArray(classes) &&
+      classes.some((value) =>
+        ["language-math", "math-inline", "math-display"].includes(
+          String(value),
+        ),
+      )) ||
+    node.children.some(containsMath)
+  );
 }
 
+/** 同じソース位置と属性を持つ数式ブロックの描画結果を再利用し、後段にはコピーを渡す。 */
 export function createKatexProjectionPlugin(): Plugin<[], Root> {
   const render = rehypeKatex();
   let retained = new Map<string, RootContent[]>();

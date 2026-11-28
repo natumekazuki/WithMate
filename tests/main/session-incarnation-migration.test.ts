@@ -19,28 +19,49 @@ import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.
 // impact = "既存データ更新時に会話本文を失うか、再作成会話へ旧ownerの操作を誤適用する"
 // distinction = "新規DBの競合testと異なり旧列構成を実SQLiteで再現し、再openと再作成を同じ永続データ上で検証する"
 // @end-test-value
+/** 旧 V6 DB で incarnation 列を補完しても本文の読み書きができ、同じ Session ID を再作成した場合は旧所有者と区別する。 */
 test("既存V6 Sessionのincarnation移行は本文を維持し再作成ownerを区別する", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "withmate-incarnation-migration-"));
+  const directory = await mkdtemp(
+    path.join(tmpdir(), "withmate-incarnation-migration-"),
+  );
   const dbPath = path.join(directory, "app.db");
   let sessions = new SessionStorageV6(dbPath);
   try {
     const initial = sessions.insertSession({
-      ...buildNewSession({ id: "legacy-session", taskTitle: "Legacy", workspaceLabel: "workspace",
-        workspacePath: "C:/workspace", branch: "main", characterId: "character-a", character: "A",
-        characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request" }),
-      messages: [{ role: "user", text: "user" }, { role: "assistant", text: "assistant" }],
+      ...buildNewSession({
+        id: "legacy-session",
+        taskTitle: "Legacy",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "character-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: "on-request",
+      }),
+      messages: [
+        { role: "user", text: "user" },
+        { role: "assistant", text: "assistant" },
+      ],
     });
     sessions.close();
     const db = new DatabaseSync(dbPath);
     try {
       db.exec("ALTER TABLE sessions_v6 DROP COLUMN incarnation_id");
-    } finally { db.close(); }
+    } finally {
+      db.close();
+    }
     sessions = new SessionStorageV6(dbPath);
     const migrated = sessions.getSession(initial.id);
     assert.ok(migrated);
     assert.equal(migrated.incarnationId, `legacy:${initial.id}`);
     assert.deepEqual(migrated.messages, initial.messages);
-    assert.equal(sessions.updateSession({ ...migrated, threadId: "updated-legacy-thread" }).threadId, "updated-legacy-thread");
+    assert.equal(
+      sessions.updateSession({ ...migrated, threadId: "updated-legacy-thread" })
+        .threadId,
+      "updated-legacy-thread",
+    );
     sessions.deleteSession(initial.id);
     const replacement = sessions.insertSession(initial);
     assert.notEqual(replacement.incarnationId, migrated.incarnationId);

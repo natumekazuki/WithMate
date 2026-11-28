@@ -11,25 +11,40 @@ import {
 import { FileRootChangesPane } from "./FileRootChangesPane.js";
 import { FileRootGitHistoryPane } from "./FileRootGitHistoryPane.js";
 import { SessionFileExplorerPane } from "./SessionFileExplorerPane.js";
-import { SessionDiffPreview, SessionFilePreview } from "./SessionFilePreview.js";
+import {
+  SessionDiffPreview,
+  SessionFilePreview,
+} from "./SessionFilePreview.js";
 import { useFileRootPreviewController } from "./use-file-root-preview-controller.js";
 import { useFileExplorerRefresh } from "./use-file-explorer-refresh.js";
 
-function formatGitHistoryComparisonSelector(selector: FileRootGitHistoryComparison["base"]): string {
+/** 履歴比較の選択元を HEAD、短縮コミット ID、または指定名で示す。 */
+function formatGitHistoryComparisonSelector(
+  selector: FileRootGitHistoryComparison["base"],
+): string {
   if (selector.kind === "head") return "HEAD";
-  if (selector.kind === "commit") return `Commit ${selector.objectId.slice(0, 7)}`;
+  if (selector.kind === "commit")
+    return `Commit ${selector.objectId.slice(0, 7)}`;
   return selector.name;
 }
 
-function formatGitHistoryDiffTitle(request: FileRootGitHistoryDiffRequest): string {
+/** ファイル差分ならパスを優先し、全体差分なら比較する参照または対象コミットを表示する。 */
+function formatGitHistoryDiffTitle(
+  request: FileRootGitHistoryDiffRequest,
+): string {
   if (isFileRootGitHistoryComparisonDiffRequest(request)) {
-    return request.relativePath
-      ?? `${formatGitHistoryComparisonSelector(request.comparison.base)} → ${formatGitHistoryComparisonSelector(request.comparison.target)}`;
+    return (
+      request.relativePath ??
+      `${formatGitHistoryComparisonSelector(request.comparison.base)} → ${formatGitHistoryComparisonSelector(request.comparison.target)}`
+    );
   }
   return request.relativePath ?? `Commit ${request.commitId.slice(0, 7)}`;
 }
 
-function formatGitHistoryDiffContext(request: FileRootGitHistoryDiffRequest): string | undefined {
+/** 履歴比較では比較方式と実際の両端コミットを示し、取得結果にあればマージベースも添える。 */
+function formatGitHistoryDiffContext(
+  request: FileRootGitHistoryDiffRequest,
+): string | undefined {
   if (!isFileRootGitHistoryComparisonDiffRequest(request)) return undefined;
   const mergeBase = request.comparison.mergeBaseCommitId
     ? ` · Merge Base ${request.comparison.mergeBaseCommitId.slice(0, 7)}`
@@ -37,6 +52,7 @@ function formatGitHistoryDiffContext(request: FileRootGitHistoryDiffRequest): st
   return `${request.comparison.mode === "branch" ? "Branch Changes" : "Direct Comparison"} · ${request.comparison.baseCommitId.slice(0, 7)} → ${request.comparison.targetCommitId.slice(0, 7)}${mergeBase}`;
 }
 
+/** Session とルート構成に対応するファイルタブとプレビューを組み立て、操作の所有元を共有する。 */
 export function useSessionFilesFeature(input: {
   api: WithMateWindowApi | null;
   activeRunSessionId: string | null;
@@ -48,7 +64,9 @@ export function useSessionFilesFeature(input: {
   relatedSessionIds: readonly string[];
 }) {
   const controller = useFileRootPreviewController(input);
-  const [activeTab, setActiveTab] = useState<"files" | "changes" | "history">("files");
+  const [activeTab, setActiveTab] = useState<"files" | "changes" | "history">(
+    "files",
+  );
   const rootsRevision = buildSessionFileExplorerRootsRevision({
     sessionId: input.activeRunSessionId,
     workspacePath: input.workspacePath,
@@ -64,19 +82,31 @@ export function useSessionFilesFeature(input: {
   });
   const { view, actions } = controller;
 
-  const openHistoryPreview = async (resource: SessionFileGitCommitResourceRequest): Promise<string | null> => {
+  /** 現在の Session のコミット上のファイルだけを別ウィンドウで開き、失敗した場合は理由を返す。 */
+  const openHistoryPreview = async (
+    resource: SessionFileGitCommitResourceRequest,
+  ): Promise<string | null> => {
     if (!input.api || resource.sessionId !== input.activeRunSessionId) {
       return "Git history file preview is not available for this session.";
     }
     try {
-      const result = await input.api.openSessionFilePreviewWindow({ kind: "resource", resource });
+      const result = await input.api.openSessionFilePreviewWindow({
+        kind: "resource",
+        resource,
+      });
       return result.status === "opened" ? null : result.message;
     } catch (error) {
-      return error instanceof Error ? error.message : "The Git history file preview could not be opened.";
+      return error instanceof Error
+        ? error.message
+        : "The Git history file preview could not be opened.";
     }
   };
 
-  function renderPane(composer: { canInsertPathReference: boolean; insertReferencePaths: (paths: string[]) => void }) {
+  /** 一覧・変更・履歴を接続し、パスの挿入は操作元が現在の Session と一致する場合だけ許す。 */
+  function renderPane(composer: {
+    canInsertPathReference: boolean;
+    insertReferencePaths: (paths: string[]) => void;
+  }) {
     return (
       <SessionFileExplorerPane
         api={input.api}
@@ -94,13 +124,19 @@ export function useSessionFilesFeature(input: {
         onRefreshChanges={() => refresh.refresh("changes")}
         onRefreshHistory={() => refresh.refresh("history")}
         onOpenFile={(request, openInWindow) => {
-          void actions.handleOpenFileRootFile(request, openInWindow).then((message) => {
-            if (message) window.alert(message);
-          });
+          void actions
+            .handleOpenFileRootFile(request, openInWindow)
+            .then((message) => {
+              if (message) window.alert(message);
+            });
         }}
         canInsertPathReference={composer.canInsertPathReference}
         onInsertPathReference={(ownerSessionId, absolutePath) => {
-          if (ownerSessionId !== input.activeRunSessionId || !composer.canInsertPathReference) return;
+          if (
+            ownerSessionId !== input.activeRunSessionId ||
+            !composer.canInsertPathReference
+          )
+            return;
           composer.insertReferencePaths([absolutePath]);
         }}
         renderChangesContent={(roots) => (
@@ -116,7 +152,7 @@ export function useSessionFilesFeature(input: {
             onOpenDiff={actions.handleShowFileRootDiff}
           />
         )}
-        historyContent={(
+        historyContent={
           <FileRootGitHistoryPane
             api={input.api}
             sessionId={input.activeRunSessionId}
@@ -127,20 +163,27 @@ export function useSessionFilesFeature(input: {
             onOpenDiff={actions.handleShowFileRootGitHistoryDiff}
             onRepositoryChange={actions.clearHistoryDiffPreview}
           />
-        )}
+        }
       />
     );
   }
 
+  /** 履歴差分、作業差分、ファイル本文の順に中央プレビューを選び、読込中も差分の文脈を表示する。 */
   function renderPreview(bindings: {
     onBack: () => void;
     onCopyText: (text: string) => void;
     onQuoteText: (text: string) => void;
   }) {
     const {
-      selectedFilePreview, selectedFileDiffScopes, selectedFileDiffAvailabilityMessage,
-      fileRootDiffPreview, fileRootDiffPendingPreview, fileRootDiffLoadingScope,
-      fileRootGitHistoryDiffPreview, fileRootGitHistoryDiffPendingPreview, fileRootGitHistoryDiffLoading,
+      selectedFilePreview,
+      selectedFileDiffScopes,
+      selectedFileDiffAvailabilityMessage,
+      fileRootDiffPreview,
+      fileRootDiffPendingPreview,
+      fileRootDiffLoadingScope,
+      fileRootGitHistoryDiffPreview,
+      fileRootGitHistoryDiffPendingPreview,
+      fileRootGitHistoryDiffLoading,
     } = view;
     const shared = {
       backNavigation: { label: "Back To Chat", onBack: bindings.onBack },
@@ -151,12 +194,20 @@ export function useSessionFilesFeature(input: {
       return (
         <SessionDiffPreview
           {...shared}
-          title={formatGitHistoryDiffTitle(fileRootGitHistoryDiffPendingPreview.request)}
-          contextLabel={formatGitHistoryDiffContext(fileRootGitHistoryDiffPendingPreview.request)}
+          title={formatGitHistoryDiffTitle(
+            fileRootGitHistoryDiffPendingPreview.request,
+          )}
+          contextLabel={formatGitHistoryDiffContext(
+            fileRootGitHistoryDiffPendingPreview.request,
+          )}
           previewRevision={fileRootGitHistoryDiffPendingPreview.generation}
           patch=""
           loading
-          onReload={() => actions.handleShowFileRootGitHistoryDiff(fileRootGitHistoryDiffPendingPreview.request)}
+          onReload={() =>
+            actions.handleShowFileRootGitHistoryDiff(
+              fileRootGitHistoryDiffPendingPreview.request,
+            )
+          }
           reloadPending
         />
       );
@@ -165,16 +216,39 @@ export function useSessionFilesFeature(input: {
       return (
         <SessionDiffPreview
           {...shared}
-          title={formatGitHistoryDiffTitle(fileRootGitHistoryDiffPreview.request)}
-          contextLabel={formatGitHistoryDiffContext(fileRootGitHistoryDiffPreview.request)}
+          title={formatGitHistoryDiffTitle(
+            fileRootGitHistoryDiffPreview.request,
+          )}
+          contextLabel={formatGitHistoryDiffContext(
+            fileRootGitHistoryDiffPreview.request,
+          )}
           previewRevision={fileRootGitHistoryDiffPreview.generation}
           patch={fileRootGitHistoryDiffPreview.patch}
-          onOpenPreview={fileRootGitHistoryDiffPreview.previewResource && !fileRootGitHistoryDiffPreview.comparison
-            ? () => openHistoryPreview(fileRootGitHistoryDiffPreview.previewResource!) : undefined}
-          onOpenBeforePreview={fileRootGitHistoryDiffPreview.previewBeforeResource
-            ? () => openHistoryPreview(fileRootGitHistoryDiffPreview.previewBeforeResource!) : undefined}
-          onOpenAfterPreview={fileRootGitHistoryDiffPreview.previewAfterResource
-            ? () => openHistoryPreview(fileRootGitHistoryDiffPreview.previewAfterResource!) : undefined}
+          onOpenPreview={
+            fileRootGitHistoryDiffPreview.previewResource &&
+            !fileRootGitHistoryDiffPreview.comparison
+              ? () =>
+                  openHistoryPreview(
+                    fileRootGitHistoryDiffPreview.previewResource!,
+                  )
+              : undefined
+          }
+          onOpenBeforePreview={
+            fileRootGitHistoryDiffPreview.previewBeforeResource
+              ? () =>
+                  openHistoryPreview(
+                    fileRootGitHistoryDiffPreview.previewBeforeResource!,
+                  )
+              : undefined
+          }
+          onOpenAfterPreview={
+            fileRootGitHistoryDiffPreview.previewAfterResource
+              ? () =>
+                  openHistoryPreview(
+                    fileRootGitHistoryDiffPreview.previewAfterResource!,
+                  )
+              : undefined
+          }
           onReload={actions.handleReloadFileRootGitHistoryDiff}
           reloadPending={fileRootGitHistoryDiffLoading}
         />
@@ -188,12 +262,16 @@ export function useSessionFilesFeature(input: {
           previewRevision={fileRootDiffPendingPreview.generation}
           patch=""
           loading
-          onOpenPreview={() => actions.handleOpenFileRootFile({
-            sessionId: fileRootDiffPendingPreview.sessionId,
-            rootId: fileRootDiffPendingPreview.rootId,
-            relativePath: fileRootDiffPendingPreview.relativePath,
-          })}
-          onReload={() => actions.handleShowFileRootDiff(fileRootDiffPendingPreview)}
+          onOpenPreview={() =>
+            actions.handleOpenFileRootFile({
+              sessionId: fileRootDiffPendingPreview.sessionId,
+              rootId: fileRootDiffPendingPreview.rootId,
+              relativePath: fileRootDiffPendingPreview.relativePath,
+            })
+          }
+          onReload={() =>
+            actions.handleShowFileRootDiff(fileRootDiffPendingPreview)
+          }
           reloadPending
         />
       );
@@ -205,11 +283,13 @@ export function useSessionFilesFeature(input: {
           title={`${fileRootDiffPreview.relativePath} · ${fileRootDiffPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
           previewRevision={fileRootDiffPreview.generation}
           patch={fileRootDiffPreview.patch}
-          onOpenPreview={() => actions.handleOpenFileRootFile({
-            sessionId: fileRootDiffPreview.sessionId,
-            rootId: fileRootDiffPreview.rootId,
-            relativePath: fileRootDiffPreview.relativePath,
-          })}
+          onOpenPreview={() =>
+            actions.handleOpenFileRootFile({
+              sessionId: fileRootDiffPreview.sessionId,
+              rootId: fileRootDiffPreview.rootId,
+              relativePath: fileRootDiffPreview.relativePath,
+            })
+          }
           onReload={actions.handleReloadFileRootDiff}
           reloadPending={fileRootDiffLoadingScope === fileRootDiffPreview.scope}
         />
@@ -223,7 +303,11 @@ export function useSessionFilesFeature(input: {
           request={selectedFilePreview}
           diffScopes={selectedFileDiffScopes}
           diffAvailabilityMessage={selectedFileDiffAvailabilityMessage}
-          onOpenDiff={selectedFileDiffScopes.length > 0 ? actions.handleOpenSelectedFileDiff : undefined}
+          onOpenDiff={
+            selectedFileDiffScopes.length > 0
+              ? actions.handleOpenSelectedFileDiff
+              : undefined
+          }
           diffLoadingScope={fileRootDiffLoadingScope}
         />
       );
@@ -232,11 +316,12 @@ export function useSessionFilesFeature(input: {
   }
 
   return {
-    isPreviewActive: view.selectedFilePreview !== null
-      || view.fileRootDiffPreview !== null
-      || view.fileRootDiffPendingPreview !== null
-      || view.fileRootGitHistoryDiffPreview !== null
-      || view.fileRootGitHistoryDiffPendingPreview !== null,
+    isPreviewActive:
+      view.selectedFilePreview !== null ||
+      view.fileRootDiffPreview !== null ||
+      view.fileRootDiffPendingPreview !== null ||
+      view.fileRootGitHistoryDiffPreview !== null ||
+      view.fileRootGitHistoryDiffPendingPreview !== null,
     closeFilePreviews: actions.closeFilePreviews,
     renderPane,
     renderPreview,

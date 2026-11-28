@@ -1,19 +1,25 @@
 import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
 import test from "node:test";
-import { startAgentRuntimeApi, type StartAgentRuntimeApiOptions } from "../../src-electron/platform/agent-runtime/runtime-api.js";
+import {
+  startAgentRuntimeApi,
+  type StartAgentRuntimeApiOptions,
+} from "../../src-electron/platform/agent-runtime/runtime-api.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  callAgentRuntime, resolveAgentRuntimeApi,
+  callAgentRuntime,
+  resolveAgentRuntimeApi,
   AgentRuntimeExchangeError,
   type AgentRuntimeConnection,
 } from "../../src-electron/platform/agent-runtime/runtime-client.js";
 import {
-  createAgentRuntimeChallenge, createAgentRuntimeOwnerChallenge, WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER,
+  createAgentRuntimeChallenge,
+  createAgentRuntimeOwnerChallenge,
+  WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER,
   WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
   WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES,
   WITHMATE_AGENT_RUNTIME_GENERATION_HEADER,
@@ -25,6 +31,7 @@ const apiSecret = "extension-test-api";
 const adapterSecret = "extension-test-adapter";
 const generation = "22222222-2222-4222-8222-222222222222";
 const applicationInstanceId = "11111111-1111-4111-8111-111111111111";
+/** 要求の処理開始や解放を他の Promise と同期するため、外から完了を通知できる待機点を返す。 */
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {
@@ -32,29 +39,58 @@ function deferred() {
   });
   return { promise, resolve };
 }
+/** 実ランタイムと検出済み接続を一時ディレクトリに作り、ルーターと同時実行条件だけをケース別に差し替える。 */
 async function fixture(
   route: NonNullable<StartAgentRuntimeApiOptions["routeAgentRuntimeExtension"]>,
   options: Partial<StartAgentRuntimeApiOptions> = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-extension-"));
   const server = await startAgentRuntimeApi({
-    applicationInstanceId, buildChannel: "development",
-    registryDirectoryPath: directory, runtimePathSecurity: async () => {},
-    agentRuntimeBindingRegistry: new AgentRuntimeBindingRegistry(), providerAgentRuntimeTurns: new ProviderAgentRuntimeTurnCoordinator(),
-    routeAgentRuntimeExtension: route, ...options,
+    applicationInstanceId,
+    buildChannel: "development",
+    registryDirectoryPath: directory,
+    /** 一時レジストリの実 ACL を変えず、要求の受付とルーティングを検証する。 */
+    runtimePathSecurity: async () => {},
+    agentRuntimeBindingRegistry: new AgentRuntimeBindingRegistry(),
+    providerAgentRuntimeTurns: new ProviderAgentRuntimeTurnCoordinator(),
+    routeAgentRuntimeExtension: route,
+    ...options,
   });
-  const resolved = await resolveAgentRuntimeApi({ env: {}, adapter: "mcp", registryRootDirectoryPath: directory,
-    applicationInstanceId, runtimeGenerationId: server.runtimeGenerationId });
-  if (resolved.kind !== "selected") { await server.stop(); throw new Error(JSON.stringify(resolved)); }
+  const resolved = await resolveAgentRuntimeApi({
+    env: {},
+    adapter: "mcp",
+    registryRootDirectoryPath: directory,
+    applicationInstanceId,
+    runtimeGenerationId: server.runtimeGenerationId,
+  });
+  if (resolved.kind !== "selected") {
+    await server.stop();
+    throw new Error(JSON.stringify(resolved));
+  }
   const connection = resolved.connection;
   return {
-    server: { async stop() { await server.stop(); await rm(directory, { recursive: true, force: true }); } },
+    server: {
+      /** リスナーを停止したあと、fixture が作成したレジストリだけを削除する。 */
+      async stop() {
+        await server.stop();
+        await rm(directory, { recursive: true, force: true });
+      },
+    },
     connection,
-    call: (path: string, body: unknown = {}) => callAgentRuntime(connection, { method: "POST", path, body },
-      { signal: AbortSignal.timeout(5000), exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH }),
+    /** 実クライアントで拡張交換経路に送り、応答がない場合は所定の時間で中止する。 */
+    call: (path: string, body: unknown = {}) =>
+      callAgentRuntime(
+        connection,
+        { method: "POST", path, body },
+        {
+          signal: AbortSignal.timeout(5000),
+          exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+        },
+      ),
   };
 }
 
+/** 実クライアントが自動で計算する本文長では再現できない条件を、HTTP fixture で指定して応答を観測する。 */
 function rawCall(
   connection: AgentRuntimeConnection,
   path: string,
@@ -80,8 +116,10 @@ function rawCall(
         headers: {
           "content-type": "application/json",
           [WITHMATE_AGENT_RUNTIME_NONCE_HEADER]: nonce,
-          [WITHMATE_AGENT_RUNTIME_GENERATION_HEADER]: connection.api.runtimeGenerationId,
-          [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER]: connection.api.applicationInstanceId,
+          [WITHMATE_AGENT_RUNTIME_GENERATION_HEADER]:
+            connection.api.runtimeGenerationId,
+          [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER]:
+            connection.api.applicationInstanceId,
           ...(length === null ? {} : { "content-length": length }),
         },
         signal: AbortSignal.timeout(5000),
@@ -108,7 +146,11 @@ function rawCall(
       if (information.statusCode !== 103) return;
       assert.equal(
         information.headers[WITHMATE_AGENT_RUNTIME_CHALLENGE_HEADER],
-        createAgentRuntimeChallenge(connection.api.apiSecret, connection.api.runtimeGenerationId, nonce),
+        createAgentRuntimeChallenge(
+          connection.api.apiSecret,
+          connection.api.runtimeGenerationId,
+          nonce,
+        ),
       );
       request.end(payload);
     });
@@ -126,6 +168,7 @@ function rawCall(
 // scope = "HTTP runtime clientとextension admission（application routeは待機を制御するfixture）"
 // lifecycle = "permanent"
 // @end-test-value
+/** 小さい Session 要求は既存の通常プールで五件並行し、満杯時は追加要求を送出せず、枠が戻れば成功する。 */
 test("five small Session calls share the existing normal request pool", async () => {
   const gate = deferred(),
     arrived = deferred();
@@ -183,6 +226,7 @@ test("five small Session calls share the existing normal request pool", async ()
 // scope = "authenticated extensionのsmall/large容量とGlossary dispatch admission"
 // lifecycle = "permanent"
 // @end-test-value
+/** Glossary・大きい本文・長さ不明の本文が同じ一枠を共有し、占有中でも通常の小さい Session 要求は通る。 */
 test("Glossary and large or unknown bodies retain their single shared slot", async () => {
   let gate = deferred(),
     entered = deferred();
@@ -238,6 +282,7 @@ test("Glossary and large or unknown bodies retain their single shared slot", asy
 // scope = "HTTP実受信cap・認証境界・small/large受信枠のlifetime"
 // lifecycle = "permanent"
 // @end-test-value
+/** 不正な長さ、上限超過、不正資格情報は処理へ渡さず、途中切断した受信枠を後続要求で再利用できることを確認する。 */
 test("declared lengths never bypass body caps or runtime credentials", async () => {
   let dispatches = 0;
   const runtime = await fixture(
@@ -296,8 +341,10 @@ test("declared lengths never bypass body caps or runtime credentials", async () 
             headers: {
               "content-type": "application/json",
               [WITHMATE_AGENT_RUNTIME_NONCE_HEADER]: nonce,
-              [WITHMATE_AGENT_RUNTIME_GENERATION_HEADER]: runtime.connection.api.runtimeGenerationId,
-              [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER]: runtime.connection.api.applicationInstanceId,
+              [WITHMATE_AGENT_RUNTIME_GENERATION_HEADER]:
+                runtime.connection.api.runtimeGenerationId,
+              [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER]:
+                runtime.connection.api.applicationInstanceId,
               ...(length === null ? {} : { "content-length": length }),
             },
           },
@@ -367,6 +414,7 @@ test("declared lengths never bypass body caps or runtime credentials", async () 
 // scope = "共通runtime clientの103 mutual-owner exchange"
 // lifecycle = "permanent"
 // @end-test-value
+/** クライアントは UTF-8 の本文長だけを先に宣言し、所有者確認が失敗した相手には本文も認証情報も渡さないことを確認する。 */
 test("extension length metadata precedes only the verified owner body", async () => {
   let declared = 0,
     received = 0;
@@ -377,17 +425,26 @@ test("extension length metadata precedes only the verified owner body", async ()
       )!;
       response.end(
         JSON.stringify({
-          applicationInstanceId, runtimeGenerationId: generation,
+          applicationInstanceId,
+          runtimeGenerationId: generation,
           challenge: {
             nonce,
-            ownerHmacSha256: createAgentRuntimeOwnerChallenge(apiSecret, applicationInstanceId, generation, nonce),
+            ownerHmacSha256: createAgentRuntimeOwnerChallenge(
+              apiSecret,
+              applicationInstanceId,
+              generation,
+              nonce,
+            ),
           },
         }),
       );
       return;
     }
     declared = Number(request.headers["content-length"]);
-    assert.equal(request.headers["x-withmate-agent-runtime-api-secret"], undefined);
+    assert.equal(
+      request.headers["x-withmate-agent-runtime-api-secret"],
+      undefined,
+    );
     assert.equal(
       request.headers["x-withmate-agent-runtime-cli-api-secret"],
       undefined,
@@ -398,7 +455,8 @@ test("extension length metadata precedes only the verified owner body", async ()
     response.writeEarlyHints({
       link: `<${WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH}>; rel=preconnect`,
       [WITHMATE_AGENT_RUNTIME_GENERATION_HEADER]: generation,
-      [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER]: applicationInstanceId,
+      [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER]:
+        applicationInstanceId,
       [WITHMATE_AGENT_RUNTIME_CHALLENGE_HEADER]: "forged",
     });
     response.end("{}");

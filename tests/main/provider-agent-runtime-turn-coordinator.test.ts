@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 
+/** actor とプロバイダーの組に対し、実行中の Turn だけが処理を受け付ける条件を確認する。 */
 describe("ProviderAgentRuntimeTurnCoordinator", () => {
   // @test-value v1
   // kind = "invariant"
@@ -12,32 +13,49 @@ describe("ProviderAgentRuntimeTurnCoordinator", () => {
   // scope = "provider-agent-runtime-turn-coordinator"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 正しい組の現在の capability だけを受理し、別 actor、別プロバイダー、capability 欠落と二重開始を拒否する。 */
   it("actor/providerごとにcurrent capabilityだけをadmitする", () => {
     const coordinator = new ProviderAgentRuntimeTurnCoordinator();
-    const handle = coordinator.begin({ actorSessionId: "session-a", providerId: "codex" });
+    const handle = coordinator.begin({
+      actorSessionId: "session-a",
+      providerId: "codex",
+    });
 
-    assert.equal(coordinator.admit({
-      actorSessionId: "session-a",
-      providerId: "codex",
-      turnCapability: handle.capability,
-    }).ok, true);
-    assert.deepEqual(coordinator.admit({
-      actorSessionId: "session-b",
-      providerId: "codex",
-      turnCapability: handle.capability,
-    }), { ok: false, reason: "inactive" });
-    assert.deepEqual(coordinator.admit({
-      actorSessionId: "session-a",
-      providerId: "copilot",
-      turnCapability: handle.capability,
-    }), { ok: false, reason: "inactive" });
-    assert.deepEqual(coordinator.admit({
-      actorSessionId: "session-a",
-      providerId: "codex",
-      turnCapability: undefined,
-    }), { ok: false, reason: "inactive" });
+    assert.equal(
+      coordinator.admit({
+        actorSessionId: "session-a",
+        providerId: "codex",
+        turnCapability: handle.capability,
+      }).ok,
+      true,
+    );
+    assert.deepEqual(
+      coordinator.admit({
+        actorSessionId: "session-b",
+        providerId: "codex",
+        turnCapability: handle.capability,
+      }),
+      { ok: false, reason: "inactive" },
+    );
+    assert.deepEqual(
+      coordinator.admit({
+        actorSessionId: "session-a",
+        providerId: "copilot",
+        turnCapability: handle.capability,
+      }),
+      { ok: false, reason: "inactive" },
+    );
+    assert.deepEqual(
+      coordinator.admit({
+        actorSessionId: "session-a",
+        providerId: "codex",
+        turnCapability: undefined,
+      }),
+      { ok: false, reason: "inactive" },
+    );
     assert.throws(
-      () => coordinator.begin({ actorSessionId: "session-a", providerId: "codex" }),
+      () =>
+        coordinator.begin({ actorSessionId: "session-a", providerId: "codex" }),
       /already active/,
     );
   });
@@ -51,17 +69,27 @@ describe("ProviderAgentRuntimeTurnCoordinator", () => {
   // lifecycle = "permanent"
   // distinction = "current leaseのscope分離ではなく、endと次turn beginをまたぐstale capability/handleを扱う"
   // @end-test-value
+  /** 同じ actor とプロバイダーでも旧 capability を拒否し、古い終了通知は次の Turn を止めない。現 Turn を終了したらその capability も拒否する。 */
   it("endと次turnの間でstale capabilityとhandleを分離する", () => {
     const coordinator = new ProviderAgentRuntimeTurnCoordinator();
-    const first = coordinator.begin({ actorSessionId: "session-a", providerId: "codex" });
-    coordinator.end(first);
-    const next = coordinator.begin({ actorSessionId: "session-a", providerId: "codex" });
-
-    assert.deepEqual(coordinator.admit({
+    const first = coordinator.begin({
       actorSessionId: "session-a",
       providerId: "codex",
-      turnCapability: first.capability,
-    }), { ok: false, reason: "inactive" });
+    });
+    coordinator.end(first);
+    const next = coordinator.begin({
+      actorSessionId: "session-a",
+      providerId: "codex",
+    });
+
+    assert.deepEqual(
+      coordinator.admit({
+        actorSessionId: "session-a",
+        providerId: "codex",
+        turnCapability: first.capability,
+      }),
+      { ok: false, reason: "inactive" },
+    );
     coordinator.end(first);
     const admission = coordinator.admit({
       actorSessionId: "session-a",
@@ -74,10 +102,13 @@ describe("ProviderAgentRuntimeTurnCoordinator", () => {
     }
 
     coordinator.end(next);
-    assert.deepEqual(coordinator.admit({
-      actorSessionId: "session-a",
-      providerId: "codex",
-      turnCapability: next.capability,
-    }), { ok: false, reason: "inactive" });
+    assert.deepEqual(
+      coordinator.admit({
+        actorSessionId: "session-a",
+        providerId: "codex",
+        turnCapability: next.capability,
+      }),
+      { ok: false, reason: "inactive" },
+    );
   });
 });

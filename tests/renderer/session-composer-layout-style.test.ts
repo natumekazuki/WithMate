@@ -14,11 +14,17 @@ import test from "node:test";
 // impact = "狭いActionDockでも送信操作を一定の位置と大きさで扱える"
 // distinction = "DOMでは計測できないレイアウト指定を確認し、実描画での収容確認とは区別する"
 // @end-test-value
+/** 設定の行は折り返しを許すが、隣接する送信ボタンには独立した40ピクセル四方を確保する CSS を確認する。 */
 test("Session composer は設定群だけを折り返しSendの40px領域を保つ", async () => {
   const css = await readStylesheet();
   assert.match(css, /\.composer-settings\s*{[^}]*flex-wrap:\s*wrap;/);
-  assert.match(css, /\.composer-control-row\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto;/);
-  const send = css.match(/\.composer-send-control > \.session-send-button\s*{([^}]*)}/)?.[1];
+  assert.match(
+    css,
+    /\.composer-control-row\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto;/,
+  );
+  const send = css.match(
+    /\.composer-send-control > \.session-send-button\s*{([^}]*)}/,
+  )?.[1];
   assert.ok(send);
   assert.match(send, /(?:^|;)\s*width:\s*40px;/);
   assert.match(send, /(?:^|;)\s*min-width:\s*40px;/);
@@ -37,16 +43,24 @@ test("Session composer は設定群だけを折り返しSendの40px領域を保�
 // impact = "実行開始・取消中でも対象切替など隣接操作の位置を安定させる"
 // distinction = "component testのslot存続に加え、レイアウト領域を維持するCSS宣言を確認する"
 // @end-test-value
+/** Cancel を非表示にしてもレイアウトから消さず、40ピクセルの領域を予約する CSS を確認する。 */
 test("Session composer の Cancel slot は40pxの不可視領域を予約する", async () => {
   const css = await readStylesheet();
   const slot = css.match(/\.session-action-dock-cancel-slot\s*{([^}]*)}/)?.[1];
   assert.ok(slot);
   assert.match(slot, /(?:^|;)\s*flex:\s*0 0 40px;/);
   assert.match(slot, /(?:^|;)\s*min-width:\s*40px;/);
-  const inactive = css.match(/\.session-action-dock-cancel-slot:not\(\.is-active\)\s*{([^}]*)}/)?.[1];
+  const inactive = css.match(
+    /\.session-action-dock-cancel-slot:not\(\.is-active\)\s*{([^}]*)}/,
+  )?.[1];
   assert.ok(inactive);
   assert.match(inactive, /(?:^|;)\s*visibility:\s*hidden;/);
-  for (const [, declarations] of css.matchAll(/\.session-action-dock-cancel-slot(?::not\(\.is-active\))?\s*{([^}]*)}/g)) {
-    assert.doesNotMatch(declarations, /(?:^|;)\s*display:\s*(?:none|contents)\b/);
+  for (const [, declarations] of css.matchAll(
+    /\.session-action-dock-cancel-slot(?::not\(\.is-active\))?\s*{([^}]*)}/g,
+  )) {
+    assert.doesNotMatch(
+      declarations,
+      /(?:^|;)\s*display:\s*(?:none|contents)\b/,
+    );
   }
 });

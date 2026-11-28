@@ -14,11 +14,18 @@ import test from "node:test";
 // lifecycle = "permanent"
 // distinction = "diff行の生成やvirtualizer計算ではなく、split表示のscroll ownershipとrow positioningを確認する"
 // @end-test-value
+/** Split の外枠は高さを制約し、内側だけがスクロールし、仮想行は相対位置の基準を持つ CSS 宣言を確認する。 */
 test("live Git DiffのSplit表示は単一scroll領域と仮想row containerを持つ", async () => {
   const css = await readStylesheet();
-  const splitRule = css.match(/\.session-live-diff-split\s*\{(?<body>[^}]+)\}/)?.groups?.body ?? "";
-  const scrollRule = css.match(/\.session-live-diff-split-scroll\s*\{(?<body>[^}]+)\}/)?.groups?.body ?? "";
-  const rowsRule = css.match(/\.session-live-diff-split-rows\s*\{(?<body>[^}]+)\}/)?.groups?.body ?? "";
+  const splitRule =
+    css.match(/\.session-live-diff-split\s*\{(?<body>[^}]+)\}/)?.groups?.body ??
+    "";
+  const scrollRule =
+    css.match(/\.session-live-diff-split-scroll\s*\{(?<body>[^}]+)\}/)?.groups
+      ?.body ?? "";
+  const rowsRule =
+    css.match(/\.session-live-diff-split-rows\s*\{(?<body>[^}]+)\}/)?.groups
+      ?.body ?? "";
 
   assert.match(splitRule, /grid-template-rows:\s*auto minmax\(0,\s*1fr\);/);
   assert.match(splitRule, /overflow:\s*hidden;/);

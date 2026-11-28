@@ -40,26 +40,37 @@ const entries: FileRootGitChangeEntry[] = [
   },
 ];
 
+/** 作業ツリーとステージ済みの入力が混在しても、指定範囲だけを選び、各階層でディレクトリをファイルより先に並べる。 */
 test("buildChangedFileTree は scope を分離し directory-first の階層へ投影する", () => {
   const tree = buildChangedFileTree(entries, "working-tree");
 
-  assert.deepEqual(tree.map((node) => [node.type, node.name]), [
-    ["directory", "docs"],
-    ["directory", "src"],
-    ["file", "README.md"],
-  ]);
+  assert.deepEqual(
+    tree.map((node) => [node.type, node.name]),
+    [
+      ["directory", "docs"],
+      ["directory", "src"],
+      ["file", "README.md"],
+    ],
+  );
   const src = tree[1];
   assert.equal(src?.type, "directory");
   if (src?.type !== "directory") {
     return;
   }
-  assert.deepEqual(src.children.map((node) => [node.type, node.name]), [
-    ["directory", "components"],
-    ["file", "alpha.ts"],
-  ]);
-  assert.equal(src.children.some((node) => node.name === "zeta.ts"), false);
+  assert.deepEqual(
+    src.children.map((node) => [node.type, node.name]),
+    [
+      ["directory", "components"],
+      ["file", "alpha.ts"],
+    ],
+  );
+  assert.equal(
+    src.children.some((node) => node.name === "zeta.ts"),
+    false,
+  );
 });
 
+/** 同じパスでファイルの削除とディレクトリ配下の追加がある場合、ファイルとディレクトリの両方を別ノードに残す。 */
 test("buildChangedFileTree は同名の directory と file を別nodeとして保持する", () => {
   const replacementEntries: FileRootGitChangeEntry[] = [
     {
@@ -77,11 +88,18 @@ test("buildChangedFileTree は同名の directory と file を別nodeとして�
   ];
 
   assert.deepEqual(
-    buildChangedFileTree(replacementEntries, "staged").map((node) => [node.type, node.name]),
-    [["directory", "target"], ["file", "target"]],
+    buildChangedFileTree(replacementEntries, "staged").map((node) => [
+      node.type,
+      node.name,
+    ]),
+    [
+      ["directory", "target"],
+      ["file", "target"],
+    ],
   );
 });
 
+/** 名前変更された項目には旧名と新名を表示し、通常の項目には現在のファイル名だけを表示する。 */
 test("changedFileDisplayName は rename の旧名と新名を表示する", () => {
   const renamed = entries.find((entry) => entry.previousRelativePath);
   assert.ok(renamed);

@@ -1,13 +1,26 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { ProviderProgressDelivery, ProviderProgressMap } from "../../src-electron/providers/provider-progress.js";
+import {
+  ProviderProgressDelivery,
+  ProviderProgressMap,
+} from "../../src-electron/providers/provider-progress.js";
 import { createProviderAgentRuntimeBindingRedactor } from "../../src-electron/providers/provider-agent-runtime-binding.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 
-const noChanges = { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } };
+const noChanges = {
+  steps: { upserts: [], removes: [] },
+  backgroundTasks: { upserts: [], removes: [] },
+};
 const state: LiveSessionRunState = {
-  sessionId: "session", threadId: "thread", assistantText: "text", steps: [], backgroundTasks: [], usage: null,
-  errorMessage: "", approvalRequest: null, elicitationRequest: null,
+  sessionId: "session",
+  threadId: "thread",
+  assistantText: "text",
+  steps: [],
+  backgroundTasks: [],
+  usage: null,
+  errorMessage: "",
+  approvalRequest: null,
+  elicitationRequest: null,
 };
 
 // @test-value v2
@@ -23,6 +36,7 @@ const state: LiveSessionRunState = {
 // impact = "bindingやcredentialの追加・交換後に旧projectionから秘密を露出させない"
 // distinction = "単発redactor testは同じmapに残ったstepのcache無効化を通らない"
 // @end-test-value
+/** 既出の変更を通常の配送では繰り返さず、秘匿対象が増えたときだけ保存済みの表示データも再投影する。 */
 it("変更配送とsecret集合変更の再projectionを分離する", () => {
   const steps = new ProviderProgressMap<{ id: string; text: string }>();
   steps.set("one", { id: "one", text: "old-secret new-secret" });
@@ -31,7 +45,10 @@ it("変更配送とsecret集合変更の再projectionを分離する", () => {
   assert.deepEqual(patch.snapshot, []);
   assert.equal(patch.changes.upserts.length, 1);
   assert.equal(steps.takeProgress(first, false).changes.upserts.length, 0);
-  const second = createProviderAgentRuntimeBindingRedactor(null, ["old-secret", "new-secret"]);
+  const second = createProviderAgentRuntimeBindingRedactor(null, [
+    "old-secret",
+    "new-secret",
+  ]);
   const rebuilt = steps.takeProgress(second);
   assert.equal(rebuilt.changes.upserts.length, 1);
   assert.ok(!JSON.stringify(rebuilt.snapshot).includes("secret"));
@@ -49,21 +66,36 @@ it("変更配送とsecret集合変更の再projectionを分離する", () => {
 // impact = "SDKの正常burstで進捗を失いturnが中断することを防ぐ"
 // distinction = "単一callbackと型検査では未完了burstと実完了の対応を観測できない;通信なしの小さい固定burstで確認する"
 // @end-test-value
+/** 同時に受け付けた100件を間引かず、各コールバックの実完了まで対応する Promise を完了扱いにしない。 */
 it("event-emitter burstは全callbackの実完了を返す", async () => {
   let release!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   let calls = 0;
   const failures: unknown[] = [];
-  const delivery = new ProviderProgressDelivery(() => { calls += 1; return gate; }, (error) => failures.push(error));
+  const delivery = new ProviderProgressDelivery(
+    () => {
+      calls += 1;
+      return gate;
+    },
+    (error) => failures.push(error),
+  );
   let completed = 0;
-  const admitted = Array.from({ length: 100 }, () => delivery.deliver(state, noChanges).then(() => { completed++; }));
+  const admitted = Array.from({ length: 100 }, () =>
+    delivery.deliver(state, noChanges).then(() => {
+      completed++;
+    }),
+  );
   for (const operation of admitted) void operation.catch(() => undefined);
   try {
     await Promise.resolve();
     assert.equal(calls, 100);
     assert.equal(completed, 0);
     assert.equal(failures.length, 0);
-  } finally { release(); }
+  } finally {
+    release();
+  }
   await Promise.all(admitted);
   await delivery.deliver(state, noChanges);
   assert.equal(calls, 101);
@@ -82,21 +114,47 @@ it("event-emitter burstは全callbackの実完了を返す", async () => {
 // impact = "必要なツール結果を欠落させず保存などの実失敗を成功にしない"
 // distinction = "小さいburstでは大きいdetailと同期/非同期handler失敗を検査できない;固定文字列と直接注入で確認する"
 // @end-test-value
+/** 大きい進捗詳細を欠落なく渡し、同期例外と非同期拒否のいずれも呼出元と失敗通知先の両方へ伝える。 */
 it("大きいprogressを配送しhandlerの実失敗を通知する", async () => {
   const detail = "x".repeat(4 * 1024 * 1024);
   let received: string | undefined;
   const failures: unknown[] = [];
-  const delivery = new ProviderProgressDelivery((_state, changes) => { received = changes.steps.upserts[0].details; }, (error) => failures.push(error));
+  const delivery = new ProviderProgressDelivery(
+    (_state, changes) => {
+      received = changes.steps.upserts[0].details;
+    },
+    (error) => failures.push(error),
+  );
   await delivery.deliver(state, {
     ...noChanges,
-    steps: { upserts: [{ id: "giant", type: "command", summary: "command", status: "in_progress", details: detail }], removes: [] },
+    steps: {
+      upserts: [
+        {
+          id: "giant",
+          type: "command",
+          summary: "command",
+          status: "in_progress",
+          details: detail,
+        },
+      ],
+      removes: [],
+    },
   });
   assert.equal(received, detail);
   assert.equal(failures.length, 0);
   for (const synchronous of [false, true]) {
     const error = new Error("handler failed");
-    const failing = new ProviderProgressDelivery(() => { if (synchronous) throw error; return Promise.reject(error); }, failure => failures.push(failure));
-    await assert.rejects(failing.deliver(state, noChanges), failure => failure === error);
+    const failing = new ProviderProgressDelivery(
+      () => {
+        if (synchronous) throw error;
+        return Promise.reject(error);
+      },
+      (failure) => failures.push(failure),
+    );
+    await assert.rejects(
+      failing.deliver(state, noChanges),
+      (failure) => failure === error,
+    );
     assert.equal(failures.at(-1), error);
   }
 });

@@ -20,6 +20,7 @@ import { SessionTurnStorageV6 } from "../../src-electron/session/session-turn-st
 // impact = "入力・会話履歴の喪失と別Auxiliary turnの誤確定を防ぐ"
 // distinction = "型やschemaではCAS拒否と複数table transactionのrollback、履歴保持を確認できない"
 // @end-test-value
+/** 所有者・履歴件数・Turn の不一致を拒否し、終端を部分保存せず、実行更新で既存の本文・成果物・下書きを失わないことを確認する。 */
 test("Auxiliary runtime commandは履歴を保持しowner CASとterminal transactionを維持する", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-aux-runtime-"));
   try {
@@ -38,48 +39,176 @@ test("Auxiliary runtime commandは履歴を保持しowner CASとterminal transac
         VALUES ('aux', 'main', 'draft-owner', 5, 'new draft', 'before');`);
       const turns = new SessionTurnStorageV6(dbPath);
       try {
-        const owner = { auxiliarySessionId: "aux", parentSessionId: "main", createdAt: "created", expectedMessageCount: 1, updatedAt: "after" };
-        assert.deepEqual(storage.getAuxiliarySessionMetadata("aux")?.messages, []);
-        assert.equal(storage.getAuxiliarySessionMetadata("aux")?.messageCount, 1);
-        db.prepare("UPDATE auxiliary_sessions SET character_snapshot_invalid = 1 WHERE id = 'aux'").run();
-        assert.equal(storage.getAuxiliarySessionMetadata("aux")?.characterRuntimeSnapshotInvalid, true);
-        assert.equal(storage.appendAuxiliaryRunningTurnStart({ ...owner, userMessage: { role: "user", text: "send" } }), null);
-        db.prepare("UPDATE auxiliary_sessions SET character_snapshot_invalid = 0 WHERE id = 'aux'").run();
-        assert.equal(storage.appendAuxiliaryRunningTurnStart({ ...owner, createdAt: "stale", userMessage: { role: "user", text: "send" } }), null);
-        assert.equal(storage.appendAuxiliaryRunningTurnStart({ ...owner, expectedMessageCount: 0, userMessage: { role: "user", text: "send" } }), null);
-        const started = storage.appendAuxiliaryRunningTurnStart({ ...owner, userMessage: { role: "user", text: "send" } });
+        const owner = {
+          auxiliarySessionId: "aux",
+          parentSessionId: "main",
+          createdAt: "created",
+          expectedMessageCount: 1,
+          updatedAt: "after",
+        };
+        assert.deepEqual(
+          storage.getAuxiliarySessionMetadata("aux")?.messages,
+          [],
+        );
+        assert.equal(
+          storage.getAuxiliarySessionMetadata("aux")?.messageCount,
+          1,
+        );
+        db.prepare(
+          "UPDATE auxiliary_sessions SET character_snapshot_invalid = 1 WHERE id = 'aux'",
+        ).run();
+        assert.equal(
+          storage.getAuxiliarySessionMetadata("aux")
+            ?.characterRuntimeSnapshotInvalid,
+          true,
+        );
+        assert.equal(
+          storage.appendAuxiliaryRunningTurnStart({
+            ...owner,
+            userMessage: { role: "user", text: "send" },
+          }),
+          null,
+        );
+        db.prepare(
+          "UPDATE auxiliary_sessions SET character_snapshot_invalid = 0 WHERE id = 'aux'",
+        ).run();
+        assert.equal(
+          storage.appendAuxiliaryRunningTurnStart({
+            ...owner,
+            createdAt: "stale",
+            userMessage: { role: "user", text: "send" },
+          }),
+          null,
+        );
+        assert.equal(
+          storage.appendAuxiliaryRunningTurnStart({
+            ...owner,
+            expectedMessageCount: 0,
+            userMessage: { role: "user", text: "send" },
+          }),
+          null,
+        );
+        const started = storage.appendAuxiliaryRunningTurnStart({
+          ...owner,
+          userMessage: { role: "user", text: "send" },
+        });
         assert.equal(started?.messageCount, 2);
         assert.deepEqual(started?.messages, []);
-        const turn = turns.createSessionTurn({ sessionId: "aux", phase: "running", createdAt: "after",
-          provider: "codex", model: "", reasoningEffort: "medium", approvalMode: "untrusted", threadId: "", errorMessage: "", userMessageSeq: 1 });
-        assert.equal(storage.appendAuxiliarySteer({ ...owner, expectedMessageCount: 2, turnId: turn.id + 1,
-          userMessage: { role: "user", text: "steer" } }), null);
-        assert.equal(storage.appendAuxiliarySteer({ ...owner, expectedMessageCount: 2, turnId: turn.id,
-          userMessage: { role: "user", text: "steer" } })?.messageCount, 3);
-        assert.equal(storage.checkpointAuxiliaryRuntimeMetadata({ ...owner, expectedMessageCount: 3,
-          provider: "codex", threadId: "changed", expectedThreadId: "stale", expectedRunState: "running", runState: "running" }), null);
-        const terminal = { ...owner, expectedMessageCount: 3, assistantMessage: { role: "assistant" as const, text: "done" },
-          runState: "idle" as const, threadId: "thread", preview: "done",
-          terminalCommit: { turnId: turn.id, sessionId: "aux", phase: "completed" as const, assistantMessageSeq: 3,
-            threadId: "thread", errorMessage: "", completedAt: "terminal" } };
-        assert.throws(() => storage.appendAuxiliaryTerminal({ ...terminal,
-          terminalCommit: { ...terminal.terminalCommit, turnId: turn.id + 1 } }), /target mismatch/);
-        assert.equal(storage.getAuxiliarySessionMetadata("aux")?.messageCount, 3);
+        const turn = turns.createSessionTurn({
+          sessionId: "aux",
+          phase: "running",
+          createdAt: "after",
+          provider: "codex",
+          model: "",
+          reasoningEffort: "medium",
+          approvalMode: "untrusted",
+          threadId: "",
+          errorMessage: "",
+          userMessageSeq: 1,
+        });
+        assert.equal(
+          storage.appendAuxiliarySteer({
+            ...owner,
+            expectedMessageCount: 2,
+            turnId: turn.id + 1,
+            userMessage: { role: "user", text: "steer" },
+          }),
+          null,
+        );
+        assert.equal(
+          storage.appendAuxiliarySteer({
+            ...owner,
+            expectedMessageCount: 2,
+            turnId: turn.id,
+            userMessage: { role: "user", text: "steer" },
+          })?.messageCount,
+          3,
+        );
+        assert.equal(
+          storage.checkpointAuxiliaryRuntimeMetadata({
+            ...owner,
+            expectedMessageCount: 3,
+            provider: "codex",
+            threadId: "changed",
+            expectedThreadId: "stale",
+            expectedRunState: "running",
+            runState: "running",
+          }),
+          null,
+        );
+        const terminal = {
+          ...owner,
+          expectedMessageCount: 3,
+          assistantMessage: { role: "assistant" as const, text: "done" },
+          runState: "idle" as const,
+          threadId: "thread",
+          preview: "done",
+          terminalCommit: {
+            turnId: turn.id,
+            sessionId: "aux",
+            phase: "completed" as const,
+            assistantMessageSeq: 3,
+            threadId: "thread",
+            errorMessage: "",
+            completedAt: "terminal",
+          },
+        };
+        assert.throws(
+          () =>
+            storage.appendAuxiliaryTerminal({
+              ...terminal,
+              terminalCommit: {
+                ...terminal.terminalCommit,
+                turnId: turn.id + 1,
+              },
+            }),
+          /target mismatch/,
+        );
+        assert.equal(
+          storage.getAuxiliarySessionMetadata("aux")?.messageCount,
+          3,
+        );
         assert.equal(turns.getLatestSessionTurn("aux")?.phase, "running");
-        assert.equal(storage.appendAuxiliaryTerminal(terminal)?.messageCount, 4);
+        assert.equal(
+          storage.appendAuxiliaryTerminal(terminal)?.messageCount,
+          4,
+        );
         assert.equal(turns.getLatestSessionTurn("aux")?.phase, "completed");
         assert.equal(storage.appendAuxiliaryTerminal(terminal), null);
-        assert.equal(storage.getAuxiliarySession("aux")?.messages[0]?.isBookmarked, true);
-        assert.equal(db.prepare("SELECT artifact_body FROM auxiliary_session_messages WHERE auxiliary_session_id = 'aux' AND seq = 0").get()?.artifact_body,
-          '{"private":"unchanged"}');
+        assert.equal(
+          storage.getAuxiliarySession("aux")?.messages[0]?.isBookmarked,
+          true,
+        );
+        assert.equal(
+          db
+            .prepare(
+              "SELECT artifact_body FROM auxiliary_session_messages WHERE auxiliary_session_id = 'aux' AND seq = 0",
+            )
+            .get()?.artifact_body,
+          '{"private":"unchanged"}',
+        );
         assert.equal(storage.getAuxiliaryDraft("aux")?.text, "new draft");
         assert.equal(storage.getAuxiliaryDraft("aux")?.durableRevision, 5);
         db.prepare("DELETE FROM auxiliary_sessions WHERE id = 'aux'").run();
-        assert.equal(storage.appendAuxiliaryRunningTurnStart({ ...owner, expectedMessageCount: 0, userMessage: { role: "user", text: "late" } }), null);
+        assert.equal(
+          storage.appendAuxiliaryRunningTurnStart({
+            ...owner,
+            expectedMessageCount: 0,
+            userMessage: { role: "user", text: "late" },
+          }),
+          null,
+        );
         assert.equal(storage.getAuxiliarySessionMetadata("aux"), null);
-      } finally { turns.close(); }
-    } finally { db.close(); storage.close(); }
-  } finally { await rm(directory, { recursive: true, force: true }); }
+      } finally {
+        turns.close();
+      }
+    } finally {
+      db.close();
+      storage.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 // @test-value v2
@@ -94,8 +223,11 @@ test("Auxiliary runtime commandは履歴を保持しowner CASとterminal transac
 // impact = "失敗・取消結果の保存喪失と継続threadの破壊により会話がrunningに残ることを防ぐ"
 // distinction = "generic runtime fixtureは実Auxiliary SQLite terminal commandを通らず、型/schemaは正当な異threadの受理を保証できない"
 // @end-test-value
+/** 失敗・取消の終端は部分応答と完了区分を保存しつつ、再開用の Session スレッドと実行した Turn のスレッドを混同しない。 */
 test("Auxiliaryの失敗と取消はSession継続threadとturn実行threadを別々に保存する", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "withmate-aux-terminal-thread-"));
+  const directory = await mkdtemp(
+    join(tmpdir(), "withmate-aux-terminal-thread-"),
+  );
   try {
     const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
     const storage = new AuxiliarySessionStorage(dbPath);
@@ -107,15 +239,41 @@ test("Auxiliaryの失敗と取消はSession継続threadとturn実行threadを別
         VALUES ('main', '', 'active', 'codex', 1, '', 'medium', 'untrusted', '{}', 'created', 'before', 'before');`);
       for (const phase of ["failed", "canceled"] as const) {
         const id = `aux-${phase}`;
-        db.prepare(`INSERT INTO auxiliary_sessions (id, parent_session_id, run_state, thread_id, created_at, updated_at)
-          VALUES (?, 'main', 'running', 'thread-stale', 'created', 'before')`).run(id);
-        const turn = turns.createSessionTurn({ sessionId: id, phase: "running", createdAt: "before",
-          provider: "codex", model: "", reasoningEffort: "medium", approvalMode: "untrusted", threadId: "thread-live", errorMessage: "" });
-        const ack = storage.appendAuxiliaryTerminal({ auxiliarySessionId: id, parentSessionId: "main", createdAt: "created",
-          expectedMessageCount: 0, updatedAt: "terminal", assistantMessage: { role: "assistant", text: `partial-${phase}` },
-          runState: "error", threadId: "thread-stale", preview: "",
-          terminalCommit: { turnId: turn.id, sessionId: id, phase, assistantMessageSeq: 0, threadId: "thread-live",
-            errorMessage: phase, completedAt: "terminal" } });
+        db.prepare(
+          `INSERT INTO auxiliary_sessions (id, parent_session_id, run_state, thread_id, created_at, updated_at)
+          VALUES (?, 'main', 'running', 'thread-stale', 'created', 'before')`,
+        ).run(id);
+        const turn = turns.createSessionTurn({
+          sessionId: id,
+          phase: "running",
+          createdAt: "before",
+          provider: "codex",
+          model: "",
+          reasoningEffort: "medium",
+          approvalMode: "untrusted",
+          threadId: "thread-live",
+          errorMessage: "",
+        });
+        const ack = storage.appendAuxiliaryTerminal({
+          auxiliarySessionId: id,
+          parentSessionId: "main",
+          createdAt: "created",
+          expectedMessageCount: 0,
+          updatedAt: "terminal",
+          assistantMessage: { role: "assistant", text: `partial-${phase}` },
+          runState: "error",
+          threadId: "thread-stale",
+          preview: "",
+          terminalCommit: {
+            turnId: turn.id,
+            sessionId: id,
+            phase,
+            assistantMessageSeq: 0,
+            threadId: "thread-live",
+            errorMessage: phase,
+            completedAt: "terminal",
+          },
+        });
         assert.ok(ack);
         assert.equal(ack.threadId, "thread-stale");
         assert.equal(ack.messageCount, 1);
@@ -130,6 +288,12 @@ test("Auxiliaryの失敗と取消はSession継続threadとturn実行threadを別
         assert.equal(savedTurn?.threadId, "thread-live");
         assert.equal(savedTurn?.assistantMessageSeq, 0);
       }
-    } finally { db.close(); turns.close(); storage.close(); }
-  } finally { await rm(directory, { recursive: true, force: true }); }
+    } finally {
+      db.close();
+      turns.close();
+      storage.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

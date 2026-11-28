@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { resolveCursorAnchoredPosition } from "../../src-electron/windows/window-placement.js";
 
+/** 作業領域に十分な余白があれば、カーソルから右下へ24ピクセルずらした座標を採用する。 */
 test("resolveCursorAnchoredPosition はカーソル位置を起点に少しずらして開く", () => {
   const position = resolveCursorAnchoredPosition({
     cursor: { x: 320, y: 180 },
@@ -14,6 +15,7 @@ test("resolveCursorAnchoredPosition はカーソル位置を起点に少しず�
   assert.deepEqual(position, { x: 344, y: 204 });
 });
 
+/** カーソルが右下端に近い場合は、ウィンドウ全体が作業領域に収まる座標まで戻す。 */
 test("resolveCursorAnchoredPosition は右下端ではみ出しを clamp する", () => {
   const position = resolveCursorAnchoredPosition({
     cursor: { x: 1860, y: 1040 },
@@ -25,6 +27,7 @@ test("resolveCursorAnchoredPosition は右下端ではみ出しを clamp する"
   assert.deepEqual(position, { x: 1020, y: 380 });
 });
 
+/** 作業領域より大きい Window では、領域の寸法から負方向へずらさず、その領域の原点に揃える。 */
 test("resolveCursorAnchoredPosition は display workArea より大きい window でも原点へ寄せる", () => {
   const position = resolveCursorAnchoredPosition({
     cursor: { x: 120, y: 60 },

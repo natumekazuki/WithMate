@@ -7,9 +7,16 @@ import {
   resolveSessionDocumentTitle,
 } from "../../src/chat/window-title.js";
 
+/** Session 名が存在すれば、外側の空白だけを取り除いた名前をタイトルに使う。 */
 test("resolveSessionDocumentTitle は session title を window title として使う", () => {
-  assert.equal(resolveSessionDocumentTitle("Issue 58 cleanup", "Session"), "Issue 58 cleanup");
-  assert.equal(resolveSessionDocumentTitle("  Issue 58 cleanup  ", "Session"), "Issue 58 cleanup");
+  assert.equal(
+    resolveSessionDocumentTitle("Issue 58 cleanup", "Session"),
+    "Issue 58 cleanup",
+  );
+  assert.equal(
+    resolveSessionDocumentTitle("  Issue 58 cleanup  ", "Session"),
+    "Issue 58 cleanup",
+  );
 });
 
 // @test-value v2
@@ -22,12 +29,17 @@ test("resolveSessionDocumentTitle は session title を window title として�
 // scope = "session-window-title"
 // lifecycle = "permanent"
 // @end-test-value
+/** 空文字列・空白のみ・未読込の名前は、呼び出し元が指定したタイトルに置き換える。 */
 test("resolveSessionDocumentTitle は空 title では fallback を使う", () => {
   assert.equal(resolveSessionDocumentTitle("", "Session"), "Session");
   assert.equal(resolveSessionDocumentTitle("   ", "Session"), "Session");
-  assert.equal(resolveSessionDocumentTitle(null, "WithMate Session"), "WithMate Session");
+  assert.equal(
+    resolveSessionDocumentTitle(null, "WithMate Session"),
+    "WithMate Session",
+  );
 });
 
+/** Document のある環境では、新しい Session 名が document.title に反映されることを確認する。 */
 test("applySessionDocumentTitle は document がある場合だけ title を同期する", () => {
   const previousDocument = globalThis.document;
 
@@ -59,13 +71,20 @@ test("applySessionDocumentTitle は document がある場合だけ title を同�
 // impact = "hydrate前にWindowの役割が分からないか、内部IDが利用者へ露出する"
 // distinction = "user入力titleの保持ではなく、sessionId fallbackのrenderer/native契約を直接確認する"
 // @end-test-value
+/** Session ID しかない読み込み中は汎用タイトルを使い、名前を取得した後はその名前を表示する。 */
 test("resolveAgentSessionDocumentTitle は hydrate 前でも sessionId fallback を返す", () => {
   assert.equal(
-    resolveAgentSessionDocumentTitle({ sessionTitle: undefined, sessionId: "session-1" }),
+    resolveAgentSessionDocumentTitle({
+      sessionTitle: undefined,
+      sessionId: "session-1",
+    }),
     "Session",
   );
   assert.equal(
-    resolveAgentSessionDocumentTitle({ sessionTitle: "Issue 58 cleanup", sessionId: "session-1" }),
+    resolveAgentSessionDocumentTitle({
+      sessionTitle: "Issue 58 cleanup",
+      sessionId: "session-1",
+    }),
     "Issue 58 cleanup",
   );
 });

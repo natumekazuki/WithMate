@@ -1,9 +1,21 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { resolveSessionFilesDirectory, saveSessionFile } from "../../src-electron/files/session-files.js";
+import {
+  resolveSessionFilesDirectory,
+  saveSessionFile,
+} from "../../src-electron/files/session-files.js";
 
 // @test-value v2
 // kind = "contract"
@@ -17,29 +29,46 @@ import { resolveSessionFilesDirectory, saveSessionFile } from "../../src-electro
 // impact = "既存添付の無断変更または不要なコピーを防ぎ、承認済みの内容を参照へ渡す"
 // distinction = "型やrenderer mockでは実filesystemの非書込み・hash比較・rename結果を保証できない"
 // @end-test-value
+/** 同一内容の貼り付けは時刻を変えずに再利用し、別の内容は競合時の比較値で承認するまで既存ファイルを置き換えない。 */
 test("paste storage reuses equal contents and replaces different contents only after confirmation", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-paste-"));
   try {
-    const input = { sessionId: "session", fileName: "note.bin", data: Buffer.alloc(150_000, 7) };
+    const input = {
+      sessionId: "session",
+      fileName: "note.bin",
+      data: Buffer.alloc(150_000, 7),
+    };
     const destination = await saveSessionFile(root, input);
     assert.equal(typeof destination, "string");
     if (typeof destination !== "string") throw new Error("Expected saved path");
     await utimes(destination, new Date(1000), new Date(1000));
     const before = await stat(destination);
-    assert.deepEqual(await saveSessionFile(root, input), { status: "reused", path: destination });
+    assert.deepEqual(await saveSessionFile(root, input), {
+      status: "reused",
+      path: destination,
+    });
     assert.equal((await stat(destination)).mtimeMs, before.mtimeMs);
     const different = { ...input, data: Buffer.alloc(150_000, 8) };
     const conflict = await saveSessionFile(root, different);
     assert.notEqual(typeof conflict, "string");
-    if (typeof conflict === "string" || conflict.status !== "conflict") throw new Error("Expected conflict");
+    if (typeof conflict === "string" || conflict.status !== "conflict")
+      throw new Error("Expected conflict");
     assert.equal(conflict.status, "conflict");
     assert.equal(conflict.fileName, "note.bin");
     assert.deepEqual(await readFile(destination), input.data);
     assert.deepEqual(await readdir(path.dirname(destination)), ["note.bin"]);
-    assert.equal(await saveSessionFile(root, { ...different, replaceExistingHash: conflict.existingHash }), destination);
+    assert.equal(
+      await saveSessionFile(root, {
+        ...different,
+        replaceExistingHash: conflict.existingHash,
+      }),
+      destination,
+    );
     assert.deepEqual(await readFile(destination), different.data);
     assert.deepEqual(await readdir(path.dirname(destination)), ["note.bin"]);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 // @test-value v2
@@ -52,23 +81,41 @@ test("paste storage reuses equal contents and replaces different contents only a
 // scope = "paste replacement confirmation freshness"
 // lifecycle = "permanent"
 // @end-test-value
+/** 置換を確認している間に保存先が変わった場合、最新の内容を保持して再確認を求め、更新済みの確認でだけ置き換える。 */
 test("paste storage asks again when contents changed during confirmation", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-paste-"));
   try {
-    const input = { sessionId: "session", fileName: "note.txt", data: Buffer.from("original") };
+    const input = {
+      sessionId: "session",
+      fileName: "note.txt",
+      data: Buffer.from("original"),
+    };
     const destination = await saveSessionFile(root, input);
     if (typeof destination !== "string") throw new Error("Expected saved path");
     const changed = { ...input, data: Buffer.from("replacement") };
     const conflict = await saveSessionFile(root, changed);
-    if (typeof conflict === "string" || conflict.status !== "conflict") throw new Error("Expected conflict");
+    if (typeof conflict === "string" || conflict.status !== "conflict")
+      throw new Error("Expected conflict");
     await writeFile(destination, "edited while deciding");
-    const refreshed = await saveSessionFile(root, { ...changed, replaceExistingHash: conflict.existingHash });
-    if (typeof refreshed === "string" || refreshed.status !== "conflict") throw new Error("Expected renewed conflict");
+    const refreshed = await saveSessionFile(root, {
+      ...changed,
+      replaceExistingHash: conflict.existingHash,
+    });
+    if (typeof refreshed === "string" || refreshed.status !== "conflict")
+      throw new Error("Expected renewed conflict");
     assert.notEqual(refreshed.existingHash, conflict.existingHash);
     assert.equal(await readFile(destination, "utf8"), "edited while deciding");
-    assert.equal(await saveSessionFile(root, { ...changed, replaceExistingHash: refreshed.existingHash }), destination);
+    assert.equal(
+      await saveSessionFile(root, {
+        ...changed,
+        replaceExistingHash: refreshed.existingHash,
+      }),
+      destination,
+    );
     assert.equal(await readFile(destination, "utf8"), "replacement");
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 // @test-value v2
@@ -81,27 +128,53 @@ test("paste storage asks again when contents changed during confirmation", async
 // scope = "paste name and filesystem boundary"
 // lifecycle = "permanent"
 // @end-test-value
+/** 保存先のファイルシステムに従って大小文字違いを判定し、別名・別 Session を混同せず、ディレクトリは上書きしない。 */
 test("paste storage respects actual filename semantics and keeps its comparison local", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-paste-"));
   try {
-    const input = { sessionId: "session", fileName: "Note.txt", data: Buffer.from("first") };
+    const input = {
+      sessionId: "session",
+      fileName: "Note.txt",
+      data: Buffer.from("first"),
+    };
     const destination = await saveSessionFile(root, input);
     if (typeof destination !== "string") throw new Error("Expected saved path");
     const lowerPath = path.join(path.dirname(destination), "note.txt");
-    const lowerExists = await stat(lowerPath).then(() => true, (error: NodeJS.ErrnoException) => {
-      if (error.code !== "ENOENT") throw error;
-      return false;
+    const lowerExists = await stat(lowerPath).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+        return false;
+      },
+    );
+    const lower = await saveSessionFile(root, {
+      ...input,
+      fileName: "note.txt",
+      data: Buffer.from("other"),
     });
-    const lower = await saveSessionFile(root, { ...input, fileName: "note.txt", data: Buffer.from("other") });
     assert.equal(typeof lower === "string", !lowerExists);
     assert.equal(await readFile(destination, "utf8"), "first");
-    const renamed = await saveSessionFile(root, { ...input, fileName: "renamed.txt" });
+    const renamed = await saveSessionFile(root, {
+      ...input,
+      fileName: "renamed.txt",
+    });
     assert.equal(renamed, path.join(path.dirname(destination), "renamed.txt"));
-    const otherSession = await saveSessionFile(root, { ...input, sessionId: "another" });
-    assert.equal(otherSession, path.join(resolveSessionFilesDirectory(root, "another"), "Note.txt"));
+    const otherSession = await saveSessionFile(root, {
+      ...input,
+      sessionId: "another",
+    });
+    assert.equal(
+      otherSession,
+      path.join(resolveSessionFilesDirectory(root, "another"), "Note.txt"),
+    );
     const directory = path.join(path.dirname(destination), "folder.txt");
     await mkdir(directory);
-    await assert.rejects(saveSessionFile(root, { ...input, fileName: "folder.txt" }), /not a regular file/);
+    await assert.rejects(
+      saveSessionFile(root, { ...input, fileName: "folder.txt" }),
+      /not a regular file/,
+    );
     assert.equal((await stat(directory)).isDirectory(), true);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

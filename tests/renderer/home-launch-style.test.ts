@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-
 // @test-value v2
 // kind = "invariant"
 // claim = "Session作成画面はRole・title・workspace・providerの自然な高さを確保し、最後のCharacter一覧だけを伸縮する内部スクロール領域にする"
@@ -15,21 +14,32 @@ import test from "node:test";
 // lifecycle = "permanent"
 // distinction = "Character取得や選択状態ではなく、作成画面のscroll containmentとfocus affordanceを確認する"
 // @end-test-value
+/** 作成ダイアログが Character 一覧だけへ残り高さと縦スクロールを割り当て、フォーカス枠が切れないよう内側に描く指定を確認する。 */
 test("Session 作成画面は Character 一覧だけをスクロール領域にする", async () => {
   const [componentSource, stylesSource] = await Promise.all([
     readFile("src/home/HomeLaunchDialog.tsx", "utf8"),
     readStylesheet(),
   ]);
-  const panelRule = stylesSource.match(/\.home-launch-dialog \.launch-panel\s*{([^}]*)}/)?.[1];
+  const panelRule = stylesSource.match(
+    /\.home-launch-dialog \.launch-panel\s*{([^}]*)}/,
+  )?.[1];
   const characterListRule = stylesSource.match(
     /\.home-launch-character-section \.launch-character-list\s*{([^}]*)}/,
   )?.[1];
-  const characterFocusRule = stylesSource.match(/\.launch-character-option:focus-visible\s*{([^}]*)}/)?.[1];
+  const characterFocusRule = stylesSource.match(
+    /\.launch-character-option:focus-visible\s*{([^}]*)}/,
+  )?.[1];
 
   assert.match(componentSource, /dialogClassName="home-launch-dialog"/);
-  assert.match(componentSource, /className="launch-section minimal home-launch-character-section"/);
+  assert.match(
+    componentSource,
+    /className="launch-section minimal home-launch-character-section"/,
+  );
   assert.ok(panelRule);
-  assert.match(panelRule, /grid-template-rows:\s*auto auto auto auto minmax\(0, 1fr\);/);
+  assert.match(
+    panelRule,
+    /grid-template-rows:\s*auto auto auto auto minmax\(0, 1fr\);/,
+  );
   assert.match(panelRule, /overflow:\s*hidden;/);
   assert.ok(characterListRule);
   assert.match(characterListRule, /overflow-y:\s*auto;/);

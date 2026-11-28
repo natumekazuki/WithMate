@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveChatWindowModeFromSearch, resolveChatWindowModeTarget } from "../../src/chat/chat-window-mode.js";
+import {
+  resolveChatWindowModeFromSearch,
+  resolveChatWindowModeTarget,
+} from "../../src/chat/chat-window-mode.js";
 
+/** 検索文字列に Session ID があるときは、その ID を開く通常のエージェント Window として解決する。 */
 test("resolveChatWindowModeFromSearch は通常 session を解決する", () => {
   assert.deepEqual(resolveChatWindowModeFromSearch("?sessionId=session-1"), {
     kind: "agent",
@@ -10,7 +14,7 @@ test("resolveChatWindowModeFromSearch は通常 session を解決する", () => 
   });
 });
 
-
+/** Session ID のない起動も通常 Window として扱い、対象は未指定のままにする。 */
 test("resolveChatWindowModeFromSearch は sessionId がない通常 window を許容する", () => {
   assert.deepEqual(resolveChatWindowModeFromSearch(""), {
     kind: "agent",
@@ -28,13 +32,17 @@ test("resolveChatWindowModeFromSearch は sessionId がない通常 window を�
 // scope = "Session window target routing"
 // lifecycle = "permanent"
 // @end-test-value
+/** 通常エージェントのモードが、呼び出し側の指定した描画先に対応することを確認する。 */
 test("resolveChatWindowModeTarget は mode kind に対応する target を解決する", () => {
   const targets = {
     agent: "AgentSessionWindowApp",
   };
 
   assert.equal(
-    resolveChatWindowModeTarget({ kind: "agent", sessionId: "session-1" }, targets),
+    resolveChatWindowModeTarget(
+      { kind: "agent", sessionId: "session-1" },
+      targets,
+    ),
     "AgentSessionWindowApp",
   );
 });

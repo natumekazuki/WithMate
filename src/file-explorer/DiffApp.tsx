@@ -3,22 +3,32 @@ import { useEffect, useMemo, useState } from "react";
 import type { DiffPreviewPayload } from "../../src-shared/session/session-state.js";
 import { getDiffTokenFromLocation } from "../app/session-location.js";
 import { DiffViewer } from "../ui/DiffViewer.js";
-import { getWithMateApi, isDesktopRuntime } from "../app/renderer-withmate-api.js";
+import {
+  getWithMateApi,
+  isDesktopRuntime,
+} from "../app/renderer-withmate-api.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 
+/** 差分の取得中、取得完了、取得手段なし、取得失敗を区別する。取得完了でもペイロードがない場合がある。 */
 type DiffPreviewLoadState = "loading" | "ready" | "unavailable" | "error";
 
+/** URL のトークンで差分を読み込み、取得結果のファイル名とテーマを専用ウィンドウへ反映する。 */
 export default function DiffApp() {
   const desktopRuntime = isDesktopRuntime();
-  const [diffPreview, setDiffPreview] = useState<DiffPreviewPayload | null>(null);
+  const [diffPreview, setDiffPreview] = useState<DiffPreviewPayload | null>(
+    null,
+  );
   const [loadState, setLoadState] = useState<DiffPreviewLoadState>(() => {
     const api = getWithMateApi();
     return api && getDiffTokenFromLocation() ? "loading" : "unavailable";
   });
   const [loadMessage, setLoadMessage] = useState("");
   const diffThemeStyle = useMemo(
-    () => (diffPreview ? buildCharacterThemeStyle(diffPreview.themeColors) : undefined),
+    () =>
+      diffPreview
+        ? buildCharacterThemeStyle(diffPreview.themeColors)
+        : undefined,
     [diffPreview],
   );
 
@@ -37,19 +47,26 @@ export default function DiffApp() {
     setLoadState("loading");
     setLoadMessage("");
 
-    void withmateApi.getDiffPreview(token).then((payload) => {
-      if (active) {
-        if (payload) document.title = `Diff - ${payload.file.path}`;
-        setDiffPreview(payload);
-        setLoadState("ready");
-      }
-    }).catch((error) => {
-      if (active) {
-        setDiffPreview(null);
-        setLoadState("error");
-        setLoadMessage(error instanceof Error ? error.message : "Diff could not be loaded.");
-      }
-    });
+    void withmateApi
+      .getDiffPreview(token)
+      .then((payload) => {
+        if (active) {
+          if (payload) document.title = `Diff - ${payload.file.path}`;
+          setDiffPreview(payload);
+          setLoadState("ready");
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setDiffPreview(null);
+          setLoadState("error");
+          setLoadMessage(
+            error instanceof Error
+              ? error.message
+              : "Diff could not be loaded.",
+          );
+        }
+      });
 
     return () => {
       active = false;
@@ -81,7 +98,9 @@ export default function DiffApp() {
       <div className="page-shell diff-page">
         <section className="panel empty-session-card rise-1" role="alert">
           <h2>Diff could not be loaded</h2>
-          <p>{loadMessage || "Open the diff again from the originating Session."}</p>
+          <p>
+            {loadMessage || "Open the diff again from the originating Session."}
+          </p>
         </section>
       </div>
     );
@@ -100,7 +119,10 @@ export default function DiffApp() {
 
   return (
     <div className="page-shell diff-page">
-      <section className="diff-editor diff-window-shell panel rise-1 theme-accent" style={diffThemeStyle}>
+      <section
+        className="diff-editor diff-window-shell panel rise-1 theme-accent"
+        style={diffThemeStyle}
+      >
         <div className="diff-titlebar">
           <h2>{diffPreview.file.path}</h2>
         </div>

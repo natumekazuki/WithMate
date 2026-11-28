@@ -3,7 +3,11 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { appendCrewFilesDirectory, resolveCrewFilesDirectory, resolveSessionFilesDirectory } from "../../src-electron/files/session-files.js";
+import {
+  appendCrewFilesDirectory,
+  resolveCrewFilesDirectory,
+  resolveSessionFilesDirectory,
+} from "../../src-electron/files/session-files.js";
 import { SessionFileExplorerService } from "../../src-electron/files/session-file-explorer-service.js";
 
 // @test-value v2
@@ -18,31 +22,77 @@ import { SessionFileExplorerService } from "../../src-electron/files/session-fil
 // impact = "異なるWorkspace間の資料引継ぎが成立しなくなる"
 // distinction = "型検査や単独SessionFolder testでは複数Mainと実filesystemの同一共有先を確認できない"
 // @end-test-value
+/** エージェントに渡した Crew Folder とファイル一覧の共有ルートが一致し、親と子のどちらからも同じ保存済み資料に到達できる。 */
 test("CrewのProviderとFilesは同一の共有先を使い継続する", async () => {
-  const temporaryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-crew-files-"));
+  const temporaryPath = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-crew-files-"),
+  );
   try {
     const crewPath = resolveCrewFilesDirectory(temporaryPath, "root");
-    const first = appendCrewFilesDirectory(temporaryPath, { allowedAdditionalDirectories: [] }, "root");
+    const first = appendCrewFilesDirectory(
+      temporaryPath,
+      { allowedAdditionalDirectories: [] },
+      "root",
+    );
     await writeFile(path.join(crewPath, "handoff.txt"), "shared result");
-    const second = appendCrewFilesDirectory(temporaryPath, { allowedAdditionalDirectories: [] }, "root");
+    const second = appendCrewFilesDirectory(
+      temporaryPath,
+      { allowedAdditionalDirectories: [] },
+      "root",
+    );
     assert.deepEqual(first.allowedAdditionalDirectories, [crewPath]);
     assert.deepEqual(second.allowedAdditionalDirectories, [crewPath]);
-    assert.equal(appendCrewFilesDirectory(temporaryPath, second, "root"), second);
+    assert.equal(
+      appendCrewFilesDirectory(temporaryPath, second, "root"),
+      second,
+    );
     const explorer = new SessionFileExplorerService({
       userDataPath: temporaryPath,
-      getSessionContext: async (id) => ({ workspacePath: path.join(temporaryPath, id), parentSessionId: id,
-        crewRootSessionId: "root", allowedAdditionalDirectories: second.allowedAdditionalDirectories }),
+      /** 同じ Crew のルートを使いつつ、呼び出した Session に固有の Workspace と SessionFolder が解決されるようにする。 */
+      getSessionContext: async (id) => ({
+        workspacePath: path.join(temporaryPath, id),
+        parentSessionId: id,
+        crewRootSessionId: "root",
+        allowedAdditionalDirectories: second.allowedAdditionalDirectories,
+      }),
     });
     for (const id of ["root", "worker"]) {
       const roots = await explorer.listRoots(id);
-      assert.equal(roots.find((root) => root.kind === "crew-folder")?.displayPath, crewPath);
-      assert.equal(roots.find((root) => root.kind === "session-folder")?.displayPath, resolveSessionFilesDirectory(temporaryPath, id));
-      assert.equal(roots.filter((root) => root.displayPath === crewPath).length, 1);
-      const descriptor = await explorer.inspectFile({ sessionId: id, rootId: "crew-folder", relativePath: "handoff.txt" });
-      assert.equal(await readFile(descriptor.absoluteFilePath, "utf8"), "shared result");
-      assert.equal(await explorer.resolvePathActionTarget({ sessionId: id, rootId: "crew-folder", relativePath: "handoff.txt", nodeKind: "file" }), path.join(crewPath, "handoff.txt"));
+      assert.equal(
+        roots.find((root) => root.kind === "crew-folder")?.displayPath,
+        crewPath,
+      );
+      assert.equal(
+        roots.find((root) => root.kind === "session-folder")?.displayPath,
+        resolveSessionFilesDirectory(temporaryPath, id),
+      );
+      assert.equal(
+        roots.filter((root) => root.displayPath === crewPath).length,
+        1,
+      );
+      const descriptor = await explorer.inspectFile({
+        sessionId: id,
+        rootId: "crew-folder",
+        relativePath: "handoff.txt",
+      });
+      assert.equal(
+        await readFile(descriptor.absoluteFilePath, "utf8"),
+        "shared result",
+      );
+      assert.equal(
+        await explorer.resolvePathActionTarget({
+          sessionId: id,
+          rootId: "crew-folder",
+          relativePath: "handoff.txt",
+          nodeKind: "file",
+        }),
+        path.join(crewPath, "handoff.txt"),
+      );
     }
-    assert.notEqual(resolveCrewFilesDirectory(temporaryPath, "other"), crewPath);
+    assert.notEqual(
+      resolveCrewFilesDirectory(temporaryPath, "other"),
+      crewPath,
+    );
   } finally {
     await rm(temporaryPath, { recursive: true, force: true });
   }

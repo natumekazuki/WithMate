@@ -20,9 +20,12 @@ import { markMainThreadAsNonStorageOwner } from "../../src-electron/storage/sqli
 // impact = "起動時にMain event loopを同期SQLite処理で塞がず、DB選択結果と診断結果を同じWorker経路から取得できる"
 // distinction = "既存のapp-database-path単体testは同期関数本体を確認するが、実Workerのcommand dispatchとclient lifecycleは確認しない"
 // @end-test-value
+/** Main を SQLite 非所有者に設定しても、実 Worker が V6 の初期化と進捗を返し、同じ DB を有効かつ互換と診断できる。 */
 test("app database bootstrap worker は resolve と diagnostics のcommandを実Workerで処理する", async () => {
   markMainThreadAsNonStorageOwner();
-  const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-database-bootstrap-worker-"));
+  const userDataPath = await mkdtemp(
+    path.join(tmpdir(), "withmate-app-database-bootstrap-worker-"),
+  );
   const worker = createAppDatabaseBootstrapWorker();
   try {
     const progressTitles: string[] = [];

@@ -5,8 +5,14 @@ import { join } from "node:path";
 import test from "node:test";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
-import { RuntimeTurnInactiveError, runWithRuntimeTurnAdmission } from "../../src-electron/platform/agent-runtime/runtime-turn-admission.js";
-import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
+import {
+  RuntimeTurnInactiveError,
+  runWithRuntimeTurnAdmission,
+} from "../../src-electron/platform/agent-runtime/runtime-turn-admission.js";
+import {
+  buildNewSession,
+  getSessionIncarnationId,
+} from "../../src-shared/session/session-state.js";
 
 // @test-value v2
 // kind = "security"
@@ -20,6 +26,7 @@ import { buildNewSession, getSessionIncarnationId } from "../../src-shared/sessi
 // risk_tags = ["authorization"]
 // distinction = "Main processでの事前assertだけではWorker待機中の失効や実SQLiteの影響を検出できない"
 // @end-test-value
+/** Worker で適用前に失効した Turn からのディレクトリ変更を拒否し、後続の有効な変更は会話を維持して保存できる。 */
 test("directory mutations carry Turn admission to the storage Worker", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-directory-worker-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
@@ -28,24 +35,58 @@ test("directory mutations carry Turn admission to the storage Worker", async () 
   let reopened: ReturnType<typeof createV6StorageWorkerBundle> | undefined;
   try {
     await initial.initialize();
-    const saved = await initial.stores.session.insertSession({ ...buildNewSession({ id: "main", taskTitle: "Main",
-      workspaceLabel: "Workspace", workspacePath: directory, branch: "main", characterId: "unknown", character: "Unknown",
-      characterIconPath: "", characterThemeColors: { main: "#123456", sub: "#234567" }, approvalMode: "untrusted" }),
-      messages: [{ role: "user", text: "keep conversation" }] });
+    const saved = await initial.stores.session.insertSession({
+      ...buildNewSession({
+        id: "main",
+        taskTitle: "Main",
+        workspaceLabel: "Workspace",
+        workspacePath: directory,
+        branch: "main",
+        characterId: "unknown",
+        character: "Unknown",
+        characterIconPath: "",
+        characterThemeColors: { main: "#123456", sub: "#234567" },
+        approvalMode: "untrusted",
+      }),
+      messages: [{ role: "user", text: "keep conversation" }],
+    });
     await initial.client.close();
     reopened = createV6StorageWorkerBundle(options);
     const state = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
     const incarnation = getSessionIncarnationId(saved);
-    const pending = runWithRuntimeTurnAdmission({ state }, () => reopened!.stores.session.setSessionAdditionalDirectories(saved.id, incarnation, ["C:/shared"]));
+    const pending = runWithRuntimeTurnAdmission({ state }, () =>
+      reopened!.stores.session.setSessionAdditionalDirectories(
+        saved.id,
+        incarnation,
+        ["C:/shared"],
+      ),
+    );
     Atomics.store(new Int32Array(state), 0, 1);
     await assert.rejects(pending, RuntimeTurnInactiveError);
-    assert.deepEqual((await reopened.stores.session.getSession(saved.id))?.allowedAdditionalDirectories, []);
-    const updated = await reopened.stores.session.setSessionAdditionalDirectories(saved.id, incarnation, ["C:/shared"]);
+    assert.deepEqual(
+      (await reopened.stores.session.getSession(saved.id))
+        ?.allowedAdditionalDirectories,
+      [],
+    );
+    const updated =
+      await reopened.stores.session.setSessionAdditionalDirectories(
+        saved.id,
+        incarnation,
+        ["C:/shared"],
+      );
     assert.deepEqual(updated.allowedAdditionalDirectories, ["C:/shared"]);
-    assert.equal((await reopened.stores.session.getSession(saved.id))?.messages[0]?.text, "keep conversation");
+    assert.equal(
+      (await reopened.stores.session.getSession(saved.id))?.messages[0]?.text,
+      "keep conversation",
+    );
   } finally {
     await reopened?.client.close();
     await initial.client.close();
-    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 50,
+    });
   }
 });

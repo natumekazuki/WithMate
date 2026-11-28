@@ -8,7 +8,9 @@ import {
   SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
 } from "../../src-electron/session/session-provider-id-sql.js";
 
+/** SQLite の Session プロバイダー正規化と、集約側の共有ヘルパーで同じ判断になることを確認する。 */
 describe("session provider id SQL normalizer", () => {
+  /** 空白だけの値・前後の Unicode 空白・文字列でない値も、実 SQL 関数が共有の正規化結果と同じ値に解決する。 */
   it("Session summary と同じ文字列正規化を SQLite query へ提供する", () => {
     const db = new DatabaseSync(":memory:");
     try {

@@ -15,22 +15,54 @@ import { projectQuotaRemaining } from "../../src/provider-usage/provider-quota-p
 // impact = "利用者が別bucketの残量やreset時刻を誤認する"
 // distinction = "外部応答の動的値と欠落は型検査で保証されず、小さい純粋fixtureで検出できる"
 // @end-test-value
+/** ID 別の複数枠を旧単一枠より優先し、使用率ゼロや実リセット時刻は維持しつつ未提供の情報を補わない。 */
 it("Codex quotaは複数bucketを優先して未知の値を生成しない", () => {
-  const result = projectCodexQuotaTelemetry({
-    rateLimits: { primary: { usedPercent: 99 } },
-    rateLimitsByLimitId: {
-      codex: { limitId: "codex", limitName: "Codex", primary: { usedPercent: 0, windowDurationMins: 15, resetsAt: 1730947200 }, secondary: { usedPercent: 100 } },
-      other: { primary: { usedPercent: 42, windowDurationMins: 60 }, secondary: null },
+  const result = projectCodexQuotaTelemetry(
+    {
+      rateLimits: { primary: { usedPercent: 99 } },
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          limitName: "Codex",
+          primary: {
+            usedPercent: 0,
+            windowDurationMins: 15,
+            resetsAt: 1730947200,
+          },
+          secondary: { usedPercent: 100 },
+        },
+        other: {
+          primary: { usedPercent: 42, windowDurationMins: 60 },
+          secondary: null,
+        },
+      },
     },
-  }, "codex");
+    "codex",
+  );
   assert.deepEqual(result.rateLimits, [
-    { quotaKey: "codex:primary", label: "Codex", usedPercentage: 0, windowDurationMinutes: 15, resetDate: "2024-11-07T02:40:00.000Z" },
+    {
+      quotaKey: "codex:primary",
+      label: "Codex",
+      usedPercentage: 0,
+      windowDurationMinutes: 15,
+      resetDate: "2024-11-07T02:40:00.000Z",
+    },
     { quotaKey: "codex:secondary", label: "Codex", usedPercentage: 100 },
-    { quotaKey: "other:primary", usedPercentage: 42, windowDurationMinutes: 60 },
+    {
+      quotaKey: "other:primary",
+      usedPercentage: 42,
+      windowDurationMinutes: 60,
+    },
   ]);
   assert.deepEqual(result.snapshots, []);
   assert.equal(result.status, "ready");
-  assert.deepEqual(projectCodexQuotaTelemetry({ rateLimits: { primary: null, secondary: null } }, "codex").rateLimits, []);
+  assert.deepEqual(
+    projectCodexQuotaTelemetry(
+      { rateLimits: { primary: null, secondary: null } },
+      "codex",
+    ).rateLimits,
+    [],
+  );
 });
 
 // @test-value v2
@@ -45,13 +77,24 @@ it("Codex quotaは複数bucketを優先して未知の値を生成しない", ()
 // impact = "不正な残量やresetが正常に見え、利用可否の判断を誤る"
 // distinction = "unknownなRPC応答の非有限値や範囲外値はTypeScript型検査では防げない"
 // @end-test-value
+/** 利用枠のスキーマ、使用率・期間・時刻、枠のキーと ID の対応が不正な応答を拒否する。 */
 it("Codex quotaの不正な応答と数値を拒否する", () => {
-  for (const response of [null, {}, { rateLimits: {} }, { rateLimitsByLimitId: [] },
-    ...[-1, 101, NaN, Infinity, "25", undefined].map(usedPercent => ({ rateLimits: { primary: { usedPercent } } })),
+  for (const response of [
+    null,
+    {},
+    { rateLimits: {} },
+    { rateLimitsByLimitId: [] },
+    ...[-1, 101, NaN, Infinity, "25", undefined].map((usedPercent) => ({
+      rateLimits: { primary: { usedPercent } },
+    })),
     { rateLimits: { primary: { usedPercent: 20, windowDurationMins: 0 } } },
     { rateLimits: { primary: { usedPercent: 20, resetsAt: Infinity } } },
     { rateLimitsByLimitId: { codex: { limitId: "other", primary: null } } },
-  ]) assert.throws(() => projectCodexQuotaTelemetry(response, "codex"), /Invalid Codex rate limits/);
+  ])
+    assert.throws(
+      () => projectCodexQuotaTelemetry(response, "codex"),
+      /Invalid Codex rate limits/,
+    );
 });
 
 // @test-value v2
@@ -66,22 +109,51 @@ it("Codex quotaの不正な応答と数値を拒否する", () => {
 // impact = "利用者が短期枠と週間枠の残量を取り違える"
 // distinction = "adapterとrenderer間のlabel解釈の整合は各層の型検査では保証されず、純粋関数の接続で確認する"
 // @end-test-value
+/** 追加枠を概要と区別し、期間が既知なら5時間・7日のラベル、未知なら窓 ID を使って、残率とともに表示する。 */
 it("Codex追加枠の名前・期間・未知期間の窓IDを詳細に残す", () => {
   for (const limitName of ["Extra Model", undefined]) {
     for (const knownPeriod of [true, false]) {
-      const telemetry = projectCodexQuotaTelemetry({ rateLimitsByLimitId: {
-        model_extra: { limitName,
-          primary: { usedPercent: 20, ...(knownPeriod ? { windowDurationMins: 300 } : {}) },
-          secondary: { usedPercent: 40, ...(knownPeriod ? { windowDurationMins: 10080 } : {}) },
+      const telemetry = projectCodexQuotaTelemetry(
+        {
+          rateLimitsByLimitId: {
+            model_extra: {
+              limitName,
+              primary: {
+                usedPercent: 20,
+                ...(knownPeriod ? { windowDurationMins: 300 } : {}),
+              },
+              secondary: {
+                usedPercent: 40,
+                ...(knownPeriod ? { windowDurationMins: 10080 } : {}),
+              },
+            },
+          },
         },
-      } }, "codex");
+        "codex",
+      );
       assert.deepEqual(projectQuotaRemaining(telemetry), [
-        { key: "model_extra:primary", label: knownPeriod ? `${limitName ?? "model_extra:primary"} · 5h`
-          : limitName ? "Extra Model · model_extra:primary" : "model_extra:primary",
-          remaining: "80%", resetDate: undefined, summary: false },
-        { key: "model_extra:secondary", label: knownPeriod ? `${limitName ?? "model_extra:secondary"} · 7d`
-          : limitName ? "Extra Model · model_extra:secondary" : "model_extra:secondary",
-          remaining: "60%", resetDate: undefined, summary: false },
+        {
+          key: "model_extra:primary",
+          label: knownPeriod
+            ? `${limitName ?? "model_extra:primary"} · 5h`
+            : limitName
+              ? "Extra Model · model_extra:primary"
+              : "model_extra:primary",
+          remaining: "80%",
+          resetDate: undefined,
+          summary: false,
+        },
+        {
+          key: "model_extra:secondary",
+          label: knownPeriod
+            ? `${limitName ?? "model_extra:secondary"} · 7d`
+            : limitName
+              ? "Extra Model · model_extra:secondary"
+              : "model_extra:secondary",
+          remaining: "60%",
+          resetDate: undefined,
+          summary: false,
+        },
       ]);
     }
   }

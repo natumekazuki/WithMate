@@ -1,13 +1,33 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { PDF_READER_SCHEME, PDF_READER_URL } from "../../src-shared/file-explorer/pdf-reader-contract.js";
+import {
+  PDF_READER_SCHEME,
+  PDF_READER_URL,
+} from "../../src-shared/file-explorer/pdf-reader-contract.js";
 
+/** iframe に読み込める PDF リーダー文書の固定 URL。 */
 export const PDF_READER_DOCUMENT_URL = PDF_READER_URL;
 
-export function shouldBlockPdfReaderNavigation(details: { url: string; isMainFrame: boolean; frameUrl?: string; initiatorUrl?: string }): boolean {
-  const isReaderUrl = (url: string | undefined) => url?.startsWith(`${PDF_READER_SCHEME}:`) ?? false;
-  if (!isReaderUrl(details.url) && !isReaderUrl(details.frameUrl) && !isReaderUrl(details.initiatorUrl)) return false;
-  return details.isMainFrame || details.url.split("#", 1)[0] !== PDF_READER_DOCUMENT_URL;
+/** PDF リーダーが関わるナビゲーションを、固定文書へのサブフレーム読み込みに限定する。 */
+export function shouldBlockPdfReaderNavigation(details: {
+  url: string;
+  isMainFrame: boolean;
+  frameUrl?: string;
+  initiatorUrl?: string;
+}): boolean {
+  /** 遷移先・現在のフレーム・開始元に PDF リーダーのスキームが含まれるか調べる。 */
+  const isReaderUrl = (url: string | undefined) =>
+    url?.startsWith(`${PDF_READER_SCHEME}:`) ?? false;
+  if (
+    !isReaderUrl(details.url) &&
+    !isReaderUrl(details.frameUrl) &&
+    !isReaderUrl(details.initiatorUrl)
+  )
+    return false;
+  return (
+    details.isMainFrame ||
+    details.url.split("#", 1)[0] !== PDF_READER_DOCUMENT_URL
+  );
 }
 
 const contentTypes: Record<string, string> = {
@@ -43,22 +63,43 @@ const readerCsp = [
   "form-action 'none'",
 ].join("; ");
 
+/** パスがルート自身でも外部でもなく、ルート配下の項目であるかを判定する。 */
 function isWithin(root: string, target: string): boolean {
   const relative = path.relative(root, target);
-  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  return (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
 }
 
-export async function servePdfReaderAsset(request: { url: string; method: string }, root: string): Promise<Response> {
+/** GET と HEAD で同梱資材だけを配信する。実パスの所属を検証し、リーダー専用の CSP を付ける。 */
+export async function servePdfReaderAsset(
+  request: { url: string; method: string },
+  root: string,
+): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response(null, { status: 405 });
   }
   try {
     const url = new URL(request.url);
-    if (url.protocol !== `${PDF_READER_SCHEME}:` || url.hostname !== "reader" || url.username || url.password || url.port || url.search) {
+    if (
+      url.protocol !== `${PDF_READER_SCHEME}:` ||
+      url.hostname !== "reader" ||
+      url.username ||
+      url.password ||
+      url.port ||
+      url.search
+    ) {
       return new Response(null, { status: 404 });
     }
     const pathname = decodeURIComponent(url.pathname);
-    if (pathname.includes("\\") || pathname.includes("\0") || pathname.includes(":")) {
+    if (
+      pathname.includes("\\") ||
+      pathname.includes("\0") ||
+      pathname.includes(":")
+    ) {
       return new Response(null, { status: 404 });
     }
     const target = path.resolve(root, `.${pathname}`);
@@ -66,11 +107,20 @@ export async function servePdfReaderAsset(request: { url: string; method: string
     if (!isWithin(root, target) || !contentType) {
       return new Response(null, { status: 404 });
     }
-    const [resolvedRoot, resolvedTarget] = await Promise.all([realpath(root), realpath(target)]);
-    if (!isWithin(resolvedRoot, resolvedTarget) || !(await stat(resolvedTarget)).isFile()) {
+    const [resolvedRoot, resolvedTarget] = await Promise.all([
+      realpath(root),
+      realpath(target),
+    ]);
+    if (
+      !isWithin(resolvedRoot, resolvedTarget) ||
+      !(await stat(resolvedTarget)).isFile()
+    ) {
       return new Response(null, { status: 404 });
     }
-    const bytes = request.method === "HEAD" ? null : new Uint8Array(await readFile(resolvedTarget));
+    const bytes =
+      request.method === "HEAD"
+        ? null
+        : new Uint8Array(await readFile(resolvedTarget));
     return new Response(bytes, {
       headers: {
         "Content-Type": contentType,
