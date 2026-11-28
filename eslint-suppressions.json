@@ -54,31 +54,6 @@
       "count": 3
     }
   },
-  "scripts/checks/check-dependency-boundaries.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
-    }
-  },
-  "scripts/checks/check-sqlite-owner-boundary.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
-  "scripts/checks/run-tests.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
-  "scripts/checks/test-files.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
-  "scripts/checks/validate-snapshot-ignore.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
   "scripts/migrations/migrate-database-v1-to-v2.ts": {
     "jsdoc/require-jsdoc": {
       "count": 1
@@ -3807,11 +3782,6 @@
   "tests/integration/terminal-activity-pty.test.ts": {
     "jsdoc/require-jsdoc": {
       "count": 4
-    }
-  },
-  "tests/integration/test-runner.test.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 8
     }
   },
   "tests/main/additional-directories.test.ts": {

@@ -6,15 +6,34 @@ import { scanWorkspacePaths } from "../../src-electron/platform/snapshot-ignore.
 
 const execFileAsync = promisify(execFile);
 
+/** 比較対象パスをGit基準へ変換するため、指定先が属する作業ツリーのルートを取得する。 */
 async function resolveGitRoot(cwd: string): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd });
+  const { stdout } = await execFileAsync(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    { cwd },
+  );
   return stdout.trim();
 }
 
-async function loadGitIgnoredPaths(gitRoot: string, rootDirectory: string, candidatePaths: string[]): Promise<Set<string>> {
+/** Gitの対象内の候補をcheck-ignoreに渡し、無視された項目をスキャン対象ディレクトリ基準で返す。 */
+async function loadGitIgnoredPaths(
+  gitRoot: string,
+  rootDirectory: string,
+  candidatePaths: string[],
+): Promise<Set<string>> {
   const gitRelativeCandidates = candidatePaths
-    .map((relativePath) => path.relative(gitRoot, path.resolve(rootDirectory, relativePath)).replace(/\\/g, "/"))
-    .filter((relativePath) => relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+    .map((relativePath) =>
+      path
+        .relative(gitRoot, path.resolve(rootDirectory, relativePath))
+        .replace(/\\/g, "/"),
+    )
+    .filter(
+      (relativePath) =>
+        relativePath &&
+        !relativePath.startsWith("..") &&
+        !path.isAbsolute(relativePath),
+    );
 
   if (gitRelativeCandidates.length === 0) {
     return new Set();
@@ -32,7 +51,9 @@ async function loadGitIgnoredPaths(gitRoot: string, rootDirectory: string, candi
   }
 
   if (result.status !== 0 && result.status !== 1) {
-    throw new Error(result.stderr || `git check-ignore failed with status ${result.status}`);
+    throw new Error(
+      result.stderr || `git check-ignore failed with status ${result.status}`,
+    );
   }
   const stdout = result.stdout ?? "";
 
@@ -43,8 +64,13 @@ async function loadGitIgnoredPaths(gitRoot: string, rootDirectory: string, candi
       continue;
     }
 
-    const rootRelativePath = path.relative(rootDirectory, path.resolve(gitRoot, gitRelativePath)).replace(/\\/g, "/");
-    if (!rootRelativePath.startsWith("..") && !path.isAbsolute(rootRelativePath)) {
+    const rootRelativePath = path
+      .relative(rootDirectory, path.resolve(gitRoot, gitRelativePath))
+      .replace(/\\/g, "/");
+    if (
+      !rootRelativePath.startsWith("..") &&
+      !path.isAbsolute(rootRelativePath)
+    ) {
       ignoredFromGit.add(rootRelativePath);
     }
   }
@@ -52,17 +78,23 @@ async function loadGitIgnoredPaths(gitRoot: string, rootDirectory: string, candi
   return ignoredFromGit;
 }
 
+/** 片方だけが無視した項目を、出力の比較がしやすいようパス順で返す。 */
 function diffSets(left: Set<string>, right: Set<string>): string[] {
   return [...left].filter((value) => !right.has(value)).sort();
 }
 
+/** スナップショットの無視判定をGitと照合し、不一致があれば双方の例と失敗終了を返す。 */
 async function main(): Promise<void> {
   const rootDirectory = path.resolve(process.argv[2] ?? process.cwd());
   const scan = await scanWorkspacePaths(rootDirectory);
   const gitRoot = await resolveGitRoot(rootDirectory);
   const candidatePaths = [...scan.includedFiles, ...scan.ignoredFiles];
   const snapshotIgnored = new Set(scan.ignoredFiles);
-  const gitIgnored = await loadGitIgnoredPaths(gitRoot, rootDirectory, candidatePaths);
+  const gitIgnored = await loadGitIgnoredPaths(
+    gitRoot,
+    rootDirectory,
+    candidatePaths,
+  );
 
   const onlySnapshotIgnored = diffSets(snapshotIgnored, gitIgnored);
   const onlyGitIgnored = diffSets(gitIgnored, snapshotIgnored);

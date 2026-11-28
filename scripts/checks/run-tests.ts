@@ -1,7 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { listTestFiles, selectShard, type ShardOptions } from "./test-files.js";
 
-function readShardOptions(args: string[]): { shard: ShardOptions | null; list: boolean; nodeArgs: string[] } {
+/** シャード指定と一覧モードを取り出し、残りをNodeへ渡す。不正な数値表現や値なしの指定は拒否する。 */
+function readShardOptions(args: string[]): {
+  shard: ShardOptions | null;
+  list: boolean;
+  nodeArgs: string[];
+} {
   let index = process.env.TEST_SHARD_INDEX;
   let total = process.env.TEST_SHARD_TOTAL;
   let list = false;
@@ -29,11 +34,16 @@ function readShardOptions(args: string[]): { shard: ShardOptions | null; list: b
       nodeArgs.push(arg);
     }
   }
-  if (index === undefined && total === undefined) return { shard: null, list, nodeArgs };
+  if (index === undefined && total === undefined)
+    return { shard: null, list, nodeArgs };
   if (!/^\d+$/.test(index ?? "1") || !/^\d+$/.test(total ?? "1")) {
     throw new Error("Shard index and total must be positive integers.");
   }
-  return { shard: { index: Number(index ?? "1"), total: Number(total ?? "1") }, list, nodeArgs };
+  return {
+    shard: { index: Number(index ?? "1"), total: Number(total ?? "1") },
+    list,
+    nodeArgs,
+  };
 }
 
 const options = readShardOptions(process.argv.slice(2));
@@ -44,15 +54,33 @@ if (files.length === 0) {
   throw new Error("No test files selected.");
 }
 if (options.list) {
-  console.log(JSON.stringify(files.map((file) => file.relativePath), null, 2));
+  console.log(
+    JSON.stringify(
+      files.map((file) => file.relativePath),
+      null,
+      2,
+    ),
+  );
 } else {
-  console.log(options.shard
-    ? `Running test shard ${options.shard.index}/${options.shard.total}: ${files.length} of ${allFiles.length} files`
-    : `Running ${files.length} test files`);
-  const result = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--test", ...options.nodeArgs, ...files.map((file) => file.relativePath)], {
-    cwd: rootDirectory,
-    stdio: "inherit",
-  });
+  console.log(
+    options.shard
+      ? `Running test shard ${options.shard.index}/${options.shard.total}: ${files.length} of ${allFiles.length} files`
+      : `Running ${files.length} test files`,
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      import.meta.resolve("tsx"),
+      "--test",
+      ...options.nodeArgs,
+      ...files.map((file) => file.relativePath),
+    ],
+    {
+      cwd: rootDirectory,
+      stdio: "inherit",
+    },
+  );
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
 }

@@ -7,33 +7,43 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { listTestFiles, selectShard } from "../../scripts/checks/test-files.js";
 
-const runnerPath = fileURLToPath(new URL("../../scripts/checks/run-tests.ts", import.meta.url));
+const runnerPath = fileURLToPath(
+  new URL("../../scripts/checks/run-tests.ts", import.meta.url),
+);
 
+/** 個々の試験がテスト列挙の条件を独立に作れる一時ディレクトリを用意する。 */
 function createFixture(): string {
   return mkdtempSync(path.join(os.tmpdir(), "withmate test runner "));
 }
 
+/** 試験用のファイルを親ディレクトリごと作り、指定されたソースまたは空文字を書き込む。 */
 function writeFixture(root: string, name: string, text = ""): void {
   const filePath = path.join(root, name);
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, text);
 }
 
+/** 出力中のファイル名と試験名を正規表現の構文ではなく文字列として照合できる形にする。 */
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** 呼び出し元のシャード設定に依存せず、指定の作業ディレクトリと引数で実runnerを起動する。 */
 function run(root: string, args: string[] = []) {
   // 子ランナーには、親の `node:test` コンテキストも CI のシャード選択も継承させない。
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   delete env.TEST_SHARD_INDEX;
   delete env.TEST_SHARD_TOTAL;
-  return spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), runnerPath, ...args], {
-    cwd: root,
-    env,
-    encoding: "utf8",
-  });
+  return spawnSync(
+    process.execPath,
+    ["--import", import.meta.resolve("tsx"), runnerPath, ...args],
+    {
+      cwd: root,
+      env,
+      encoding: "utf8",
+    },
+  );
 }
 
 // @test-value v2
@@ -46,6 +56,7 @@ function run(root: string, args: string[] = []) {
 // scope = "test-file-discovery"
 // lifecycle = "permanent"
 // @end-test-value
+/** 階層の深いTS/TSXのテストだけを相対パス順で一度ずつ列挙し、helperや対象外の拡張子を拾わないことを確認する。 */
 test("discovers nested TS and TSX tests in deterministic path order", () => {
   const root = createFixture();
   try {
@@ -75,13 +86,28 @@ test("discovers nested TS and TSX tests in deterministic path order", () => {
 // scope = "test-shard-selection"
 // lifecycle = "permanent"
 // @end-test-value
+/** 入力順や同サイズファイルにかかわらず、全シャードを合わせると漏れや重複のないテスト集合になることを確認する。 */
 test("partitions the complete collection exactly once with stable ties", () => {
-  const files = [8, 8, 7, 5, 3, 1].map((size, index) => ({ relativePath: `tests/${index}.test.ts`, size }));
+  const files = [8, 8, 7, 5, 3, 1].map((size, index) => ({
+    relativePath: `tests/${index}.test.ts`,
+    size,
+  }));
   for (const total of [1, 2, 3, 8]) {
-    const shards = Array.from({ length: total }, (_, index) => selectShard(files, { index: index + 1, total }));
-    assert.deepEqual(shards.flat().map((file) => file.relativePath).sort(), files.map((file) => file.relativePath));
+    const shards = Array.from({ length: total }, (_, index) =>
+      selectShard(files, { index: index + 1, total }),
+    );
+    assert.deepEqual(
+      shards
+        .flat()
+        .map((file) => file.relativePath)
+        .sort(),
+      files.map((file) => file.relativePath),
+    );
     for (const [index, shard] of shards.entries()) {
-      assert.deepEqual(selectShard([...files].reverse(), { index: index + 1, total }), shard);
+      assert.deepEqual(
+        selectShard([...files].reverse(), { index: index + 1, total }),
+        shard,
+      );
     }
   }
 });
@@ -96,13 +122,23 @@ test("partitions the complete collection exactly once with stable ties", () => {
 // scope = "test-runner-cli"
 // lifecycle = "permanent"
 // @end-test-value
+/** 一覧だけでなく通常実行とシャード分割の双方で階層下のテストが動作し、不正なシャード範囲は失敗することを確認する。 */
 test("normal and shard CLI execute the same nested test collection", () => {
   const root = createFixture();
-  const expected = ["tests/main/first.test.ts", "tests/renderer/nested/second.test.tsx"];
-  const titleByPath = new Map(expected.map((name) => [name, `fixture execution: ${name}`]));
+  const expected = [
+    "tests/main/first.test.ts",
+    "tests/renderer/nested/second.test.tsx",
+  ];
+  const titleByPath = new Map(
+    expected.map((name) => [name, `fixture execution: ${name}`]),
+  );
   try {
     for (const name of expected) {
-      writeFixture(root, name, `import test from 'node:test'; test(${JSON.stringify(titleByPath.get(name))}, () => {});\n`);
+      writeFixture(
+        root,
+        name,
+        `import test from 'node:test'; test(${JSON.stringify(titleByPath.get(name))}, () => {});\n`,
+      );
     }
     const normal = run(root, ["--list"]);
     assert.equal(normal.status, 0, normal.stderr);
@@ -116,10 +152,16 @@ test("normal and shard CLI execute the same nested test collection", () => {
       assert.equal(executed.status, 0, executed.stdout + executed.stderr);
       const selected = JSON.parse(listed.stdout) as string[];
       assert.equal(selected.length, 1);
-      assert.match(executed.stdout, new RegExp(`fixture execution: ${escapeRegExp(selected[0])}`));
+      assert.match(
+        executed.stdout,
+        new RegExp(`fixture execution: ${escapeRegExp(selected[0])}`),
+      );
       const omitted = expected.find((name) => !selected.includes(name));
       assert.ok(omitted);
-      assert.doesNotMatch(executed.stdout, new RegExp(`fixture execution: ${escapeRegExp(omitted)}`));
+      assert.doesNotMatch(
+        executed.stdout,
+        new RegExp(`fixture execution: ${escapeRegExp(omitted)}`),
+      );
       assert.match(executed.stdout, /# tests 1\b/);
     }
     assert.deepEqual(shardPaths.sort(), expected);
@@ -127,7 +169,10 @@ test("normal and shard CLI execute the same nested test collection", () => {
     assert.equal(executed.status, 0, executed.stdout + executed.stderr);
     assert.match(executed.stdout, /# tests 2\b/);
     for (const name of expected) {
-      assert.match(executed.stdout, new RegExp(`fixture execution: ${escapeRegExp(name)}`));
+      assert.match(
+        executed.stdout,
+        new RegExp(`fixture execution: ${escapeRegExp(name)}`),
+      );
     }
     for (const shard of ["0/2", "3/2", "1/0", "1/2/3", "1x/2"]) {
       const invalid = run(root, [`--shard=${shard}`, "--list"]);
@@ -148,13 +193,18 @@ test("normal and shard CLI execute the same nested test collection", () => {
 // scope = "test-runner-failure-propagation"
 // lifecycle = "permanent"
 // @end-test-value
+/** 実行対象がない場合と子テストが例外を投げた場合の双方を、runnerが非ゼロで終了することを確認する。 */
 test("propagates failing tests and rejects an empty collection", () => {
   const root = createFixture();
   try {
     const empty = run(root);
     assert.notEqual(empty.status, 0);
     assert.match(empty.stderr, /No test files selected/);
-    writeFixture(root, "tests/failure.test.ts", "import test from 'node:test'; test('intentional failure', () => { throw new Error('fixture failure'); });\n");
+    writeFixture(
+      root,
+      "tests/failure.test.ts",
+      "import test from 'node:test'; test('intentional failure', () => { throw new Error('fixture failure'); });\n",
+    );
     const failed = run(root, ["--test-reporter=tap"]);
     assert.notEqual(failed.status, 0, failed.stderr);
     assert.match(failed.stdout, /fixture failure/);
