@@ -1,0 +1,4 @@
+#!/bin/sh
+# Git for Windows でも、作業中の編集ではなくステージ済みの検査入口を走らせる。
+runner=$(git show :scripts/checks/check-quality.mjs) || exit 1
+printf '%s\n' "$runner" | node --input-type=module - --pre-commit

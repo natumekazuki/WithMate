@@ -8,6 +8,18 @@ WithMateのコード変更、検証、課題管理、Git操作の運用規則で
 - TypeScriptは`strict`、ES modules、`NodeNext`、React JSX runtimeの既存構成に合わせる。既存コードの2 spaces、double quotes、末尾セミコロンを基本とし、ファイル名はkebab-case、React componentは既存に合わせてPascalCaseを使う。
 - 共通処理は既存helperとservice層へ寄せ、無関係な整形・rename・refactorを混ぜない。生成物、ドキュメント、commitにsecret、token、個人環境の絶対pathを残さない。
 
+### ソースコメント
+
+保守するソースの説明は日本語で書きます。ライセンス・著作権表示、識別子、API名、JSDocタグ、コマンド例、compiler／bundler／lint指示、`@test-value`等の機械向けメタデータは意味と形式を維持します。生成物・同梱の外部コードは直接翻訳せず、必要なら管理している入力ソースを直します。テスト内の文字列やfixtureが再現する原文は翻訳対象にしません。
+
+- 名前付きの型・クラス・関数・メソッド、公開変数、関数値を持つ変数／プロパティには、宣言の直前に本文のある日本語のJSDoc（`/** … */`）を置きます。非公開の処理・メソッドも対象です。必要に応じて契約・前提・結果・副作用・エラーを記します。名前のない一般のコールバックにはJSDocを要求しません。
+- `node:test`の登録・suite・setup／teardownは登録する式文／return文の直前にJSDocを置きます。名前付き・別名・default／namespace import、`test.only`等の修飾、コールバック引数経由の`t.test`等も対象です。守る条件、期待する観測結果、検出したい故障を自然文で説明します。テスト名だけで代用せず、既存メタデータがある場合はその後ろに置きます。
+- `if`／`else`、`switch`の各処理枝、ループ、`try`／`catch`／`finally`は、直前または本文先頭の通常コメントで目的を説明します。処理が合流するcase群は合流先に説明を置きます。同じブロック内の連続する変数宣言・式文・return・throwは、目的を示す通常コメントで12文以内に区切ります。別ブロックやネストした関数内の説明、宣言のJSDoc、空コメント、メタデータ、文字列中のコメント風の記述で代用しません。
+
+Gitが追跡する通常ファイルのJS/TS系（JSX、TSX、MJS/CJS、MTS/CTSを含む）を既存のPrettier TypeScript parserで解析します。再生成するSession／Glossary CLI同梱物2ファイルは検査対象外です。他形式の説明やコメントと実装の一致、根拠、説明の十分さはレビューで確認します。lintは日本語の文字を含む説明の有無・位置・形式を確認するもので、文章の意味や全行の翻訳までは判定しません。
+
+初回導入で既存宣言に一律の追記はしません。差分のJS/TSファイルについて、比較元に同じ規則・所属・対象の違反があれば、その件数まで引き継ぎます。新規ファイルは既存違反なしとして扱い、日本語の説明を削除するなど新たな違反があれば非ゼロ終了します。Gitが検出したrenameは旧パスを比較元にし、削除は新規違反にしません。旧違反の全解消や、同じ構文・名前に見える箇所の間での違反の移動は保証しません。
+
 ## 実装境界
 
 Main、preload、renderer、CLIの境界をまたぐ型・定数・正規化処理は、`src-shared/`のIPC、session、settings、characterなどのdomainを正本とします。利用側は必要なdomainから直接importし、共有層へReact・DOM・Electron・filesystem・DBの実装を持ち込みません。
@@ -126,3 +138,15 @@ Milestoneは予定であり、実装・レビュー・対象ブランチへの�
 - commitは一つの論理変更単位を基本とし、messageはConventional Commits形式を使う。commit前に`git status --short`を確認し、ユーザー由来の無関係な変更を混ぜない。
 - `AGENTS.md`はユーザーが明示するまでcommitしない。pushはユーザーが明示した場合だけ実行する。
 - 通常の実装commitをリリースとみなさず、リリース規則だけでtag付与、push、外部公開を許可されたと解釈しない。releaseの保存・参照・互換性境界は[Release Notes](../releases/README.md)を参照する。
+
+### Git hookの有効化
+
+Node.jsとGit（WindowsではGit for Windows）をPATHに置き、`npm ci`で依存を準備してください。リポジトリの `.githooks/pre-commit` は自動登録されません。
+
+1. `git config --show-origin --get core.hooksPath` で設定を確認します。未設定の場合も、`git rev-parse --git-path hooks` のディレクトリに有効なhookがないか確認します（`*.sample`は対象外）。
+2. **単独cloneで既存hook／hook pathがない場合**は、リポジトリrootで `git config --local core.hooksPath .githooks` を実行すると、以後のコミットで自動実行します。既存hookがあれば上書きせず、既存のhook管理方法で `npm run check:staged` を組み込み、非ゼロ終了をコミットに返してください。
+3. **linked worktree**の `--local` 設定はほかのworktreeと共有されます。すでにworktree固有の設定を利用できる場合のみ、既存hookを確認して `git config --worktree core.hooksPath .githooks` を選べます。共有設定を変えない場合は `npm run check:staged` を手動実行するか、既存hookがないことを確かめて `git -c core.hooksPath=.githooks commit ...` でその1回だけ有効にします。
+
+hookと `npm run check:staged` は検査入口をindexから読み込み、空白／衝突マーカー検査とコメントlintを実行します。lintに失敗したらテストに進みません。コード・テスト・実行設定などの変更では、検査自体の回帰テスト、配布設定のsmoke、ステージ済みの `tests/**/*.test.ts(x)` を実行します。ファイルはindexのtreeから一時展開し、インストール済みの `node_modules` だけを再利用します。package manifestやlockfileを変更した場合は、対象内容に合う依存を先にインストールしてください。検証中にindexが変わった場合は再実行を要求します。未ステージ／未追跡の作業ファイルは検査対象に含みません。
+
+文書など対象外の変更ではテストを省略し、空の差分では検査対象なしと表示します。コミット前のテストは全件の代わりではありません。実際の統合候補の差分は `npm run lint -- --base <比較元commit>`（Windows PowerShellでは `npm.cmd`）で検査できます。GitHub CIはPRのbaseまたはpush直前を比較元として同じlintを実行し、型・依存境界とテスト全体も検査します。
