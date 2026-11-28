@@ -7,11 +7,25 @@ import {
   BUNDLED_SESSION_CLI_FILE_NAME,
 } from "../../src-shared/cli/cli-artifacts.js";
 
-const repositoryRootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const glossaryCliEntryPath = path.join(repositoryRootPath, "src-cli", "glossary", "withmate-glossary.ts");
+const repositoryRootPath = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+);
+const glossaryCliEntryPath = path.join(
+  repositoryRootPath,
+  "src-cli",
+  "glossary",
+  "withmate-glossary.ts",
+);
 
-const defaultOutputDirectoryPath = path.join(repositoryRootPath, "resources", "cli");
+const defaultOutputDirectoryPath = path.join(
+  repositoryRootPath,
+  "resources",
+  "cli",
+);
 
+/** 指定されたCLIを依存込みの単一Node向けファイルにまとめ、生成元をヘッダーに記して出力パスを返す。 */
 async function buildManagedCli(input: {
   entryPath: string;
   outputDirectoryPath: string;
@@ -46,14 +60,24 @@ async function buildManagedCli(input: {
       },
     },
   });
-  const outputPath = path.join(resolvedOutputDirectoryPath, input.outputFileName);
+  const outputPath = path.join(
+    resolvedOutputDirectoryPath,
+    input.outputFileName,
+  );
   const generatedSource = await readFile(outputPath, "utf8");
   await writeFile(outputPath, generatedSource.replace(/[ \t]+$/gm, ""), "utf8");
   return outputPath;
 }
 
+/** Glossary CLIを既定の同梱Skillのbin、または呼び出し元が指定した出力先に生成する。 */
 export async function buildWithMateGlossaryCli(
-  outputDirectoryPath = path.join(repositoryRootPath, "resources", "skills", "withmate-glossary", "bin"),
+  outputDirectoryPath = path.join(
+    repositoryRootPath,
+    "resources",
+    "skills",
+    "withmate-glossary",
+    "bin",
+  ),
 ): Promise<string> {
   return buildManagedCli({
     entryPath: glossaryCliEntryPath,
@@ -62,10 +86,25 @@ export async function buildWithMateGlossaryCli(
   });
 }
 
-export async function buildWithMateSessionCli(outputDirectoryPath = defaultOutputDirectoryPath): Promise<string> {
-  return buildManagedCli({ entryPath: path.join(repositoryRootPath, "src-cli", "session", "withmate-session.ts"), outputDirectoryPath, outputFileName: BUNDLED_SESSION_CLI_FILE_NAME });
+/** Session CLIのエントリーから、指定された出力ディレクトリに同梱用CLIを生成する。 */
+export async function buildWithMateSessionCli(
+  outputDirectoryPath = defaultOutputDirectoryPath,
+): Promise<string> {
+  return buildManagedCli({
+    entryPath: path.join(
+      repositoryRootPath,
+      "src-cli",
+      "session",
+      "withmate-session.ts",
+    ),
+    outputDirectoryPath,
+    outputFileName: BUNDLED_SESSION_CLI_FILE_NAME,
+  });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   await Promise.all([buildWithMateGlossaryCli(), buildWithMateSessionCli()]);
 }

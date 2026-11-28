@@ -63,6 +63,7 @@ const svg = String.raw`<svg xmlns="http://www.w3.org/2000/svg" width="1024" heig
   </g>
 </svg>`;
 
+/** 共通SVGを指定された一辺の長さに変換し、正方形のPNGをバイト列で返す。 */
 async function renderPng(size: number) {
   return sharp(Buffer.from(svg), { density: 144 })
     .resize(size, size)
@@ -70,6 +71,7 @@ async function renderPng(size: number) {
     .toBuffer();
 }
 
+/** ビルド用のSVG・1024px PNG・複数解像度ICOを共通SVGから生成し、出力先を表示する。 */
 async function main() {
   await mkdir(buildDir, { recursive: true });
   await writeFile(iconSvgPath, svg, "utf8");
@@ -78,11 +80,18 @@ async function main() {
   await writeFile(iconPngPath, iconPng);
 
   const icoPngSizes = [16, 24, 32, 48, 64, 128, 256];
-  const icoBuffers = await Promise.all(icoPngSizes.map((size) => renderPng(size)));
+  const icoBuffers = await Promise.all(
+    icoPngSizes.map((size) => renderPng(size)),
+  );
   const iconIco = await pngToIco(icoBuffers);
   await writeFile(iconIcoPath, iconIco);
 
-  console.log("生成完了:", path.relative(repoRoot, iconSvgPath), path.relative(repoRoot, iconPngPath), path.relative(repoRoot, iconIcoPath));
+  console.log(
+    "生成完了:",
+    path.relative(repoRoot, iconSvgPath),
+    path.relative(repoRoot, iconPngPath),
+    path.relative(repoRoot, iconIcoPath),
+  );
 }
 
 void main();

@@ -4,8 +4,10 @@ import path from "node:path";
 import { rebuild, type RebuildOptions } from "@electron/rebuild";
 import { Arch, type Configuration } from "electron-builder";
 
+/** electron-builderがbeforePackに直接呼び出す関数の型。設定ファイルのパス指定は含めない。 */
 type BeforePackHook = Exclude<NonNullable<Configuration["beforePack"]>, string>;
 
+/** 対象環境に合わせて依存を準備し、既定の再ビルドの要否とnode-ptyの梱包除外を設定する。 */
 export const prepareNativePackaging: BeforePackHook = async (context) => {
   const { packager } = context;
   const useDefaultRebuild = await prepareNativeDependencies({
@@ -24,12 +26,15 @@ export const prepareNativePackaging: BeforePackHook = async (context) => {
   const fileSets = packager.config.files ?? [];
   for (const fileSet of Array.isArray(fileSets) ? fileSets : [fileSets]) {
     if (typeof fileSet === "string") continue;
-    const filters = Array.isArray(fileSet.filter) ? fileSet.filter : [fileSet.filter ?? "**/*"];
+    const filters = Array.isArray(fileSet.filter)
+      ? fileSet.filter
+      : [fileSet.filter ?? "**/*"];
     fileSet.filter = filters.filter((filter) => filter !== exclusion);
     if (!useDefaultRebuild) fileSet.filter.push(exclusion);
   }
 };
 
+/** ネイティブ依存の探索元となるアプリディレクトリと、梱包対象のElectron・OS・CPU情報。 */
 type NativeDependencyContext = {
   appDir: string;
   electronVersion?: string;
@@ -37,15 +42,22 @@ type NativeDependencyContext = {
   arch: string;
 };
 
+/** Windowsではnode-ptyの配布バイナリを確認して他の依存を再ビルドする。既定の再ビルドが必要な他OSではtrueを返す。 */
 export async function prepareNativeDependencies(
   context: NativeDependencyContext,
   rebuildDependencies: (options: RebuildOptions) => Promise<void> = rebuild,
 ): Promise<boolean> {
   if (context.platform.nodeName !== "win32") return true;
 
-  const requireFromApp = createRequire(path.join(context.appDir, "package.json"));
+  const requireFromApp = createRequire(
+    path.join(context.appDir, "package.json"),
+  );
   const ptyRoot = path.dirname(requireFromApp.resolve("node-pty/package.json"));
-  const prebuildDirectory = path.join(ptyRoot, "prebuilds", `win32-${context.arch}`);
+  const prebuildDirectory = path.join(
+    ptyRoot,
+    "prebuilds",
+    `win32-${context.arch}`,
+  );
   const requiredFiles = [
     "conpty.node",
     "conpty_console_list.node",
@@ -59,13 +71,17 @@ export async function prepareNativeDependencies(
     const target = path.join(prebuildDirectory, file);
     const info = await stat(target).catch(() => null);
     if (!info?.isFile() || info.size === 0) {
-      throw new Error(`node-pty Windows prebuild is missing or empty: ${target}`);
+      throw new Error(
+        `node-pty Windows prebuild is missing or empty: ${target}`,
+      );
     }
   }
 
-  const electronVersion = context.electronVersion ?? JSON.parse(
-    await readFile(requireFromApp.resolve("electron/package.json"), "utf8"),
-  ).version as string;
+  const electronVersion =
+    context.electronVersion ??
+    (JSON.parse(
+      await readFile(requireFromApp.resolve("electron/package.json"), "utf8"),
+    ).version as string);
   console.log(`Using node-pty Windows prebuild: win32-${context.arch}`);
   await rebuildDependencies({
     buildPath: context.appDir,

@@ -11,8 +11,13 @@ import {
 const repoRoot = process.cwd();
 const stageRoot = path.join(repoRoot, "build", "provider-binaries");
 
+/** インストール済みの配布用パッケージをパッケージ名に対応する梱包先へコピーし、ENOENTだけをスキップする。 */
 async function stagePackage(packageSpecifier: string): Promise<void> {
-  const packagePath = path.join(repoRoot, "node_modules", ...packageSpecifier.split("/"));
+  const packagePath = path.join(
+    repoRoot,
+    "node_modules",
+    ...packageSpecifier.split("/"),
+  );
   const targetPath = path.join(stageRoot, ...packageSpecifier.split("/"));
 
   try {
@@ -25,6 +30,7 @@ async function stagePackage(packageSpecifier: string): Promise<void> {
   }
 }
 
+/** 実行環境向けの配布バイナリが準備できたか確認し、非対応または未配置なら梱包を止める。 */
 function verifyCurrentPlatformBinary(provider: SupportedProviderBinary): void {
   const spec = resolveProviderBinarySpec(provider);
   if (!spec) {
@@ -33,12 +39,21 @@ function verifyCurrentPlatformBinary(provider: SupportedProviderBinary): void {
     );
   }
 
-  const stagedBinaryPath = path.join(stageRoot, ...spec.packageSpecifier.split("/"), ...spec.binaryRelativePath);
+  const stagedBinaryPath = path.join(
+    stageRoot,
+    ...spec.packageSpecifier.split("/"),
+    ...spec.binaryRelativePath,
+  );
   if (existsSync(stagedBinaryPath)) {
     return;
   }
 
-  const sourceBinaryPath = path.join(repoRoot, "node_modules", ...spec.packageSpecifier.split("/"), ...spec.binaryRelativePath);
+  const sourceBinaryPath = path.join(
+    repoRoot,
+    "node_modules",
+    ...spec.packageSpecifier.split("/"),
+    ...spec.binaryRelativePath,
+  );
   throw new Error(
     [
       `${provider} の provider binary が見つかりません。`,
@@ -49,6 +64,7 @@ function verifyCurrentPlatformBinary(provider: SupportedProviderBinary): void {
   );
 }
 
+/** 梱包用ディレクトリを作り直してバイナリを配置し、対応する実行ファイルとライセンスを揃える。 */
 async function main(): Promise<void> {
   await rm(stageRoot, { recursive: true, force: true });
   await mkdir(stageRoot, { recursive: true });
@@ -61,9 +77,16 @@ async function main(): Promise<void> {
   verifyCurrentPlatformBinary("copilot");
   verifyCurrentPlatformBinary("claude");
   verifyCurrentPlatformBinary("opencode");
-  await cp(path.join(repoRoot, "resources", "provider-licenses", "opencode"), path.join(stageRoot, "@opencode", "licenses"), { recursive: true });
+  await cp(
+    path.join(repoRoot, "resources", "provider-licenses", "opencode"),
+    path.join(stageRoot, "@opencode", "licenses"),
+    { recursive: true },
+  );
 
-  console.log("provider binary stage 完了:", path.relative(repoRoot, stageRoot));
+  console.log(
+    "provider binary stage 完了:",
+    path.relative(repoRoot, stageRoot),
+  );
 }
 
 await main();

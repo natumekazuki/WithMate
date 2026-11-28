@@ -1,9 +1,13 @@
-import { createMigrationDryRunReport, createMigrationWriteReport } from "../../src-electron/storage/migrations/migrate-database-v1-to-v2.js";
+import {
+  createMigrationDryRunReport,
+  createMigrationWriteReport,
+} from "../../src-electron/storage/migrations/migrate-database-v1-to-v2.js";
 
+/** 入力用v1 DBと書き込み先v2 DBの指定方法を標準エラーに表示し、終了コード1で終了する。 */
 function usage(): never {
   console.error(
-    "Usage: npx tsx scripts/migrations/migrate-database-v1-to-v2.ts --dry-run --v1 <path-to-withmate.db>\n"
-      + "       npx tsx scripts/migrations/migrate-database-v1-to-v2.ts --write --v1 <path-to-withmate.db> --v2 <path-to-withmate-v2.db> [--overwrite]",
+    "Usage: npx tsx scripts/migrations/migrate-database-v1-to-v2.ts --dry-run --v1 <path-to-withmate.db>\n" +
+      "       npx tsx scripts/migrations/migrate-database-v1-to-v2.ts --write --v1 <path-to-withmate.db> --v2 <path-to-withmate-v2.db> [--overwrite]",
   );
   process.exit(1);
 }
@@ -17,7 +21,13 @@ const overwrite = args.includes("--overwrite");
 if (args.includes("--dry-run") && v1) {
   console.log(JSON.stringify(createMigrationDryRunReport(v1), null, 2));
 } else if (args.includes("--write") && v1 && v2) {
-  console.log(JSON.stringify(createMigrationWriteReport({ v1DbPath: v1, v2DbPath: v2, overwrite }), null, 2));
+  console.log(
+    JSON.stringify(
+      createMigrationWriteReport({ v1DbPath: v1, v2DbPath: v2, overwrite }),
+      null,
+      2,
+    ),
+  );
 } else {
   usage();
 }

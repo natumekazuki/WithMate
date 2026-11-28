@@ -29,51 +29,6 @@
       "count": 18
     }
   },
-  "scripts/build/before-pack.mjs": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
-  "scripts/build/build-managed-cli.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "scripts/build/generate-app-icon.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
-  "scripts/build/prepare-native-dependencies.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
-  "scripts/build/stage-provider-binaries.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "scripts/migrations/migrate-database-v1-to-v2.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
-  "scripts/migrations/migrate-database-v2-to-v3.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
-  "scripts/migrations/migrate-database-v3-to-v4.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
-  "scripts/migrations/migrate-database-v4-to-v6.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
   "src-cli/glossary/withmate-glossary-mcp.ts": {
     "jsdoc/require-jsdoc": {
       "count": 1
@@ -2009,11 +1964,6 @@
       "count": 5
     }
   },
-  "src-shared/terminal/terminal-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
   "src-shared/text/codex-file-references.ts": {
     "jsdoc/require-jsdoc": {
       "count": 13
@@ -2032,11 +1982,6 @@
   "src-shared/text/provider-response-markdown.ts": {
     "jsdoc/require-jsdoc": {
       "count": 2
-    }
-  },
-  "src-shared/time-state.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
     }
   },
   "src-shared/window/app-boot-state.ts": {
@@ -6002,11 +5947,6 @@
   "tests/support/read-stylesheet.ts": {
     "jsdoc/require-jsdoc": {
       "count": 2
-    }
-  },
-  "vite.pdf-reader.config.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
     }
   }
 }
