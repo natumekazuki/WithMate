@@ -2,7 +2,8 @@ import { BrowserWindow, dialog, type IpcMainInvokeEvent } from "electron";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import { localPrGuiInput, type LocalPrData, type LocalPrInput, type LocalPrOperation, type LocalPrResult } from "../../src-shared/local-pr/local-pr-contract.js";
-import { LOCAL_PR_CHANGED, LOCAL_PR_EXECUTE, LOCAL_PR_INSPECT_IMAGE, LOCAL_PR_OPEN_WINDOW, LOCAL_PR_PICK_ATTACHMENT, LOCAL_PR_READ_IMAGE_CHUNK, localPrImageChunkInput, localPrImageInput, openLocalPrWindowInput } from "../../src-shared/local-pr/local-pr-ipc.js";
+import { LOCAL_PR_CHANGED, LOCAL_PR_EXECUTE, LOCAL_PR_INSPECT_IMAGE, LOCAL_PR_OPEN_WINDOW, LOCAL_PR_PICK_ATTACHMENT, LOCAL_PR_READ_IMAGE_CHUNK, LOCAL_PR_SAVE_CLIPBOARD_IMAGE, LOCAL_PR_OPEN_ATTACHMENT, localPrClipboardImageInput, localPrImageChunkInput, localPrImageInput, openLocalPrWindowInput } from "../../src-shared/local-pr/local-pr-ipc.js";
+import type { OpenPathResult } from "../../src-shared/window/withmate-window-types.js";
 import type { MainSessionTarget } from "../../src-shared/session/session-target.js";
 import { assertNotHtmlPreviewSender } from "../files/html-preview-isolation.js";
 import type { SessionFileExplorerService } from "../files/session-file-explorer-service.js";
@@ -24,6 +25,8 @@ export class LocalPrWindowService<Repo extends Repository> {
     loadWindow(window: BrowserWindow): Promise<void>;
     application: Pick<LocalPrApplication<Repo>, "execute">;
     pickAttachment(window: BrowserWindow, workspacePath: string): Promise<string[]>;
+    saveClipboardImage(input: ReturnType<typeof localPrClipboardImageInput.parse>): Promise<string>;
+    openAttachment(target: string): Promise<OpenPathResult>;
     imageReader(): Pick<SessionFileExplorerService, "inspectImage" | "readImageChunk">;
   }) {}
 
@@ -36,6 +39,18 @@ export class LocalPrWindowService<Repo extends Repository> {
       const paths = await this.deps.pickAttachment(entry.window, entry.source.repository.workspacePath);
       await assertCurrent();
       return paths;
+    });
+    ipc.handle(LOCAL_PR_SAVE_CLIPBOARD_IMAGE, async (event, raw) => {
+      const { assertCurrent } = this.requirePrWindow(event);
+      const input = localPrClipboardImageInput.parse(raw);
+      await assertCurrent();
+      return this.deps.saveClipboardImage(input);
+    });
+    ipc.handle(LOCAL_PR_OPEN_ATTACHMENT, async (event, raw) => {
+      const { assertCurrent } = this.requirePrWindow(event);
+      const target = localPrImageInput.parse({ target: raw }).target;
+      await assertCurrent();
+      return this.deps.openAttachment(target);
     });
     ipc.handle(LOCAL_PR_INSPECT_IMAGE, async (event, raw) => {
       const { entry, assertCurrent } = this.requirePrWindow(event);

@@ -251,6 +251,7 @@ import { LocalPrCiService } from "./local-pr/local-pr-ci-service.js";
 import { LocalPrService, resolveLocalPrRepository, type LocalPrRepository } from "./local-pr/local-pr-service.js";
 import { LocalPrWindowService } from "./local-pr/local-pr-window.js";
 import { enqueueLocalPrDiscussion } from "./local-pr/local-pr-session-bridge.js";
+import { saveLocalPrClipboardImage } from "./local-pr/local-pr-attachments.js";
 import type { LocalPrInput, LocalPrResult } from "../src-shared/local-pr/local-pr-contract.js";
 import type { SessionTarget } from "../src-shared/session/session-target.js";
 import { ChildSessionCreationRejectedError } from "./session/session-storage-errors.js";
@@ -878,6 +879,8 @@ const localPrWindowService: LocalPrWindowService<LocalPrRepository> = new LocalP
   loadWindow: (window) => requireWindowEntryLoader().loadLocalPrEntry(window),
   application: localPrApplication,
   pickAttachment: (window, workspacePath) => requireWindowDialogService().pickFiles(window, workspacePath),
+  saveClipboardImage: (input) => saveLocalPrClipboardImage(fixedUserDataPath, input),
+  openAttachment: (target) => openPathTarget(target),
   imageReader: createSessionFileExplorerService,
 });
 

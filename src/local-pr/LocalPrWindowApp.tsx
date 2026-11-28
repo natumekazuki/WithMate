@@ -1035,6 +1035,7 @@ function CreatePr({
   const branches = useRead("branches", branchesLoad, retry);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [source, setSource] = useState("");
   const [target, setTarget] = useState("");
   const sourceRef = branches.data?.branches.find(
@@ -1055,7 +1056,7 @@ function CreatePr({
           onChange={(e) => setTitle(e.target.value)}
         />
       </label>
-      <LocalPrDescriptionEditor api={api} text={description} onChange={setDescription} disabled={busy} />
+      <LocalPrDescriptionEditor api={api} text={description} onChange={setDescription} disabled={busy} onAttachmentBusy={setAttachmentBusy} />
       <label>
         Source Branch
         <select value={source} onChange={(e) => setSource(e.target.value)}>
@@ -1079,7 +1080,7 @@ function CreatePr({
         </select>
       </label>
       <ActionButton className="local-pr-primary"
-        disabled={busy || !title.trim() || !sourceRef || !targetRef}
+        disabled={busy || attachmentBusy || !title.trim() || !sourceRef || !targetRef}
         onAction={() => sourceRef && targetRef
           ? run("pr_create", {
               title,

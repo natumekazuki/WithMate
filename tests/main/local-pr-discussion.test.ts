@@ -35,8 +35,21 @@ test("PR相談は返信元の固定したbefore側を既存Sessionへの本文�
   const data = JSON.parse(message.split("~~~json\n")[1].split("\n~~~")[0]);
   assert.equal(data.version, 2);
   assert.equal(data.headCommit, currentHead);
+  assert.equal(data.description, pr.description);
+  assert.equal(data.sourceBranch, pr.sourceBranch);
+  assert.match(message, /session\.pr_get/);
+  assert.match(message, /session\.pr_diff/);
+  assert.match(message, /session\.pr_comment/);
   assert.equal(data.comments[0].replyTo, pr.comments[0].id);
   assert.equal(data.comments[0].note, pr.comments[1].body);
   assert.deepEqual(data.comments[0].review, { anchor, beforeCommit: targetCommit, afterCommit: earlierHead,
     lines: [{ line: 4, text: "old @private.ts ![local](C:/private.png)" }], omitted: false });
+});
+
+/** PR-wide requests still ask the agent to return the response to that PR. */
+test("PR-wide discussion requests do not require a selected comment", async () => {
+  const input: LocalPrInput<"discuss"> = { prId: pr.id, version: 2, target: actor, commentIds: [], message: "Review the PR", requestId: "79eabed9-701a-41d4-a8f2-7ef4bd745dc0" };
+  const message = await buildLocalPrDiscussionMessage(pr, input, async () => { throw new Error("No anchored patch expected"); });
+  assert.match(message, /Post your response as a PR-wide comment with session\.pr_comment/);
+  assert.deepEqual(JSON.parse(message.split("~~~json\n")[1].split("\n~~~")[0]).comments, []);
 });

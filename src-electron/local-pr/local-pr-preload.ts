@@ -1,11 +1,14 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { LocalPrWindowApi } from "../../src-shared/local-pr/local-pr-contract.js";
-import { LOCAL_PR_CHANGED, LOCAL_PR_EXECUTE, LOCAL_PR_INSPECT_IMAGE, LOCAL_PR_PICK_ATTACHMENT, LOCAL_PR_READ_IMAGE_CHUNK } from "../../src-shared/local-pr/local-pr-ipc.js";
+import { LOCAL_PR_CHANGED, LOCAL_PR_EXECUTE, LOCAL_PR_INSPECT_IMAGE, LOCAL_PR_PICK_ATTACHMENT, LOCAL_PR_READ_IMAGE_CHUNK, LOCAL_PR_SAVE_CLIPBOARD_IMAGE, LOCAL_PR_OPEN_ATTACHMENT } from "../../src-shared/local-pr/local-pr-ipc.js";
 
 // The dedicated window does not need the Session window's other preload capabilities.
 contextBridge.exposeInMainWorld("withmateLocalPr", {
   execute: (operation, input) => ipcRenderer.invoke(LOCAL_PR_EXECUTE, operation, input),
   pickAttachment: () => ipcRenderer.invoke(LOCAL_PR_PICK_ATTACHMENT),
+  clipboardFilePath: (file) => webUtils.getPathForFile(file),
+  saveClipboardImage: (request) => ipcRenderer.invoke(LOCAL_PR_SAVE_CLIPBOARD_IMAGE, request),
+  openAttachment: (target) => ipcRenderer.invoke(LOCAL_PR_OPEN_ATTACHMENT, target),
   inspectImage: (target) => ipcRenderer.invoke(LOCAL_PR_INSPECT_IMAGE, { target }),
   readImageChunk: (request) => ipcRenderer.invoke(LOCAL_PR_READ_IMAGE_CHUNK, request),
   subscribeChanged(listener) {

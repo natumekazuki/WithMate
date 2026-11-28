@@ -1,9 +1,7 @@
-import { useMemo, useRef, useState } from "react";
-import { isSupportedComposerImagePath } from "../../src-shared/files/composer-image-reference.js";
+import { useMemo, useState } from "react";
 import type { LocalPrWindowApi } from "../../src-shared/local-pr/local-pr-contract.js";
-import { ComposerIcon } from "../chat/composer/composer-icon.js";
-import { ButtonContent } from "../ui/button-content.js";
-import { buildComposerReferenceInsertionState } from "../chat/composer/session-composer-paths.js";
+import { LocalPrAttachmentEditor } from "./LocalPrAttachmentEditor.js";
+import { resolveOpenPathFeedback, showOpenPathFeedback } from "../file-explorer/open-path-result.js";
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
 import { useMarkdownImageResolver, type MarkdownImageApi } from "../ui/markdown/image-resource-loader.js";
 
@@ -21,63 +19,31 @@ export function LocalPrDescription({ api, text, revision }: {
       api.readImageChunk({ target, offset, length, expectedRevision }),
   }), [api]);
   const resolveImageSource = useMarkdownImageResolver(imageApi, imageContext, revision);
-  return <MessageRichText className="local-pr-description" text={text} resolveImageSource={resolveImageSource} />;
+  return <MessageRichText className="local-pr-description" text={text} resolveImageSource={resolveImageSource}
+    onOpenPath={(target) => { void resolveOpenPathFeedback(() => api.openAttachment(target), "The path could not be opened.").then(showOpenPathFeedback); }} />;
 }
 
-export function LocalPrDescriptionEditor({ api, text, onChange, disabled }: {
+export function LocalPrDescriptionEditor({ api, text, onChange, disabled, onAttachmentBusy }: {
   api: LocalPrWindowApi;
   text: string;
   onChange: (text: string) => void;
   disabled: boolean;
+  onAttachmentBusy: (busy: boolean) => void;
 }) {
   const [preview, setPreview] = useState(false);
   const [picking, setPicking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const field = useRef<HTMLTextAreaElement>(null);
-
-  async function attach() {
-    const start = field.current?.selectionStart ?? text.length;
-    const end = field.current?.selectionEnd ?? start;
-    setPicking(true);
-    setError(null);
-    try {
-      const paths = await api.pickAttachment();
-      const insertion = buildComposerReferenceInsertionState(text.slice(0, start) + text.slice(end), start,
-        paths.map((path) => ({ path, presentation: isSupportedComposerImagePath(path) ? "image" : "path" })));
-      if (!insertion) return;
-      if (insertion.draft.length > 20000) {
-        setError("The attachment reference exceeds the description length limit.");
-        return;
-      }
-      onChange(insertion.draft);
-      requestAnimationFrame(() => {
-        field.current?.focus();
-        field.current?.setSelectionRange(insertion.caret, insertion.caret);
-      });
-    } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setPicking(false);
-    }
-  }
   return (
     <div className="local-pr-description-editor">
       <div className="local-pr-description-toolbar">
         <span id="local-pr-description-label">Description</span>
         <div className="session-file-preview-segmented" role="group" aria-label="Description Mode">
-          <button type="button" disabled={picking} aria-pressed={!preview} className={!preview ? "is-active" : undefined} onClick={() => setPreview(false)}>Write Markdown</button>
-          <button type="button" disabled={picking} aria-pressed={preview} className={preview ? "is-active" : undefined} onClick={() => setPreview(true)}>Preview</button>
+          <button type="button" disabled={disabled || picking} aria-pressed={!preview} className={!preview ? "is-active" : undefined} onClick={() => setPreview(false)}>Write Markdown</button>
+          <button type="button" disabled={disabled || picking} aria-pressed={preview} className={preview ? "is-active" : undefined} onClick={() => setPreview(true)}>Preview</button>
         </div>
       </div>
       {preview
         ? <div aria-label="Description Preview">{text.trim() ? <LocalPrDescription api={api} text={text} revision={0} /> : <p>No description.</p>}</div>
-        : <>
-          <textarea ref={field} disabled={disabled || picking} aria-labelledby="local-pr-description-label" value={text} maxLength={20000} onChange={(event) => onChange(event.target.value)} />
-          <button type="button" className="drawer-toggle compact secondary composer-attachment-trigger composer-icon-button"
-            disabled={disabled || picking} aria-label="Attach Files" title="Attach Files" aria-busy={picking || undefined}
-            onClick={() => void attach()}><ButtonContent busy={picking}><ComposerIcon name="attach" /><span className="visually-hidden">Attach Files</span></ButtonContent></button>
-        </>}
-      {error && <p className="local-pr-warning" role="alert">{error}</p>}
+        : <LocalPrAttachmentEditor api={api} text={text} onChange={onChange} disabled={disabled} onBusyChange={(value) => { setPicking(value); onAttachmentBusy(value); }} />}
     </div>
   );
 }

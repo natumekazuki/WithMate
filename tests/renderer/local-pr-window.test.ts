@@ -5,6 +5,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { createServer } from "vite";
 import type { LocalPrDetail, LocalPrWindowApi } from "../../src-shared/local-pr/local-pr-contract.js";
+import { installIntersectionObserver } from "../support/intersection-observer.js";
 
 /** Both windows preserve reads on failure; owned labels and local dates do not rewrite source content. */
 test("local PR labels, dates, and independent window refreshes retain their boundaries", async () => {
@@ -69,6 +70,8 @@ test("local PR labels, dates, and independent window refreshes retain their boun
   let reads = 0;
   const merges: unknown[] = [];
   let picked = 0;
+  let pasted = 0;
+  const opened: string[] = [];
   let finishMerge: (() => void) | undefined;
   let finishLog: (() => void) | undefined;
   const execute = async (operation: string, input: unknown) => {
@@ -158,6 +161,9 @@ test("local PR labels, dates, and independent window refreshes retain their boun
   const api: LocalPrWindowApi = {
     execute: execute as unknown as LocalPrWindowApi["execute"],
     pickAttachment: async () => { picked += 1; return ["C:/fixture/review.png", "C:/fixture/notes.txt"]; },
+    clipboardFilePath: () => "",
+    saveClipboardImage: async () => { pasted += 1; return "C:/fixture/pasted.png"; },
+    openAttachment: async (target) => { opened.push(target); return { status: "opened", targetType: "local-path", target }; },
     inspectImage: async () => { throw new Error("No image in this fixture."); },
     readImageChunk: async () => { throw new Error("No image in this fixture."); },
     subscribeChanged(callback) {
@@ -172,6 +178,7 @@ test("local PR labels, dates, and independent window refreshes retain their boun
   assert.ok(first);
   assert.ok(second);
   const roots = [createRoot(first), createRoot(second)];
+  const intersection = installIntersectionObserver();
   try {
     const { default: App } = await vite.ssrLoadModule(
       "/src/local-pr/LocalPrWindowApp.tsx",
@@ -354,13 +361,26 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       assert.equal(picked, 1);
       const value = first.querySelector<HTMLTextAreaElement>("textarea[aria-labelledby='local-pr-description-label']")?.value ?? "";
       assert.match(value, /!\[review\.png\]\(C:\/fixture\/review\.png\)/);
-      assert.match(value, /@C:\/fixture\/notes\.txt/);
+      assert.match(value, /\[notes\.txt\]\(C:\/fixture\/notes\.txt\)/);
+      const field = first.querySelector<HTMLTextAreaElement>("textarea[aria-labelledby='local-pr-description-label']");
+      assert.ok(field);
+      const paste = new dom.window.Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(paste, "clipboardData", { value: { files: [{ type: "image/png", arrayBuffer: async () => new Uint8Array([1, 2]).buffer }] } });
+      await act(async () => field.dispatchEvent(paste));
+      assert.equal(pasted, 1);
+      assert.match(field.value, /!\[pasted\.png\]\(C:\/fixture\/pasted\.png\)/);
+      await act(async () => button("Preview").click());
+      const link = first.querySelector<HTMLAnchorElement>("a[href='C:/fixture/notes.txt']");
+      assert.ok(link);
+      await act(async () => link.click());
+      assert.deepEqual(opened, ["C:/fixture/notes.txt"]);
     } finally {
       globalThis.requestAnimationFrame = previousAnimationFrame;
     }
   } finally {
     await act(async () => roots.forEach((root) => root.unmount()));
     await vite.close();
+    intersection.restore();
     dom.window.close();
     Object.assign(globalThis, previous);
   }

@@ -198,6 +198,9 @@ export type LocalPrCiRun = z.infer<typeof localPrCiRunSchema>;
 export type LocalPrWindowApi = {
   execute<T extends LocalPrOperation>(operation: T, input: LocalPrInput<T>): Promise<LocalPrResult<T>>;
   pickAttachment(): Promise<string[]>;
+  clipboardFilePath(file: File): string;
+  saveClipboardImage(request: { mimeType: string; data: ArrayBuffer }): Promise<string>;
+  openAttachment(target: string): Promise<import("../window/withmate-window-types.js").OpenPathResult>;
   inspectImage(target: string): Promise<SessionFileDescriptor>;
   readImageChunk(request: Omit<SessionImageChunkRequest, "sessionId" | "baseResource">): Promise<SessionFileChunkResult>;
   subscribeChanged(listener: () => void): () => void;
