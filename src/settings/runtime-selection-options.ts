@@ -1,6 +1,13 @@
-import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } from "../../src-shared/settings/model-catalog.js";
+import type {
+  ModelCatalogItem,
+  ModelCatalogProvider,
+  ModelReasoningEffort,
+} from "../../src-shared/settings/model-catalog.js";
 import type { CodexSandboxMode } from "../../src-shared/settings/codex-sandbox-mode.js";
-import { getCodexSpeedOptions, type CodexSpeed } from "../../src-shared/settings/codex-speed.js";
+import {
+  getCodexSpeedOptions,
+  type CodexSpeed,
+} from "../../src-shared/settings/codex-speed.js";
 import {
   buildModelSelectOptions,
   buildReasoningEffortSelectOptions,
@@ -13,6 +20,7 @@ import {
   type RuntimeSelectOption,
 } from "../../src-shared/settings/provider-runtime-options.js";
 
+/** Provider とモデルの能力に応じた実行設定の候補と、モデル表示名の代替。 */
 export type RuntimeSelectionOptions = {
   sandboxChoiceOptions: RuntimeSelectOption<CodexSandboxMode>[];
   modelSelectOptions: ModelSelectOption[];
@@ -21,6 +29,7 @@ export type RuntimeSelectionOptions = {
   speedSelectOptions: RuntimeSelectOption<CodexSpeed>[];
 };
 
+/** 選択可能な実行設定を組み立て、対応する選択欄ではカタログから外れた保存値も表示に残す。 */
 export function buildRuntimeSelectionOptions({
   providerId,
   providerCatalog,
@@ -40,15 +49,34 @@ export function buildRuntimeSelectionOptions({
   selectedCodexSandboxMode: CodexSandboxMode;
   selectedCodexSpeed: CodexSpeed;
 }): RuntimeSelectionOptions {
-  const sandboxChoiceOptions = getSandboxOptionsForProviderSelection(providerId, selectedCodexSandboxMode);
+  const sandboxChoiceOptions = getSandboxOptionsForProviderSelection(
+    providerId,
+    selectedCodexSandboxMode,
+  );
   const modelSelectOptions = buildModelSelectOptions(models, selectedModel);
-  const selectedModelFallbackLabel = resolveModelFallbackLabel(providerCatalog, selectedModel);
-  const reasoningSelectOptions = buildReasoningEffortSelectOptions(reasoningEfforts);
-  if (reasoningSelectOptions.length > 0 && !reasoningSelectOptions.some((option) => option.value === "")) {
+  const selectedModelFallbackLabel = resolveModelFallbackLabel(
+    providerCatalog,
+    selectedModel,
+  );
+  const reasoningSelectOptions =
+    buildReasoningEffortSelectOptions(reasoningEfforts);
+  if (
+    reasoningSelectOptions.length > 0 &&
+    !reasoningSelectOptions.some((option) => option.value === "")
+  ) {
     reasoningSelectOptions.unshift({ value: "", label: "Default" });
   }
-  if (reasoningSelectOptions.length > 0 && selectedReasoningEffort && !reasoningSelectOptions.some((option) => option.value === selectedReasoningEffort)) {
-    reasoningSelectOptions.unshift({ value: selectedReasoningEffort, label: selectedReasoningEffort });
+  if (
+    reasoningSelectOptions.length > 0 &&
+    selectedReasoningEffort &&
+    !reasoningSelectOptions.some(
+      (option) => option.value === selectedReasoningEffort,
+    )
+  ) {
+    reasoningSelectOptions.unshift({
+      value: selectedReasoningEffort,
+      label: selectedReasoningEffort,
+    });
   }
   const speedSelectOptions = getCodexSpeedOptions(providerId);
 
@@ -57,10 +85,16 @@ export function buildRuntimeSelectionOptions({
     modelSelectOptions,
     selectedModelFallbackLabel,
     reasoningSelectOptions,
-    speedSelectOptions: speedSelectOptions.length === 0
-      ? []
-      : speedSelectOptions.some((option) => option.value === selectedCodexSpeed)
-        ? speedSelectOptions
-        : [{ value: selectedCodexSpeed, label: selectedCodexSpeed }, ...speedSelectOptions],
+    speedSelectOptions:
+      speedSelectOptions.length === 0
+        ? []
+        : speedSelectOptions.some(
+              (option) => option.value === selectedCodexSpeed,
+            )
+          ? speedSelectOptions
+          : [
+              { value: selectedCodexSpeed, label: selectedCodexSpeed },
+              ...speedSelectOptions,
+            ],
   };
 }

@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CoordinationSummary } from "../../src-shared/coordination/coordination-contract.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 
+/** 起票した Main Session が同じ、ユーザーの対応待ち相談のまとまり。 */
 export type CoordinationMonitorGroup = {
   mainSessionId: string;
   items: CoordinationSummary[];
 };
+/** 全 Crew のユーザー対応待ちをページ取得し、現在の取得世代で揃った一覧を起票元ごとに公開する。 */
 export function useCoordinationMonitor() {
   const [groups, setGroups] = useState<CoordinationMonitorGroup[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -49,7 +51,12 @@ export function useCoordinationMonitor() {
         grouped.set(item.initiatorMainSessionId, existing);
       }
       if (generation.current === current) {
-        setGroups([...grouped].map(([mainSessionId, items]) => ({ mainSessionId, items })));
+        setGroups(
+          [...grouped].map(([mainSessionId, items]) => ({
+            mainSessionId,
+            items,
+          })),
+        );
         setError("");
       }
     })()
@@ -76,6 +83,7 @@ export function useCoordinationMonitor() {
       window.removeEventListener("focus", retry);
     };
   }, [retry]);
+  /** 一件なら相談の詳細を、複数件なら起票元の相談一覧を開く。 */
   const open = async (group: CoordinationMonitorGroup) => {
     const api = getWithMateApi();
     if (!api) return;
@@ -94,5 +102,13 @@ export function useCoordinationMonitor() {
       );
     }
   };
-  return { groups: groups ?? [], hasSnapshot: groups !== null, loading: loading && groups === null, refreshing: loading && groups !== null, error, retry, open };
+  return {
+    groups: groups ?? [],
+    hasSnapshot: groups !== null,
+    loading: loading && groups === null,
+    refreshing: loading && groups !== null,
+    error,
+    retry,
+    open,
+  };
 }

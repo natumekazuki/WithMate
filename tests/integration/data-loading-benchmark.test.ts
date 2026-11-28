@@ -4,8 +4,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it } from "node:test";
 
-import { parseBenchmarkArgs, runDataLoadingBenchmark } from "../../scripts/benchmarks/benchmark-data-loading.js";
+import {
+  parseBenchmarkArgs,
+  runDataLoadingBenchmark,
+} from "../../scripts/benchmarks/benchmark-data-loading.js";
 
+/** 合成 SQLite データで読み取り計測を実行できることと、その入力を決める CLI の解釈を確認する。 */
 describe("data loading benchmark", () => {
   // @test-value v2
   // kind = "contract"
@@ -19,8 +23,11 @@ describe("data loading benchmark", () => {
   // impact = "benchmark fixtureの規模とread件数がずれ、性能比較の入力条件を誤る"
   // distinction = "型検査では生成済みSQLite fixtureの実query件数・DB bytes・計測結果を観測できない"
   // @end-test-value
+  /** 一時 V2 DB へ指定した合成履歴を生成し、一覧・検索・キャラクター集計の件数と読み取り計測の結果を観測する。 */
   it("synthetic V2 DB を生成して主要 read path を計測できる", async () => {
-    const dirPath = mkdtempSync(join(tmpdir(), "withmate-data-loading-benchmark-test-"));
+    const dirPath = mkdtempSync(
+      join(tmpdir(), "withmate-data-loading-benchmark-test-"),
+    );
     try {
       const result = await runDataLoadingBenchmark({
         outputPath: join(dirPath, "withmate-v2.db"),
@@ -62,29 +69,33 @@ describe("data loading benchmark", () => {
   // impact = "CLIで指定した規模や保存optionが計測に反映されず、比較条件を誤る"
   // distinction = "型検査ではCLI文字列から数値・path・保存optionへのruntime変換を確認できない"
   // @end-test-value
+  /** プロファイルに上書き指定を組み合わせ、生成件数・操作回数・保存先と既存ファイルの扱いが反映されることを確認する。 */
   it("CLI 引数を benchmark options に変換できる", () => {
-    assert.deepEqual(parseBenchmarkArgs([
-      "--profile",
-      "small",
-      "--out",
-      "tmp/withmate-v2.db",
-      "--overwrite",
-      "--sessions",
-      "3",
-      "--messages",
-      "5",
-      "--artifact-every",
-      "2",
-      "--operations",
-      "4",
-    ]), {
-      sessions: 3,
-      messagesPerSession: 5,
-      artifactEvery: 2,
-      operationCount: 4,
-      outputPath: "tmp/withmate-v2.db",
-      keepDatabase: true,
-      overwrite: true,
-    });
+    assert.deepEqual(
+      parseBenchmarkArgs([
+        "--profile",
+        "small",
+        "--out",
+        "tmp/withmate-v2.db",
+        "--overwrite",
+        "--sessions",
+        "3",
+        "--messages",
+        "5",
+        "--artifact-every",
+        "2",
+        "--operations",
+        "4",
+      ]),
+      {
+        sessions: 3,
+        messagesPerSession: 5,
+        artifactEvery: 2,
+        operationCount: 4,
+        outputPath: "tmp/withmate-v2.db",
+        keepDatabase: true,
+        overwrite: true,
+      },
+    );
   });
 });

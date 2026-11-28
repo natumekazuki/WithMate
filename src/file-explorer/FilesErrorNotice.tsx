@@ -1,7 +1,24 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import { createPortal } from "react-dom";
 
-export function FilesErrorNotice({ target, label, message, onRetry, recoveryHint, boundaryRef }: {
+/** ファイルまたはピンの取得失敗を通知し、再試行と開閉可能な詳細を提示する。 */
+export function FilesErrorNotice({
+  target,
+  label,
+  message,
+  onRetry,
+  recoveryHint,
+  boundaryRef,
+}: {
   target: "Files" | "Pins";
   label: string;
   message: string;
@@ -14,7 +31,9 @@ export function FilesErrorNotice({ target, label, message, onRetry, recoveryHint
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
-  const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
+  const [position, setPosition] = useState<CSSProperties>({
+    visibility: "hidden",
+  });
   const isPositioned = position.visibility !== "hidden";
   const close = useCallback((restoreFocus: boolean) => {
     setOpen(false);
@@ -23,6 +42,7 @@ export function FilesErrorNotice({ target, label, message, onRetry, recoveryHint
 
   useLayoutEffect(() => {
     if (!open) return;
+    /** パネルの境界と表示領域を基準に詳細の位置・高さを決め、操作欄の配色を引き継ぐ。 */
     const updatePosition = () => {
       const actions = actionsRef.current;
       const panel = panelRef.current;
@@ -35,17 +55,41 @@ export function FilesErrorNotice({ target, label, message, onRetry, recoveryHint
       const below = anchorRect.bottom + gap;
       const belowSpace = Math.max(0, window.innerHeight - margin - below);
       const aboveSpace = Math.max(0, anchorRect.top - gap - margin);
-      const contentHeight = panel.scrollHeight + panel.offsetHeight - panel.clientHeight;
-      const useBelow = belowSpace >= Math.min(contentHeight, 320) || belowSpace >= aboveSpace;
+      const contentHeight =
+        panel.scrollHeight + panel.offsetHeight - panel.clientHeight;
+      const useBelow =
+        belowSpace >= Math.min(contentHeight, 320) || belowSpace >= aboveSpace;
       const maxHeight = Math.min(320, useBelow ? belowSpace : aboveSpace);
       const styles = window.getComputedStyle(actions);
       const theme = Object.fromEntries(
-        ["--ink", "--muted", "--line", "--surface-strong", "--shadow", "--character-sub", "--character-sub-soft", "--scrollbar-track", "--scrollbar-thumb", "--scrollbar-thumb-hover"].map((property) => [property, styles.getPropertyValue(property)]),
+        [
+          "--ink",
+          "--muted",
+          "--line",
+          "--surface-strong",
+          "--shadow",
+          "--character-sub",
+          "--character-sub-soft",
+          "--scrollbar-track",
+          "--scrollbar-thumb",
+          "--scrollbar-thumb-hover",
+        ].map((property) => [property, styles.getPropertyValue(property)]),
       );
       setPosition({
         ...theme,
-        left: Math.max(margin, Math.min(anchorRect.left, window.innerWidth - panelRect.width - margin)),
-        top: Math.max(margin, useBelow ? below : anchorRect.top - gap - Math.min(contentHeight, maxHeight)),
+        left: Math.max(
+          margin,
+          Math.min(
+            anchorRect.left,
+            window.innerWidth - panelRect.width - margin,
+          ),
+        ),
+        top: Math.max(
+          margin,
+          useBelow
+            ? below
+            : anchorRect.top - gap - Math.min(contentHeight, maxHeight),
+        ),
         maxHeight,
       });
     };
@@ -67,10 +111,17 @@ export function FilesErrorNotice({ target, label, message, onRetry, recoveryHint
 
   useEffect(() => {
     if (!open) return;
+    /** 詳細や操作欄の外を押した場合は、押した先のフォーカスを妨げずに閉じる。 */
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
-      if (target && !panelRef.current?.contains(target) && !actionsRef.current?.contains(target)) close(false);
+      if (
+        target &&
+        !panelRef.current?.contains(target) &&
+        !actionsRef.current?.contains(target)
+      )
+        close(false);
     };
+    /** 詳細を表示中の Escape で閉じ、開閉ボタンへフォーカスを戻す。 */
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -100,36 +151,81 @@ export function FilesErrorNotice({ target, label, message, onRetry, recoveryHint
           aria-haspopup="dialog"
           onClick={() => setOpen((current) => !current)}
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
-            <circle cx="12" cy="12" r="9" /><path d="M12 7v6m0 4h.01" />
+          <svg
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v6m0 4h.01" />
           </svg>
         </button>
-        <button className="session-file-explorer-refresh" type="button" onClick={() => { close(false); onRetry(); }}>Retry {target}</button>
-      </div>
-      {recoveryHint ? <p className="session-files-error-hint">{recoveryHint}</p> : null}
-      {open ? createPortal(
-        <div
-          ref={panelRef}
-          id={panelId}
-          className="session-files-error-popover"
-          role="dialog"
-          aria-label={`${target} Error Details`}
-          tabIndex={-1}
-          style={position}
-          onKeyDown={(event) => {
-            if (event.key === "Tab" && (event.shiftKey || event.target !== event.currentTarget)) {
-              close(true);
-              if (event.shiftKey) event.preventDefault();
-            }
+        <button
+          className="session-file-explorer-refresh"
+          type="button"
+          onClick={() => {
+            close(false);
+            onRetry();
           }}
         >
-          <button className="session-file-explorer-refresh session-files-error-close" type="button" aria-label="Close Error Details" title="Close Error Details" onClick={() => close(true)}>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18" /></svg>
-          </button>
-          <p>{message}</p>
-        </div>,
-        document.body,
+          Retry {target}
+        </button>
+      </div>
+      {recoveryHint ? (
+        <p className="session-files-error-hint">{recoveryHint}</p>
       ) : null}
+      {open
+        ? createPortal(
+            <div
+              ref={panelRef}
+              id={panelId}
+              className="session-files-error-popover"
+              role="dialog"
+              aria-label={`${target} Error Details`}
+              tabIndex={-1}
+              style={position}
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Tab" &&
+                  (event.shiftKey || event.target !== event.currentTarget)
+                ) {
+                  close(true);
+                  if (event.shiftKey) event.preventDefault();
+                }
+              }}
+            >
+              <button
+                className="session-file-explorer-refresh session-files-error-close"
+                type="button"
+                aria-label="Close Error Details"
+                title="Close Error Details"
+                onClick={() => close(true)}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path d="m6 6 12 12M18 6 6 18" />
+                </svg>
+              </button>
+              <p>{message}</p>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

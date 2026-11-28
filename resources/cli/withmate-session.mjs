@@ -9304,6 +9304,7 @@ async function verifyRuntimeIdentity(connection, fetchImpl, signal) {
 	return (await verifyRuntimeIdentityOutcome(connection, fetchImpl, signal)).ok;
 }
 // src-electron/platform/mcp/withmate-session-runtime-client.ts
+/** 応答を確認できなかった操作の副作用を分類し、有効な送信要求には元の ID での照会情報を添える。 */
 function createSessionTransportError(operation, body) {
 	const request = operation === "enqueue" ? sessionOperationRequestSchemas.enqueue.safeParse(body) : null;
 	return {
@@ -9318,6 +9319,7 @@ function createSessionTransportError(operation, body) {
 		} } : {}
 	};
 }
+/** 入力と紐付けを確認して要求を送信し、操作に対応するスキーマで検証済みの結果を返す。 */
 async function callSessionRuntime(operation, body, deps) {
 	const parsed = sessionOperationRequestSchemas[operation].safeParse(body);
 	if (!parsed.success) return {

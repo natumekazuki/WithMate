@@ -1,5 +1,6 @@
 import type { OpenPathResult } from "../../src-shared/window/withmate-window-types.js";
 
+/** パスを開けた場合は空文字列とし、それ以外は結果または例外から利用者向けの理由を得る。 */
 export async function resolveOpenPathFeedback(
   operation: () => Promise<OpenPathResult>,
   fallbackMessage: string,
@@ -12,6 +13,7 @@ export async function resolveOpenPathFeedback(
   }
 }
 
+/** 開く操作から失敗の案内が返った場合だけ警告を表示する。 */
 export function showOpenPathFeedback(message: string): void {
   if (message) {
     window.alert(message);

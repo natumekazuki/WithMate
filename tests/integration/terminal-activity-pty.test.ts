@@ -6,10 +6,21 @@ import path from "node:path";
 import { it } from "node:test";
 import { resolveTerminalShell } from "../../src-electron/terminal/terminal-service.js";
 
+/** 指定された PowerShell で端末の fixture を子プロセスとして起動し、タイムアウトと標準エラーを検査する。 */
 async function checkShell(file: string, major: number) {
-  const result = await promisify(execFile)(process.execPath, [
-    "--import", "tsx", fileURLToPath(new URL("../fixtures/terminal-activity-pty.ts", import.meta.url)), file, String(major),
-  ], { timeout: 55_000, windowsHide: true });
+  const result = await promisify(execFile)(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      fileURLToPath(
+        new URL("../fixtures/terminal-activity-pty.ts", import.meta.url),
+      ),
+      file,
+      String(major),
+    ],
+    { timeout: 55_000, windowsHide: true },
+  );
   assert.equal(result.stderr, "");
 }
 
@@ -25,10 +36,17 @@ async function checkShell(file: string, major: number) {
 // impact = "貼付け末尾の未確定入力をTerminalまたはSession Window終了で失う"
 // distinction = "stubではshellの実際のcwd・resize・誤idle通知を検出できない。実PTYを一つ起動しproducerから終了判断まで確認する"
 // @end-test-value
-it("checks Windows PowerShell 5 PTY operations and activity-based close decisions", { skip: process.platform !== "win32", timeout: 60_000 }, async () => {
-  const shell = await resolveTerminalShell("win32", { SystemRoot: process.env.SystemRoot });
-  await checkShell(shell.file, 5);
-});
+/** Windows 付属の PowerShell 5 の実 PTY で、コマンド操作と活動を見た終了判定を確認する。 */
+it(
+  "checks Windows PowerShell 5 PTY operations and activity-based close decisions",
+  { skip: process.platform !== "win32", timeout: 60_000 },
+  async () => {
+    const shell = await resolveTerminalShell("win32", {
+      SystemRoot: process.env.SystemRoot,
+    });
+    await checkShell(shell.file, 5);
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -42,11 +60,19 @@ it("checks Windows PowerShell 5 PTY operations and activity-based close decision
 // impact = "優先選択された7で端末操作できない、または終了時に未確定入力を失う"
 // distinction = "5系の実PTYとstubでは7のruntime差を検出できない。7導入済みWindowsでのみ実processを一つ起動し、未導入はskipとして明示する"
 // @end-test-value
-it("checks preferred PowerShell 7 PTY operations and activity-based close decisions", { skip: process.platform !== "win32", timeout: 60_000 }, async (context) => {
-  const shell = await resolveTerminalShell("win32");
-  if (path.win32.basename(shell.file).toLowerCase() !== "pwsh.exe") {
-    context.skip("PowerShell 7 is not installed in the supported search locations.");
-    return;
-  }
-  await checkShell(shell.file, 7);
-});
+/** 優先選択される PowerShell 7 が利用可能なら、その実 PTY でも操作と終了判定を確認する。 */
+it(
+  "checks preferred PowerShell 7 PTY operations and activity-based close decisions",
+  { skip: process.platform !== "win32", timeout: 60_000 },
+  async (context) => {
+    const shell = await resolveTerminalShell("win32");
+    if (path.win32.basename(shell.file).toLowerCase() !== "pwsh.exe") {
+      /** PowerShell 7 が選択できず、付属版へフォールバックした環境では、このケースだけ対象外にする。 */
+      context.skip(
+        "PowerShell 7 is not installed in the supported search locations.",
+      );
+      return;
+    }
+    await checkShell(shell.file, 7);
+  },
+);

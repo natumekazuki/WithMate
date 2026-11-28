@@ -22,6 +22,7 @@ const INITIAL_STATUS: AppBootStatus = {
   title: "Preparing Startup",
 };
 
+/** 起動中の進捗・失敗を表示し、Main 側が起動完了を通知してから Home を読み込む。 */
 export default function BootApp() {
   const [status, setStatus] = useState<AppBootStatus>(INITIAL_STATUS);
 
@@ -36,19 +37,25 @@ export default function BootApp() {
     }
 
     let disposed = false;
+    /** 完了または失敗を表示した後は、遅れて届いた進行中の値へ巻き戻さない。 */
     const updateStatus = (nextStatus: AppBootStatus) => {
-      setStatus((currentStatus) => currentStatus.kind !== "running" && nextStatus.kind === "running"
-        ? currentStatus
-        : nextStatus);
+      setStatus((currentStatus) =>
+        currentStatus.kind !== "running" && nextStatus.kind === "running"
+          ? currentStatus
+          : nextStatus,
+      );
     };
     const dispose = api.subscribeAppBootStatus(updateStatus);
-    void api.getAppBootStatus().then((currentStatus) => {
-      if (!disposed) {
-        updateStatus(currentStatus);
-      }
-    }).catch((error) => {
-      console.warn("Failed to get app boot status", error);
-    });
+    void api
+      .getAppBootStatus()
+      .then((currentStatus) => {
+        if (!disposed) {
+          updateStatus(currentStatus);
+        }
+      })
+      .catch((error) => {
+        console.warn("Failed to get app boot status", error);
+      });
 
     return () => {
       disposed = true;
@@ -59,20 +66,35 @@ export default function BootApp() {
   const statusLabel = BOOT_STAGE_LABELS[status.stage];
 
   const bootScreen = (
-    <div className={`page-shell home-page boot-page${status.kind === "failed" ? " failed" : ""}`}>
+    <div
+      className={`page-shell home-page boot-page${status.kind === "failed" ? " failed" : ""}`}
+    >
       <main className="home-layout home-layout-minimal boot-page-shell">
-        <section className="boot-status-panel rise-1" aria-busy={status.kind !== "failed"}>
+        <section
+          className="boot-status-panel rise-1"
+          aria-busy={status.kind !== "failed"}
+        >
           {status.kind === "failed" ? (
             <div role="alert">
               <h1 className="boot-error-title">{status.title}</h1>
-              {status.detail ? <p className="boot-status-detail">{status.detail}</p> : null}
-              {status.error ? <pre className="boot-error-message">{status.error.message}</pre> : null}
+              {status.detail ? (
+                <p className="boot-status-detail">{status.detail}</p>
+              ) : null}
+              {status.error ? (
+                <pre className="boot-error-message">{status.error.message}</pre>
+              ) : null}
             </div>
           ) : (
             <div className="boot-progress" role="status" aria-atomic="true">
-              <span className="home-session-list-load-spinner" aria-hidden="true" />
+              <span
+                className="home-session-list-load-spinner"
+                aria-hidden="true"
+              />
               <span>Starting WithMate</span>
-              <span className="sr-only">{statusLabel}{status.detail ? `. ${status.detail}` : ""}</span>
+              <span className="sr-only">
+                {statusLabel}
+                {status.detail ? `. ${status.detail}` : ""}
+              </span>
             </div>
           )}
         </section>

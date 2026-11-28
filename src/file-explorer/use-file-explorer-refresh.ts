@@ -1,7 +1,17 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
-import { subscribeSessionLiveEvents, type SessionLiveIngressApi } from "../chat/runtime/session-window-live-ingress.js";
+import {
+  subscribeSessionLiveEvents,
+  type SessionLiveIngressApi,
+} from "../chat/runtime/session-window-live-ingress.js";
 
+/** ファイル一覧・作業ツリーの変更・履歴のどのペインを無効化するかを示す。 */
 type ExplorerTab = "files" | "changes" | "history";
 const REFRESH_COALESCE_MS = 150;
 
@@ -14,13 +24,21 @@ export function useFileExplorerRefresh(input: {
   visible: boolean;
   activeTab: ExplorerTab;
 }) {
-  const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState !== "hidden");
-  const [revisions, setRevisions] = useState({ files: 0, changes: 0, history: 0 });
+  const [documentVisible, setDocumentVisible] = useState(
+    () => document.visibilityState !== "hidden",
+  );
+  const [revisions, setRevisions] = useState({
+    files: 0,
+    changes: 0,
+    history: 0,
+  });
   const visible = input.visible && documentVisible;
   const currentRef = useRef({ ...input, visible });
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activatedAtRef = useRef(Date.now());
-  const relatedIdsKey = JSON.stringify([...new Set(input.relatedSessionIds)].sort());
+  const relatedIdsKey = JSON.stringify(
+    [...new Set(input.relatedSessionIds)].sort(),
+  );
 
   const clearPending = useCallback(() => {
     if (pendingRef.current !== null) clearTimeout(pendingRef.current);
@@ -41,22 +59,36 @@ export function useFileExplorerRefresh(input: {
 
   const schedule = useCallback(() => {
     const current = currentRef.current;
-    if (!current.enabled || !current.visible || document.visibilityState === "hidden" || pendingRef.current !== null) return;
+    if (
+      !current.enabled ||
+      !current.visible ||
+      document.visibilityState === "hidden" ||
+      pendingRef.current !== null
+    )
+      return;
     pendingRef.current = setTimeout(() => {
       pendingRef.current = null;
       const latest = currentRef.current;
-      if (latest.enabled && latest.visible && document.visibilityState !== "hidden") refresh(latest.activeTab);
+      if (
+        latest.enabled &&
+        latest.visible &&
+        document.visibilityState !== "hidden"
+      )
+        refresh(latest.activeTab);
     }, REFRESH_COALESCE_MS);
   }, [refresh]);
 
   useEffect(() => {
+    /** 表示状態が変わった時点で、以前の状態で予約した再取得は取り消す。 */
     const onVisibilityChange = () => {
       clearPending();
       setDocumentVisible(document.visibilityState !== "hidden");
     };
+    /** 直近のアクティブ化とは別にフォーカスを得たときだけ、表示中のタブの更新を予約する。 */
     const onFocus = () => {
       // 表示やタブのアクティブ化で既に読み取りが始まるため、同じ一連の操作内でのフォーカスでは追加しない。
-      if (Date.now() - activatedAtRef.current >= REFRESH_COALESCE_MS) schedule();
+      if (Date.now() - activatedAtRef.current >= REFRESH_COALESCE_MS)
+        schedule();
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("focus", onFocus);
@@ -72,9 +104,15 @@ export function useFileExplorerRefresh(input: {
     const runs = new Map<string, { terminal: boolean; turnId?: string }>();
     return subscribeSessionLiveEvents(input.api, (id, state) => {
       if (!relatedIds.has(id)) return;
-      const terminal = !state || state.runState === "idle" || state.runState === "error";
+      const terminal =
+        !state || state.runState === "idle" || state.runState === "error";
       const previous = runs.get(id);
-      if (terminal && previous?.terminal && (!state?.turnId || previous.turnId === state.turnId)) return;
+      if (
+        terminal &&
+        previous?.terminal &&
+        (!state?.turnId || previous.turnId === state.turnId)
+      )
+        return;
       runs.set(id, { terminal, turnId: state?.turnId });
       if (terminal) schedule();
     });

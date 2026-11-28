@@ -3,23 +3,34 @@ import type { CoordinationIdentity } from "../../src-shared/coordination/coordin
 import type { CoordinationDisplayIdentity } from "../../src-shared/coordination/coordination-window-contract.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 
+/** Session の種別・ID・世代を組にし、世代が異なる同じ ID を区別する。 */
 export const coordinationIdentityKey = (identity: CoordinationIdentity) =>
   JSON.stringify([identity.kind, identity.sessionId, identity.incarnationId]);
 
+/** 表示用の識別情報と読取失敗。再取得に失敗しても前回の値を保持できる。 */
 export type CoordinationIdentityRead = {
   identity: CoordinationDisplayIdentity | null;
   error?: string;
 };
 
 /** 表示中のページ・詳細で使う識別情報だけを読み取り、履歴は読み込まない。 */
-export function useCoordinationIdentities(identities: CoordinationIdentity[], active: boolean) {
-  const [reads, setReads] = useState<Record<string, CoordinationIdentityRead>>({});
+export function useCoordinationIdentities(
+  identities: CoordinationIdentity[],
+  active: boolean,
+) {
+  const [reads, setReads] = useState<Record<string, CoordinationIdentityRead>>(
+    {},
+  );
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
-  const unique = [...new Map(identities.map(({ kind, sessionId, incarnationId }) => {
-    const identity = { kind, sessionId, incarnationId };
-    return [coordinationIdentityKey(identity), identity];
-  })).values()];
+  const unique = [
+    ...new Map(
+      identities.map(({ kind, sessionId, incarnationId }) => {
+        const identity = { kind, sessionId, incarnationId };
+        return [coordinationIdentityKey(identity), identity];
+      }),
+    ).values(),
+  ];
   const key = JSON.stringify(unique);
   useEffect(() => {
     if (!active) return;
@@ -28,22 +39,39 @@ export function useCoordinationIdentities(identities: CoordinationIdentity[], ac
     let current = true;
     const visible: CoordinationIdentity[] = JSON.parse(key);
     const visibleKeys = new Set(visible.map(coordinationIdentityKey));
-    setReads((previous) => Object.fromEntries(Object.entries(previous).filter(([id]) => visibleKeys.has(id))));
+    setReads((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(([id]) => visibleKeys.has(id)),
+      ),
+    );
     for (const identity of visible) {
       const identityKey = coordinationIdentityKey(identity);
-      void api.getCoordinationIdentity(identity).then((result) => {
-        if (current) setReads((previous) => ({ ...previous, [identityKey]: { identity: result } }));
-      }).catch((error: unknown) => {
-        if (current) setReads((previous) => ({
-          ...previous,
-          [identityKey]: {
-            identity: previous[identityKey]?.identity ?? null,
-            error: error instanceof Error ? error.message : "Could not load the Session identity.",
-          },
-        }));
-      });
+      void api
+        .getCoordinationIdentity(identity)
+        .then((result) => {
+          if (current)
+            setReads((previous) => ({
+              ...previous,
+              [identityKey]: { identity: result },
+            }));
+        })
+        .catch((error: unknown) => {
+          if (current)
+            setReads((previous) => ({
+              ...previous,
+              [identityKey]: {
+                identity: previous[identityKey]?.identity ?? null,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Could not load the Session identity.",
+              },
+            }));
+        });
     }
-    return () => { current = false; };
+    return () => {
+      current = false;
+    };
   }, [key, active, revision]);
   useEffect(() => {
     if (!active) return;

@@ -4,12 +4,14 @@ import {
   type ResetAppDatabaseTarget,
 } from "../../src-shared/window/withmate-window-types.js";
 
+/** リセット対象ごとの識別子と、チェックおよび操作無効の表示状態。 */
 export type HomeSettingsResetTargetItem = {
   target: ResetAppDatabaseTarget;
   checked: boolean;
   disabled: boolean;
 };
 
+/** 設定の表示準備と、リセット対象の一覧・要約・実行可否をまとめた表示用データ。 */
 export type HomeSettingsProjection = {
   settingsWindowReady: boolean;
   selectedResetTargetsDescription: string;
@@ -17,6 +19,7 @@ export type HomeSettingsProjection = {
   canResetDatabase: boolean;
 };
 
+/** 設定とカタログの読み込み状態から表示可否を決め、リセット中は次のリセットを許可しない。 */
 export function buildHomeSettingsProjection({
   settingsDraftLoaded,
   modelCatalogLoadSettled,
@@ -36,7 +39,8 @@ export function buildHomeSettingsProjection({
 
   return {
     settingsWindowReady: settingsDraftLoaded && modelCatalogLoadSettled,
-    selectedResetTargetsDescription: describeResetDatabaseTargets(resetDatabaseTargets),
+    selectedResetTargetsDescription:
+      describeResetDatabaseTargets(resetDatabaseTargets),
     resetTargetItems,
     canResetDatabase: !resettingDatabase && resetDatabaseTargets.length > 0,
   };

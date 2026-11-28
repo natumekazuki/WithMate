@@ -16,6 +16,7 @@ import {
   resolveAgentRuntimeTurnCapability,
   type AgentRuntimeConnection,
 } from "../agent-runtime/runtime-client.js";
+/** MCP アダプターで使う接続選択の設定と、既知の接続・通信処理を渡すための差し替え口。 */
 export type SessionRuntimeClientDeps = Omit<
   Parameters<typeof resolveAgentRuntimeApi>[0],
   "adapter" | "signal"
@@ -24,6 +25,7 @@ export type SessionRuntimeClientDeps = Omit<
   runtimeCall?: typeof callAgentRuntime;
   requestTimeoutMs?: number;
 };
+/** 応答を確認できなかった操作の副作用を分類し、有効な送信要求には元の ID での照会情報を添える。 */
 export function createSessionTransportError(
   operation?: SessionOperation,
   body?: unknown,
@@ -35,11 +37,12 @@ export function createSessionTransportError(
   return {
     ok: false,
     code: "SESSION_TRANSPORT_ERROR",
-    message: operation && isLocalPrAgentOperation(operation)
-      ? "The local PR response was not confirmed. Read the PR or CI state before deciding whether to retry. Do not automatically resend a mutation."
-      : operation === "set_instructions"
-      ? "The Session instructions update was not confirmed. Read the saved body with get_instructions before deciding whether to retry. Do not automatically resend the replacement."
-      : "The Session response was not confirmed. Recover enqueue with get_receipt and its original requestId. Child creation and Coordination retries must keep the identical request and original requestId/operationId. A coordination_get can be repeated to recover its current state. Do not automatically resend mutations or invent new keys.",
+    message:
+      operation && isLocalPrAgentOperation(operation)
+        ? "The local PR response was not confirmed. Read the PR or CI state before deciding whether to retry. Do not automatically resend a mutation."
+        : operation === "set_instructions"
+          ? "The Session instructions update was not confirmed. Read the saved body with get_instructions before deciding whether to retry. Do not automatically resend the replacement."
+          : "The Session response was not confirmed. Recover enqueue with get_receipt and its original requestId. Child creation and Coordination retries must keep the identical request and original requestId/operationId. A coordination_get can be repeated to recover its current state. Do not automatically resend mutations or invent new keys.",
     effect:
       operation && !SESSION_READ_OPERATIONS.includes(operation)
         ? "unknown"
@@ -55,6 +58,7 @@ export function createSessionTransportError(
       : {}),
   };
 }
+/** 入力と紐付けを確認して要求を送信し、操作に対応するスキーマで検証済みの結果を返す。 */
 export async function callSessionRuntime(
   operation: SessionOperation,
   body: unknown,

@@ -6,8 +6,12 @@ export class TerminalActivityTracker {
   private activity: TerminalActivity = "unknown";
   private awaitingReadLineReturn = false;
 
-  getActivity(): TerminalActivity { return this.activity; }
+  /** 入力とシェル通知を照合した、現時点の端末状態を返す。 */
+  getActivity(): TerminalActivity {
+    return this.activity;
+  }
 
+  /** 空の入力や単独のフォーカス通知を無視し、それ以外の入力では入力待ち状態を失効させる。 */
   onInput(data: string): void {
     // 閉じるボタンへの移動も含め、フォーカスが移動すると xterm がこれらの通知を送る。
     // これは端末のフォーカスイベントであり、シェルへのキー入力ではない。
@@ -16,9 +20,11 @@ export class TerminalActivityTracker {
     this.awaitingReadLineReturn = true;
   }
 
+  /** 入力直後は行読み取りの終了を示す通知を受けるまで、遅れて届いた入力待ち通知を無視する。 */
   onActivity(activity: TerminalActivity): void {
     if (activity === "busy") this.awaitingReadLineReturn = false;
-    if (activity !== "idle" || !this.awaitingReadLineReturn) this.activity = activity;
+    if (activity !== "idle" || !this.awaitingReadLineReturn)
+      this.activity = activity;
   }
 }
 
@@ -72,7 +78,11 @@ namespace WithMateTerminal {
 }
 `;
   return {
-    args: ["-NoExit", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
+    args: [
+      "-NoExit",
+      "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64"),
+    ],
     marker: `\x1b]${marker}`,
   };
 }
@@ -81,16 +91,25 @@ namespace WithMateTerminal {
 export class TerminalActivityParser {
   private pending = "";
 
-  constructor(private readonly marker: string, private readonly onActivity: (activity: TerminalActivity) => void) {}
+  /** この端末のマーカーと、完全な状態通知を受け取る関数を保持する。 */
+  constructor(
+    private readonly marker: string,
+    private readonly onActivity: (activity: TerminalActivity) => void,
+  ) {}
 
+  /** 完全な状態通知だけを消費して残りの文字列を返し、途中のマーカー候補は次の入力まで保持する。 */
   push(data: string): string {
     const records = (["idle", "busy", "unknown"] as const).map((activity) => ({
-      activity, text: `${this.marker}${activity}\x07`,
+      activity,
+      text: `${this.marker}${activity}\x07`,
     }));
     let output = "";
     for (const character of data) {
       this.pending += character;
-      while (this.pending && !records.some(({ text }) => text.startsWith(this.pending))) {
+      while (
+        this.pending &&
+        !records.some(({ text }) => text.startsWith(this.pending))
+      ) {
         output += this.pending[0];
         this.pending = this.pending.slice(1);
       }
@@ -103,6 +122,7 @@ export class TerminalActivityParser {
     return output;
   }
 
+  /** 端末終了時に、完全な通知にならなかった文字列を通常出力として返す。 */
   flush(): string {
     const remaining = this.pending;
     this.pending = "";

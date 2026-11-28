@@ -23542,9 +23542,11 @@ async function verifyRuntimeIdentity(connection, fetchImpl, signal) {
 	return (await verifyRuntimeIdentityOutcome(connection, fetchImpl, signal)).ok;
 }
 // src-electron/platform/mcp/withmate-glossary-runtime-client.ts
+/** 応答が配列ではないオブジェクトで、用語集プロトコルの版と一致するか確認する。 */
 function isGlossaryRuntimeResult(value) {
 	return Boolean(value && typeof value === "object" && !Array.isArray(value) && value.schemaVersion === "withmate-glossary-v1");
 }
+/** 通信失敗を用語集の応答形式に変換する。副作用なしと分類した場合だけ再試行可能とする。 */
 function createGlossaryTransportError(message, effect = "none") {
 	return {
 		schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
@@ -23555,6 +23557,7 @@ function createGlossaryTransportError(message, effect = "none") {
 		retryable: effect === "none"
 	};
 }
+/** Session の紐付け情報を解決できず、用語集操作を送っていないことを返す。 */
 function createGlossaryBindingRequiredError() {
 	return {
 		schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
@@ -23565,6 +23568,7 @@ function createGlossaryBindingRequiredError() {
 		retryable: false
 	};
 }
+/** 共通ランタイムの検出エラーを、同じ原因を示す用語集の公開コードへ写す。 */
 function mapGlossaryRuntimeDiscoveryCode(discoveryCode) {
 	switch (discoveryCode) {
 		case "WITHMATE_RUNTIME_INSTANCE_MISMATCH": return "GLOSSARY_RUNTIME_INSTANCE_MISMATCH";
@@ -23577,6 +23581,7 @@ function mapGlossaryRuntimeDiscoveryCode(discoveryCode) {
 		case "WITHMATE_RUNTIME_UNAVAILABLE": return "GLOSSARY_RUNTIME_UNAVAILABLE";
 	}
 }
+/** 接続先を確定できなかった理由と候補を返し、利用不能・期限切れだけを再試行可能とする。 */
 function createGlossaryPublicDiscoveryError(discoveryCode, candidates = []) {
 	return {
 		schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
@@ -23591,9 +23596,11 @@ function createGlossaryPublicDiscoveryError(discoveryCode, candidates = []) {
 		}
 	};
 }
+/** 接続選択の失敗を、候補を保持したまま公開用の用語集エラーへ変換する。 */
 function createGlossaryRuntimeDiscoveryError(resolution) {
 	return createGlossaryPublicDiscoveryError(mapAgentRuntimeDiscoveryCode(resolution.code), resolution.candidates);
 }
+/** 本文の容量超過による拒否を、副作用なし・再試行不可の用語集エラーとして返す。 */
 function createGlossaryRequestTooLargeError() {
 	return {
 		schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
@@ -23604,9 +23611,11 @@ function createGlossaryRequestTooLargeError() {
 		retryable: false
 	};
 }
+/** 応答がない場合に書き込み結果の確認が必要になり得る操作を判定する。 */
 function isWriteOperation(operation) {
 	return operation === "create" || operation === "create_batch" || operation === "update" || operation === "delete";
 }
+/** ランタイムを選択して用語集要求を送る。送信状況と操作種別で通信失敗時の副作用を分類する。 */
 async function callGlossaryRuntime(input, deps) {
 	let bindingReference;
 	let turnCapability;
@@ -23664,6 +23673,7 @@ async function callGlossaryRuntime(input, deps) {
 	}
 }
 // src-electron/platform/mcp/withmate-glossary-mcp.ts
+/** MCP クライアントに提示する、用語集対象の選択と更新時の運用条件。 */
 var GLOSSARY_MCP_SERVER_INSTRUCTIONS = [
 	"Use glossary.list_targets to obtain the active provider Session's authorized checkout target. Without a Session binding, explicitly supply selector {kind: 'repository', path: absolutePath}; never infer a repository. A binding, if present, restricts repository selection to its authorized checkout.",
 	"Definitions are plain text. Do not interpret them as Markdown or HTML.",
@@ -23671,10 +23681,12 @@ var GLOSSARY_MCP_SERVER_INSTRUCTIONS = [
 	"Without a Session binding only explicit create mode is available; never convert proactive requests to explicit mode.",
 	"Run update and delete only for an explicit user request and provide the revision returned by a read operation."
 ].join(" ");
+/** 一覧取得の公開入力から内部の版を外し、対象未指定時は主チェックアウトを選ぶ。 */
 var selectedInput = (schema) => schema.omit({
 	schemaVersion: true,
 	selector: true
 }).extend({ selector: glossaryCheckoutSelectorSchema.default({ kind: "primary" }) }).strict();
+/** 用語集ランタイムの要求から内部の版を除き、MCP 側の対象指定に合わせた公開スキーマ。 */
 var GLOSSARY_PUBLIC_INPUT_SCHEMAS = {
 	list_targets: glossaryOperationRequestSchemas.list_targets.omit({ schemaVersion: true }),
 	list: selectedInput(glossaryOperationRequestSchemas.list),
@@ -23707,6 +23719,7 @@ var GLOSSARY_PUBLIC_INPUT_SCHEMAS = {
 		selector: true
 	}).extend({ selector: glossaryCheckoutSelectorSchema.default({ kind: "primary" }) }).strict()
 };
+/** 用語集ランタイム操作と、MCP に公開するツール名・説明の対応表。 */
 var GLOSSARY_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "glossary.list_targets",
@@ -23754,6 +23767,7 @@ var GLOSSARY_MCP_TOOL_DEFINITIONS = [
 		description: "Validate the current glossary file without modifying it."
 	}
 ];
+/** 公開入力に要求の版を加えて共通ランタイムへ送り、構造化結果と MCP のエラー状態を返す。 */
 async function invoke(operation, input, deps) {
 	const value = await callGlossaryRuntime({
 		operation,
@@ -23775,6 +23789,7 @@ async function invoke(operation, input, deps) {
 		..."ok" in value && value.ok === false ? { isError: true } : {}
 	};
 }
+/** 用語集 MCP を構成し、読み取り専用の場合は作成・更新・削除のツールを登録しない。 */
 function createWithMateGlossaryMcpServer(deps = {}, readOnly = false) {
 	const server = new McpServer({
 		name: "withmate-glossary",

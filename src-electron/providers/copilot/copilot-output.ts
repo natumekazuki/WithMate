@@ -1,39 +1,97 @@
 import type { SessionEvent } from "@github/copilot-sdk";
-import { projectProviderOutput, type ProviderOutputTextUnit } from "../../../src-shared/session/provider-output.js";
+import {
+  projectProviderOutput,
+  type ProviderOutputTextUnit,
+} from "../../../src-shared/session/provider-output.js";
 
 /** 更新の判定には、テキストの一致ではなくネイティブ側の識別情報を使う。フェーズは意図的に Codex と区別する。 */
 export class CopilotOutputProjection {
   private readonly units = new Map<string, ProviderOutputTextUnit>();
   private readonly seen = new Set<string>();
-  private readonly correspondence = new Map<string, { originatingMessageId?: string; turnId?: string; toolRequests: boolean }>();
-  get lastNonEmptyText(): string { return [...this.units.values()].reverse().find((unit) => unit.text.trim())?.text ?? ""; }
+  private readonly correspondence = new Map<
+    string,
+    { originatingMessageId?: string; turnId?: string; toolRequests: boolean }
+  >();
+  /** 内容が空白だけではない、最後に登録されたメッセージの本文を返す。 */
+  get lastNonEmptyText(): string {
+    return (
+      [...this.units.values()].reverse().find((unit) => unit.text.trim())
+        ?.text ?? ""
+    );
+  }
+  /** 重複や子エージェント・ツール内の出力を除き、ルートの本文を差分または確定メッセージで更新する。 */
   apply(event: SessionEvent): void {
     if (event.agentId || this.seen.has(event.id)) return;
-    if (event.type !== "assistant.message_start" && event.type !== "assistant.message_delta" && event.type !== "assistant.message") return;
+    if (
+      event.type !== "assistant.message_start" &&
+      event.type !== "assistant.message_delta" &&
+      event.type !== "assistant.message"
+    )
+      return;
     if ("parentToolCallId" in event.data && event.data.parentToolCallId) return;
     this.seen.add(event.id);
     const id = event.data.messageId;
     const previous = this.units.get(id);
-    if (event.type === "assistant.message") this.correspondence.set(id, { originatingMessageId: event.data.originatingMessageId, turnId: event.data.turnId, toolRequests: Boolean(event.data.toolRequests?.length) });
+    if (event.type === "assistant.message")
+      this.correspondence.set(id, {
+        originatingMessageId: event.data.originatingMessageId,
+        turnId: event.data.turnId,
+        toolRequests: Boolean(event.data.toolRequests?.length),
+      });
     this.units.set(id, {
-      id, messageId: id, text: event.type === "assistant.message" ? event.data.content : event.type === "assistant.message_delta" ? (previous?.text ?? "") + event.data.deltaContent : previous?.text ?? "",
-      phase: "phase" in event.data ? event.data.phase ?? previous?.phase ?? null : previous?.phase ?? null,
-      role: "unclassified", completion: event.type === "assistant.message" ? "complete" : "partial", final: false, evidence: null,
+      id,
+      messageId: id,
+      text:
+        event.type === "assistant.message"
+          ? event.data.content
+          : event.type === "assistant.message_delta"
+            ? (previous?.text ?? "") + event.data.deltaContent
+            : (previous?.text ?? ""),
+      phase:
+        "phase" in event.data
+          ? (event.data.phase ?? previous?.phase ?? null)
+          : (previous?.phase ?? null),
+      role: "unclassified",
+      completion: event.type === "assistant.message" ? "complete" : "partial",
+      final: false,
+      evidence: null,
     });
   }
+  /** 入力のネイティブ ID と最後に対応した Turn が一致する、ツール要求を伴わない完成済み本文を回答と確定する。 */
   completeRequest(requestMessageId: string): void {
-    const matching = [...this.correspondence].filter(([, value]) => value.originatingMessageId === requestMessageId);
+    const matching = [...this.correspondence].filter(
+      ([, value]) => value.originatingMessageId === requestMessageId,
+    );
     const terminal = matching.at(-1)?.[1];
     if (!terminal?.turnId || terminal.toolRequests) return;
     for (const [id, native] of matching) {
       const unit = this.units.get(id)!;
-      if (native.turnId === terminal.turnId && !native.toolRequests && unit.completion === "complete" && unit.text) {
-        unit.final = true; unit.role = "answer"; unit.evidence = "copilot.request-completion:originating-message/native-turn";
+      if (
+        native.turnId === terminal.turnId &&
+        !native.toolRequests &&
+        unit.completion === "complete" &&
+        unit.text
+      ) {
+        unit.final = true;
+        unit.role = "answer";
+        unit.evidence =
+          "copilot.request-completion:originating-message/native-turn";
       }
     }
   }
+  /** 空文字列の本文を除き、最終回答の特定状況とともに共通のプロバイダー出力へ写す。 */
   project(sanitize: (text: string) => string = (text) => text) {
-    const units = [...this.units.values()].filter((unit) => unit.text.length > 0);
-    return projectProviderOutput(units, units.some((unit) => unit.final) ? "identified" : units.length ? "unknown" : "none", sanitize);
+    const units = [...this.units.values()].filter(
+      (unit) => unit.text.length > 0,
+    );
+    return projectProviderOutput(
+      units,
+      units.some((unit) => unit.final)
+        ? "identified"
+        : units.length
+          ? "unknown"
+          : "none",
+      sanitize,
+    );
   }
 }

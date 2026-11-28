@@ -3,9 +3,12 @@ import { getWithMateApi } from "../app/renderer-withmate-api.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 
+/** デスクトップからアプリの版を取得し、進捗と版の表示または再試行可能な失敗を区別する。 */
 export function AppVersion() {
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ status: "loading" | "error" } | { status: "loaded"; version: string }>({ status: "loading" });
+  const [state, setState] = useState<
+    { status: "loading" | "error" } | { status: "loaded"; version: string }
+  >({ status: "loading" });
 
   useEffect(() => {
     let active = true;
@@ -14,20 +17,35 @@ export function AppVersion() {
     if (!api) {
       setState({ status: "error" });
     } else {
-      void Promise.resolve().then(() => api.getAppVersion()).then(
-        (version) => { if (active) setState({ status: "loaded", version }); },
-        () => { if (active) setState({ status: "error" }); },
-      );
+      void Promise.resolve()
+        .then(() => api.getAppVersion())
+        .then(
+          (version) => {
+            if (active) setState({ status: "loaded", version });
+          },
+          () => {
+            if (active) setState({ status: "error" });
+          },
+        );
     }
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [attempt]);
 
   return (
     <div className="settings-app-version">
       <span className="settings-provider-name">App Version</span>
-      {state.status === "loading" ? <LoadingIndicator label="Loading app version" inline /> : null}
+      {state.status === "loading" ? (
+        <LoadingIndicator label="Loading app version" inline />
+      ) : null}
       {state.status === "loaded" ? <span>{state.version}</span> : null}
-      {state.status === "error" ? <LoadError message="Could not load app version." onRetry={() => setAttempt((value) => value + 1)} /> : null}
+      {state.status === "error" ? (
+        <LoadError
+          message="Could not load app version."
+          onRetry={() => setAttempt((value) => value + 1)}
+        />
+      ) : null}
     </div>
   );
 }

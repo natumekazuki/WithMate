@@ -11,6 +11,7 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 import { ButtonContent } from "../ui/button-content.js";
 
+/** 対象世代の Crew を削除できるか確かめ、妨げがある場合は理由と参照先を表示する。 */
 export function CrewDeletionDialog({
   api,
   sessionId,
@@ -23,7 +24,9 @@ export function CrewDeletionDialog({
   sessionId: string;
   incarnationId: string;
   title: string;
+  /** 確認を閉じる処理。削除済みの通知とは区別する。 */
   onClose(): void;
+  /** 削除 API の成功を呼び出し元に通知する。 */
   onDeleted(): void;
 }) {
   const [status, setStatus] = useState<CrewDeletionStatus | null>(null);
@@ -35,6 +38,7 @@ export function CrewDeletionDialog({
   const pendingDelete = useRef(false);
   const headingId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
+  /** 削除の結果を待っている間は確認を閉じない。 */
   const cancel = () => {
     if (!pendingDelete.current) onClose();
   };
@@ -81,6 +85,7 @@ export function CrewDeletionDialog({
       live();
     };
   }, [api, retry]);
+  /** 妨げとなる相談の正確な起点を読み、その相談を開けた場合だけ確認を閉じる。 */
   const openBlocker = async (blocker: CrewDeletionBlocker) => {
     try {
       const result = await api.executeCoordination({
@@ -102,6 +107,7 @@ export function CrewDeletionDialog({
       );
     }
   };
+  /** 削除が許可され確認エラーもない場合に一度だけ実行し、失敗時は条件を再取得する。 */
   const remove = async () => {
     if (pendingDelete.current || loading || !status?.allowed || error) return;
     pendingDelete.current = true;
@@ -178,10 +184,14 @@ export function CrewDeletionDialog({
         </ul>
       ) : null}
       {!loading && !error && status && !status.allowed ? (
-        <button className="drawer-toggle compact secondary crew-deletion-refresh" type="button" onClick={() => {
-          cancelRef.current?.focus();
-          retry();
-        }}>
+        <button
+          className="drawer-toggle compact secondary crew-deletion-refresh"
+          type="button"
+          onClick={() => {
+            cancelRef.current?.focus();
+            retry();
+          }}
+        >
           Refresh Status
         </button>
       ) : null}

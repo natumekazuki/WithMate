@@ -9,20 +9,38 @@ import { prepareNativeDependencies } from "../../scripts/build/prepare-native-de
 import type { prepareNativePackaging } from "../../scripts/build/prepare-native-dependencies.js";
 
 const artifacts = [
-  "conpty.node", "conpty_console_list.node", "pty.node", "winpty.dll", "winpty-agent.exe",
-  "conpty/conpty.dll", "conpty/OpenConsole.exe",
+  "conpty.node",
+  "conpty_console_list.node",
+  "pty.node",
+  "winpty.dll",
+  "winpty-agent.exe",
+  "conpty/conpty.dll",
+  "conpty/OpenConsole.exe",
 ];
 
+/** 対象アーキテクチャの必須ファイルと Electron バージョンを持つ合成アプリを一時ディレクトリに作る。 */
 async function createApp(arch = "x64") {
-  const appDir = await mkdtemp(path.join(os.tmpdir(), "withmate-native-packaging-"));
+  const appDir = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-native-packaging-"),
+  );
   const ptyRoot = path.join(appDir, "node_modules/node-pty");
   const prebuildDirectory = path.join(ptyRoot, "prebuilds", `win32-${arch}`);
   await mkdir(path.join(prebuildDirectory, "conpty"), { recursive: true });
-  await writeFile(path.join(appDir, "package.json"), JSON.stringify({ dependencies: { "node-pty": "1.1.0" } }));
-  await writeFile(path.join(ptyRoot, "package.json"), JSON.stringify({ name: "node-pty", version: "1.1.0" }));
+  await writeFile(
+    path.join(appDir, "package.json"),
+    JSON.stringify({ dependencies: { "node-pty": "1.1.0" } }),
+  );
+  await writeFile(
+    path.join(ptyRoot, "package.json"),
+    JSON.stringify({ name: "node-pty", version: "1.1.0" }),
+  );
   await mkdir(path.join(appDir, "node_modules/electron"), { recursive: true });
-  await writeFile(path.join(appDir, "node_modules/electron/package.json"), JSON.stringify({ version: "44.1.1" }));
-  for (const file of artifacts) await writeFile(path.join(prebuildDirectory, file), "fixture");
+  await writeFile(
+    path.join(appDir, "node_modules/electron/package.json"),
+    JSON.stringify({ version: "44.1.1" }),
+  );
+  for (const file of artifacts)
+    await writeFile(path.join(prebuildDirectory, file), "fixture");
   return { appDir, prebuildDirectory };
 }
 
@@ -38,42 +56,81 @@ async function createApp(arch = "x64") {
 // impact = "Windows配布物がsource buildへ依存するか、native依存収集やpackage対象の範囲を壊す"
 // distinction = "helperのrebuild引数testはwrapperを通らず、軽量なsynthetic appで実entryと設定の変更境界を直接検査する"
 // @end-test-value
+/** package.json が指す beforePack を通し、Windows は既存の対象へ除外を一度だけ追加し、他 OS に戻すと元のフィルターと既定の再ビルドが復元することを確認する。 */
 it("applies target-specific rebuild and file filters through the configured beforePack entry", async () => {
   const packageUrl = new URL("../../package.json", import.meta.url);
-  const { build }: { build: Configuration } = JSON.parse(await readFile(packageUrl, "utf8"));
-  assert.equal(typeof build.beforePack, "string");
-  const { default: beforePack }: { default: typeof prepareNativePackaging } = await import(
-    new URL(build.beforePack as string, packageUrl).href
+  const { build }: { build: Configuration } = JSON.parse(
+    await readFile(packageUrl, "utf8"),
   );
+  assert.equal(typeof build.beforePack, "string");
+  const { default: beforePack }: { default: typeof prepareNativePackaging } =
+    await import(new URL(build.beforePack as string, packageUrl).href);
   const { appDir } = await createApp();
   try {
     const exclusion = "!node_modules/node-pty/build/**";
     const configs: Configuration[] = [
-      { npmRebuild: true, asar: true, files: [{ from: appDir, to: ".", filter: ["dist/**", "package.json"] }, { filter: "dist-electron/**" }] },
-      { npmRebuild: true, asar: true, files: { from: appDir, to: ".", filter: "dist/**" } },
+      {
+        npmRebuild: true,
+        asar: true,
+        files: [
+          { from: appDir, to: ".", filter: ["dist/**", "package.json"] },
+          { filter: "dist-electron/**" },
+        ],
+      },
+      {
+        npmRebuild: true,
+        asar: true,
+        files: { from: appDir, to: ".", filter: "dist/**" },
+      },
       { npmRebuild: true, asar: true, files: { from: appDir, to: "." } },
     ];
     const originalFilters = [
-      [{ from: appDir, to: ".", filter: ["dist/**", "package.json"] }, { filter: ["dist-electron/**"] }],
+      [
+        { from: appDir, to: ".", filter: ["dist/**", "package.json"] },
+        { filter: ["dist-electron/**"] },
+      ],
       { from: appDir, to: ".", filter: ["dist/**"] },
       { from: appDir, to: ".", filter: ["**/*"] },
     ];
     const windowsFilters = [
-      [{ from: appDir, to: ".", filter: ["dist/**", "package.json", exclusion] }, { filter: ["dist-electron/**", exclusion] }],
+      [
+        {
+          from: appDir,
+          to: ".",
+          filter: ["dist/**", "package.json", exclusion],
+        },
+        { filter: ["dist-electron/**", exclusion] },
+      ],
       { from: appDir, to: ".", filter: ["dist/**", exclusion] },
       { from: appDir, to: ".", filter: ["**/*", exclusion] },
     ];
     for (const [index, config] of configs.entries()) {
-      const run = (electronPlatformName: string) => beforePack({
-        packager: { info: { appDir }, config }, electronPlatformName, arch: Arch.x64,
-      } as unknown as Parameters<typeof prepareNativePackaging>[0]);
+      /** 同じファイル設定へ実 beforePack を繰り返し適用して、対象 OS を変えた際の差分を観測する。 */
+      const run = (electronPlatformName: string) =>
+        beforePack({
+          packager: { info: { appDir }, config },
+          electronPlatformName,
+          arch: Arch.x64,
+        } as unknown as Parameters<typeof prepareNativePackaging>[0]);
       await run("win32");
-      assert.deepEqual(config, { files: windowsFilters[index], npmRebuild: false, asar: true });
+      assert.deepEqual(config, {
+        files: windowsFilters[index],
+        npmRebuild: false,
+        asar: true,
+      });
       await run("win32");
-      assert.deepEqual(config, { files: windowsFilters[index], npmRebuild: false, asar: true });
+      assert.deepEqual(config, {
+        files: windowsFilters[index],
+        npmRebuild: false,
+        asar: true,
+      });
       for (const platform of ["darwin", "linux"]) {
         await run(platform);
-        assert.deepEqual(config, { files: originalFilters[index], npmRebuild: true, asar: true });
+        assert.deepEqual(config, {
+          files: originalFilters[index],
+          npmRebuild: true,
+          asar: true,
+        });
       }
     }
   } finally {
@@ -93,6 +150,7 @@ it("applies target-specific rebuild and file filters through the configured befo
 // impact = "他native依存のABI不一致やnode-pty再コンパイルにより配布物を生成・起動できない"
 // distinction = "単一hostのinstaller smokeでは別architectureとElectron版overrideの委譲を検出できない"
 // @end-test-value
+/** Windows では対象アーキテクチャの node-pty を除いて再ビルドを委譲し、明示 Electron 版を優先してなければインストール済みの版を使う。 */
 it("rebuilds other dependencies for the Windows target using supplied or installed Electron version", async () => {
   for (const arch of ["x64", "arm64"]) {
     const { appDir } = await createApp(arch);
@@ -101,7 +159,9 @@ it("rebuilds other dependencies for the Windows target using supplied or install
       const electronVersion = arch === "arm64" ? "44.1.2" : undefined;
       const result = await prepareNativeDependencies(
         { appDir, platform: { nodeName: "win32" }, arch, electronVersion },
-        async (options) => { calls.push(options); },
+        async (options) => {
+          calls.push(options);
+        },
       );
       assert.equal(result, false);
       assert.equal(calls.length, 1);
@@ -129,20 +189,29 @@ it("rebuilds other dependencies for the Windows target using supplied or install
 // impact = "生成に成功したartifactでTerminal起動・終了時にnative loadが失敗する"
 // distinction = "正常なnode_modulesを使う通常buildでは欠損入力の拒否は観測できない"
 // @end-test-value
+/** 必須のネイティブファイルが欠損・空、または指定アーキテクチャがない場合、再ビルドへ進む前に対象パスとともに拒否する。 */
 it("rejects missing and empty native artifacts and unavailable target architectures", async () => {
   const { appDir, prebuildDirectory } = await createApp();
   try {
     let rebuildCalls = 0;
-    const run = (arch = "x64") => prepareNativeDependencies(
-      { appDir, platform: { nodeName: "win32" }, arch },
-      async () => { rebuildCalls += 1; },
-    );
+    /** 必須ファイルの検査を対象アーキテクチャごとに実行し、誤って後続の再ビルドへ進んだ回数を数える。 */
+    const run = (arch = "x64") =>
+      prepareNativeDependencies(
+        { appDir, platform: { nodeName: "win32" }, arch },
+        async () => {
+          rebuildCalls += 1;
+        },
+      );
     for (const file of artifacts) {
       const target = path.join(prebuildDirectory, file);
       await rm(target);
-      await assert.rejects(run(), (error: Error) => error.message.includes(target));
+      await assert.rejects(run(), (error: Error) =>
+        error.message.includes(target),
+      );
       await writeFile(target, "");
-      await assert.rejects(run(), (error: Error) => error.message.includes(target));
+      await assert.rejects(run(), (error: Error) =>
+        error.message.includes(target),
+      );
       await writeFile(target, "fixture");
     }
     await assert.rejects(run("ia32"), /win32-ia32/);
@@ -163,13 +232,19 @@ it("rejects missing and empty native artifacts and unavailable target architectu
 // lifecycle = "permanent"
 // distinction = "Windows installer smokeでは非Windowsのhook分岐を通らない"
 // @end-test-value
+/** macOS と Linux では Windows の事前検査や独自再ビルドを行わず、electron-builder の既定処理を許可する。 */
 it("leaves non-Windows dependency handling to electron-builder", async () => {
   for (const nodeName of ["darwin", "linux"]) {
     let called = false;
-    assert.equal(await prepareNativeDependencies(
-      { appDir: "unused", platform: { nodeName }, arch: "arm64" },
-      async () => { called = true; },
-    ), true);
+    assert.equal(
+      await prepareNativeDependencies(
+        { appDir: "unused", platform: { nodeName }, arch: "arm64" },
+        async () => {
+          called = true;
+        },
+      ),
+      true,
+    );
     assert.equal(called, false);
   }
 });
@@ -185,14 +260,20 @@ it("leaves non-Windows dependency handling to electron-builder", async () => {
 // lifecycle = "permanent"
 // distinction = "正常な依存のbuildではnative rebuild失敗経路を通らない"
 // @end-test-value
+/** node-pty 以外の依存の再ビルドが失敗したら、配布準備の成功として扱わず元の例外を返す。 */
 it("propagates other native rebuild failures", async () => {
   const { appDir } = await createApp();
   try {
     const failure = new Error("native rebuild failed");
-    await assert.rejects(prepareNativeDependencies(
-      { appDir, platform: { nodeName: "win32" }, arch: "x64" },
-      async () => { throw failure; },
-    ), (error) => error === failure);
+    await assert.rejects(
+      prepareNativeDependencies(
+        { appDir, platform: { nodeName: "win32" }, arch: "x64" },
+        async () => {
+          throw failure;
+        },
+      ),
+      (error) => error === failure,
+    );
   } finally {
     await rm(appDir, { recursive: true, force: true });
   }

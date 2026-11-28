@@ -26,8 +26,10 @@ const UUIDS = [
   "44444444-4444-4444-8444-444444444444",
 ] as const;
 
+/** fixture のミリ秒時刻を、保存される lease と比較できる ISO 文字列にする。 */
 const iso = (value: number) => new Date(value).toISOString();
 
+/** 各ケースを専用の一時レジストリで実行し、失敗しても作成したディレクトリだけを片付ける。 */
 async function withRoot<T>(run: (root: string) => Promise<T>): Promise<T> {
   const root = await mkdtemp(
     path.join(os.tmpdir(), "withmate-runtime-registry-test-"),
@@ -39,17 +41,25 @@ async function withRoot<T>(run: (root: string) => Promise<T>): Promise<T> {
   }
 }
 
+/** 実時間に依存せず、指定時点で停止したレジストリ用の時計を作る。 */
 function clock(value: number): RuntimeDiscoveryClock {
-  return { now: () => new Date(value) };
+  return {
+    /** 毎回同じ時点を、新しい Date として返す。 */
+    now: () => new Date(value),
+  };
 }
 
+/** 自動 heartbeat を動かさず、テストが明示した更新だけでレジストリを進める。 */
 function timers(): RuntimeDiscoveryTimers {
   return {
+    /** 実タイマーを予約せず、解除に渡せるハンドルだけを返す。 */
     setInterval: () => ({}) as ReturnType<typeof setInterval>,
+    /** タイマーを予約していないため、ハンドル解除に外部効果はない。 */
     clearInterval: () => undefined,
   };
 }
 
+/** 指定されたアプリと世代を別々に識別できるよう、公開オプションと世代マーカー付き資格情報を作る。 */
 function options(
   root: string,
   applicationInstanceId: string,
@@ -58,6 +68,7 @@ function options(
 ) {
   return {
     rootDirectoryPath: root,
+    /** 一時ディレクトリでは実 ACL を変更せず、公開処理のファイル操作だけを通す。 */
     security: async () => undefined,
     identity: {
       applicationInstanceId,
@@ -69,6 +80,7 @@ function options(
     credentialDocuments: [
       { adapterKind: "cli", document: { marker: generation } },
     ],
+    /** 既定では公開先の生存確認に応答がない状態を返す。 */
     challenge: async () => false,
     clock: clock(now),
     timers: timers(),
@@ -83,6 +95,7 @@ function options(
 // scope = "runtime-discovery-registry"
 // lifecycle = "permanent"
 // @end-test-value
+/** 二つ目のランタイムの公開終了と世代削除で、先発の登録・資格情報を失わないことを確認する。 */
 test("先発runtimeは後発runtimeのcleanupで失われない", async () =>
   withRoot(async (root) => {
     const first = await publishRuntimeDiscoveryEntry(
@@ -116,6 +129,7 @@ test("先発runtimeは後発runtimeのcleanupで失われない", async () =>
 // scope = "runtime-discovery-registry"
 // lifecycle = "permanent"
 // @end-test-value
+/** 古いハンドルで公開終了や世代削除を試みても、スロットの新所有者には効果がないことを確認する。 */
 test("非owner handleはslot再利用後のownerを削除できない", async () =>
   withRoot(async (root) => {
     const owner = await publishRuntimeDiscoveryEntry(
@@ -143,6 +157,7 @@ test("非owner handleはslot再利用後のownerを削除できない", async ()
 // scope = "runtime-discovery-registry-mutation-lock"
 // lifecycle = "permanent"
 // @end-test-value
+/** 古い lease を回収しようとしても、待機中に先行 heartbeat が更新した所有者の登録を取り除かない。 */
 test("heartbeat中のstale retireは更新後のowner stateを再検証する", async () =>
   withRoot(async (root) => {
     let now = 0;
@@ -160,7 +175,11 @@ test("heartbeat中のstale retireは更新後のowner stateを再検証する", 
     });
     const publication = await publishRuntimeDiscoveryEntry({
       ...options(root, UUIDS[0], UUIDS[1], now),
-      clock: { now: () => new Date(now) },
+      clock: {
+        /** 時刻を進めた後の heartbeat に、新しい時刻を使わせる。 */
+        now: () => new Date(now),
+      },
+      /** heartbeat が変更ロック内部に入ったところで止め、回収処理を並行させる。 */
       mutationObserver: async (kind) => {
         if (kind === "heartbeat") {
           heartbeatEnteredResolve?.();
@@ -174,12 +193,17 @@ test("heartbeat中のstale retireは更新後のowner stateを再検証する", 
     let maintenanceSettled = false;
     const maintenance = maintainRuntimeDiscoveryRegistry({
       rootDirectoryPath: root,
+      /** ACL を変えず、heartbeat と回収処理の順序だけを検証する。 */
       security: async () => undefined,
+      /** 古い lease の確認が始まったことを通知し、生存確認は不成立として返す。 */
       challenge: async () => {
         challengeEnteredResolve?.();
         return false;
       },
-      clock: { now: () => new Date(now) },
+      clock: {
+        /** heartbeat と同じ時刻で、回収時の lease を判定する。 */
+        now: () => new Date(now),
+      },
       limits: {
         staleThresholdMs: 1,
         capacityCleanupGraceMs: 1,
@@ -211,6 +235,7 @@ test("heartbeat中のstale retireは更新後のowner stateを再検証する", 
 // scope = "runtime-discovery-registry-mutation-lock"
 // lifecycle = "permanent"
 // @end-test-value
+/** 公開終了処理がスロットを変更している間は新しい公開を待たせ、完了後も旧ハンドルから新所有者を保護する。 */
 test("owner mutation中のslot再利用をregistry lockで直列化する", async () =>
   withRoot(async (root) => {
     let enteredResolve: (() => void) | undefined;
@@ -223,6 +248,7 @@ test("owner mutation中のslot再利用をregistry lockで直列化する", asyn
     });
     const owner = await publishRuntimeDiscoveryEntry({
       ...options(root, UUIDS[0], UUIDS[1]),
+      /** 旧所有者の公開終了をロック内で止め、後発の公開がまだ完了しないことを観測できるようにする。 */
       mutationObserver: async (kind) => {
         if (kind === "unpublish") {
           enteredResolve?.();
@@ -264,6 +290,7 @@ test("owner mutation中のslot再利用をregistry lockで直列化する", asyn
 // scope = "runtime-discovery-registry"
 // lifecycle = "permanent"
 // @end-test-value
+/** heartbeat を止めた期限切れの公開は、生存確認も失敗したときに一覧から取り除かれる。 */
 test("期限切れchallenge失敗entryはstale回収される", async () =>
   withRoot(async (root) => {
     const published = await publishRuntimeDiscoveryEntry(
@@ -272,7 +299,9 @@ test("期限切れchallenge失敗entryはstale回収される", async () =>
     await published.stopHeartbeat();
     const result = await maintainRuntimeDiscoveryRegistry({
       rootDirectoryPath: root,
+      /** 古い登録の回収に OS の ACL 操作を伴わせない。 */
       security: async () => undefined,
+      /** 期限切れの所有者が応答しない状況を返す。 */
       challenge: async () => false,
       clock: clock(120_000),
       limits: {
@@ -296,12 +325,15 @@ test("期限切れchallenge失敗entryはstale回収される", async () =>
 // scope = "runtime-discovery-registry"
 // lifecycle = "permanent"
 // @end-test-value
+/** 期限が切れていても生存確認に応答する公開は、容量に余裕がない場合にも残す。 */
 test("期限切れchallenge成功entryは保持される", async () =>
   withRoot(async (root) => {
     await publishRuntimeDiscoveryEntry(options(root, UUIDS[0], UUIDS[1], 0));
     const result = await maintainRuntimeDiscoveryRegistry({
       rootDirectoryPath: root,
+      /** ACL の変更なしで、期限切れの登録をレジストリの保守処理に渡す。 */
       security: async () => undefined,
+      /** lease は期限切れだがランタイムが応答する条件を再現する。 */
       challenge: async () => true,
       clock: clock(120_000),
       limits: {
@@ -326,6 +358,7 @@ test("期限切れchallenge成功entryは保持される", async () =>
 // scope = "runtime-discovery-registry"
 // lifecycle = "permanent"
 // @end-test-value
+/** 二件を同時に公開した状態で容量二件の一覧を読み、各登録と同じ世代の資格情報を取得できることを確認する。 */
 test("同時publishはpartial artifactを公開せずcapacityを守る", async () =>
   withRoot(async (root) => {
     const [a, b] = await Promise.all([
@@ -354,6 +387,7 @@ test("同時publishはpartial artifactを公開せずcapacityを守る", async (
 // scope = "runtime-discovery-registry"
 // lifecycle = "permanent"
 // @end-test-value
+/** 容量に達したときは専用エラーを返し、追加の資格情報ファイルにセキュリティ処理を実行しない。 */
 test("capacity fullではsecurity callback前に失敗する", async () =>
   withRoot(async (root) => {
     await publishRuntimeDiscoveryEntry(options(root, UUIDS[0], UUIDS[1]));
@@ -362,6 +396,7 @@ test("capacity fullではsecurity callback前に失敗する", async () =>
       publishRuntimeDiscoveryEntry({
         ...options(root, UUIDS[2], UUIDS[3]),
         limits: { maxEntries: 1 },
+        /** 失敗する公開で資格情報ファイルのセキュリティ処理に到達した回数を記録する。 */
         security: async (_path, kind) => {
           if (kind === "file") credentialSecurityCalls += 1;
         },
@@ -381,11 +416,13 @@ test("capacity fullではsecurity callback前に失敗する", async () =>
 // scope = "runtime-discovery-registry"
 // lifecycle = "permanent"
 // @end-test-value
+/** 資格情報ファイルのセキュリティ処理に失敗した場合、公開一覧にも staging にも途中の成果を残さない。 */
 test("security callback失敗時はpublication artifactをrollbackする", async () =>
   withRoot(async (root) => {
     await assert.rejects(
       publishRuntimeDiscoveryEntry({
         ...options(root, UUIDS[0], UUIDS[1]),
+        /** ファイルの ACL 処理だけを意図的に失敗させ、ディレクトリの処理は通す。 */
         security: async (_path, kind) => {
           if (kind === "file") throw new Error("acl");
         },
@@ -409,6 +446,7 @@ test("security callback失敗時はpublication artifactをrollbackする", async
 // lifecycle = "permanent"
 // distinction = "entry commit前のACL失敗ではなく、完全なentryのread-back後にlock directoryの削除だけが失敗する時点を注入する"
 // @end-test-value
+/** 公開を反映した後にロックの解放が失敗したとき、途中の公開を取り消し、後続のロールバック通知も一度だけ行う。 */
 test("publication commit後のlock解放失敗はowner entryをrollbackする", async () =>
   withRoot(async (root) => {
     const lockDirectoryPath = resolveRuntimeDiscoveryMutationLockFilePath(root);
@@ -418,19 +456,20 @@ test("publication commit後のlock解放失敗はowner entryをrollbackする", 
       await assert.rejects(
         publishRuntimeDiscoveryEntry({
           ...options(root, UUIDS[0], UUIDS[1]),
+          /** 公開段階でロック先にファイルを作り、空のロックディレクトリとして解放できない状況を再現する。 */
           mutationObserver: async (kind) => {
             if (kind === "publish") {
               await writeFile(blockerPath, "block release\n", "utf8");
             }
           },
+          /** 公開の取り消し後に投影側へ通知した回数を記録する。 */
           afterPublicationRollback: async () => {
             projectionRollbackCount += 1;
           },
         }),
-        (error: unknown) => (
-          (error as NodeJS.ErrnoException)?.code === "ENOTEMPTY"
-          || (error as NodeJS.ErrnoException)?.code === "EEXIST"
-        ),
+        (error: unknown) =>
+          (error as NodeJS.ErrnoException)?.code === "ENOTEMPTY" ||
+          (error as NodeJS.ErrnoException)?.code === "EEXIST",
       );
       const snapshot = await listRuntimeDiscoveryRegistryEntries(root);
       assert.equal(snapshot.records.length, 0);
@@ -452,6 +491,7 @@ test("publication commit後のlock解放失敗はowner entryをrollbackする", 
 // lifecycle = "permanent"
 // distinction = "初回publish成功では検出できないheartbeat更新とACL再実行抑止を確認する"
 // @end-test-value
+/** テスト時計を進めて heartbeat を更新すると、lease の時刻は進むが初回公開時の ACL 処理は繰り返さない。 */
 test("heartbeatはACL処理を再実行せずfake clockのleaseを更新する", async () =>
   withRoot(async (root) => {
     let now = 0;
@@ -459,15 +499,21 @@ test("heartbeatはACL処理を再実行せずfake clockのleaseを更新する",
     let securityCallCount = 0;
     const publication = await publishRuntimeDiscoveryEntry({
       ...options(root, UUIDS[0], UUIDS[1], now),
+      /** 公開と heartbeat がセキュリティ処理を呼んだ累積回数を記録する。 */
       security: async () => {
         securityCallCount += 1;
       },
-      clock: { now: () => new Date(now) },
+      clock: {
+        /** 手動で進めた時刻を heartbeat の lease 更新に反映する。 */
+        now: () => new Date(now),
+      },
       timers: {
+        /** heartbeat コールバックを退避して手動で起動できるようにし、解除可能な実タイマーハンドルを返す。 */
         setInterval: (cb) => {
           callback = cb;
           return setInterval(() => {}, 60_000);
         },
+        /** 公開終了時に、fixture が作った実タイマーを解除する。 */
         clearInterval: (handle) => globalThis.clearInterval(handle),
       },
     });
@@ -490,6 +536,7 @@ test("heartbeatはACL処理を再実行せずfake clockのleaseを更新する",
 // scope = "runtime-discovery-registry"
 // lifecycle = "permanent"
 // @end-test-value
+/** 公開終了で退避された成果の時刻を保持期間より前に設定し、保守処理で退避ディレクトリから除去されることを確認する。 */
 test("retired artifact回収はretention境界でboundedになる", async () =>
   withRoot(async (root) => {
     const publication = await publishRuntimeDiscoveryEntry(
@@ -502,7 +549,9 @@ test("retired artifact回収はretention境界でboundedになる", async () =>
     }
     const result = await maintainRuntimeDiscoveryRegistry({
       rootDirectoryPath: root,
+      /** 退避済み成果の整理では OS の ACL を操作しない。 */
       security: async () => undefined,
+      /** 整理対象のランタイムに生存応答がない状態とする。 */
       challenge: async () => false,
       clock: clock(2 * 24 * 60 * 60 * 1_000),
     });
@@ -521,11 +570,14 @@ test("retired artifact回収はretention境界でboundedになる", async () =>
 // lifecycle = "permanent"
 // distinction = "同一Node process内のbarrierではなく、独立child processの強制終了とlock mtime expiryを通る"
 // @end-test-value
+/** 専用の子プロセスを公開ロックの保持中に終了させ、古くなったロックがある状態でも別の世代を公開できることを確認する。 */
 test("別process crash後にstale mutation lockを回収してpublishできる", async () =>
   withRoot(async (root) => {
-    const moduleUrl = pathToFileURL(path.resolve(
-      "src-electron/platform/runtime-discovery/runtime-discovery-registry.ts",
-    )).href;
+    const moduleUrl = pathToFileURL(
+      path.resolve(
+        "src-electron/platform/runtime-discovery/runtime-discovery-registry.ts",
+      ),
+    ).href;
     const childSource = [
       "const registry = await import(process.argv[1]);",
       "await registry.publishRuntimeDiscoveryEntry({",
@@ -545,21 +597,25 @@ test("別process crash後にstale mutation lockを回収してpublishできる",
       "  },",
       "});",
     ].join("\n");
-    const child = spawn(process.execPath, [
-      "--import",
-      "tsx",
-      "--input-type=module",
-      "--eval",
-      childSource,
-      moduleUrl,
-      root,
-      UUIDS[0],
-      UUIDS[1],
-    ], {
-      cwd: process.cwd(),
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "--eval",
+        childSource,
+        moduleUrl,
+        root,
+        UUIDS[0],
+        UUIDS[1],
+      ],
+      {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     let stderr = "";
@@ -573,19 +629,25 @@ test("別process crash後にstale mutation lockを回収してpublishできる",
         }
       });
       child.once("exit", (code) => {
-        reject(new Error("lock holder exited before acquiring the lock: " + code + " " + stderr));
+        reject(
+          new Error(
+            "lock holder exited before acquiring the lock: " +
+              code +
+              " " +
+              stderr,
+          ),
+        );
       });
       child.once("error", reject);
     });
 
     const exitPromise = once(child, "exit");
     if (process.platform === "win32") {
-      const killed = spawnSync("taskkill", [
-        "/PID",
-        String(child.pid),
-        "/T",
-        "/F",
-      ], { windowsHide: true });
+      const killed = spawnSync(
+        "taskkill",
+        ["/PID", String(child.pid), "/T", "/F"],
+        { windowsHide: true },
+      );
       assert.equal(killed.status, 0, killed.stderr?.toString("utf8"));
     } else {
       assert.equal(child.kill("SIGKILL"), true);

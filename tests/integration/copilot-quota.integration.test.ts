@@ -19,6 +19,7 @@ import { buildCopilotQuotaProjection } from "../../src/chat/runtime/session-ui-p
 // impact = "利用者が不明な残量を枯渇と誤認するか、有効な残率や件数を判断できなくなる"
 // distinction = "rendererへ直接NaNを渡す既存testはadapterによる0変換を検出できず、型検査では数値の有限性を保証できない。小さい入力表で両表示経路を継続検証する"
 // @end-test-value
+/** Copilot の SDK 残率が非有限なら取得不能として表示し、有限なら比率または百分率を同じ表示へ揃え、残件数とリセットの表示は維持する。 */
 test("Copilot quotaは非有限残率と正常な残率をadapterから表示まで区別する", () => {
   const cases = [
     [NaN, NaN, "—", "unavailable"],
@@ -41,21 +42,31 @@ test("Copilot quotaは非有限残率と正常な残率をadapterから表示ま
     };
     const telemetry = buildCopilotProviderQuotaTelemetry(
       "copilot",
-      readCopilotQuotaSnapshots({ quotaSnapshots: { premium_interactions: snapshot } }),
+      readCopilotQuotaSnapshots({
+        quotaSnapshots: { premium_interactions: snapshot },
+      }),
       "2026-10-19T00:00:00.000Z",
     );
     assert.deepEqual(telemetry, {
       provider: "copilot",
       updatedAt: "2026-10-19T00:00:00.000Z",
-      snapshots: [{ ...snapshot, quotaKey: "premium_interactions", remainingPercentage: normalized }],
+      snapshots: [
+        {
+          ...snapshot,
+          quotaKey: "premium_interactions",
+          remainingPercentage: normalized,
+        },
+      ],
     });
-    assert.deepEqual(projectQuotaRemaining(telemetry), [{
-      key: "premium_interactions",
-      label: "Premium",
-      remaining,
-      resetDate: snapshot.resetDate,
-      summary: true,
-    }]);
+    assert.deepEqual(projectQuotaRemaining(telemetry), [
+      {
+        key: "premium_interactions",
+        label: "Premium",
+        remaining,
+        resetDate: snapshot.resetDate,
+        summary: true,
+      },
+    ]);
     const copilot = buildCopilotQuotaProjection(telemetry);
     assert.equal(copilot.remainingPercentLabel, copilotRemaining);
     assert.equal(copilot.remainingRequestsLabel, "375 / 500 requests left");

@@ -1,8 +1,10 @@
+/** ディスプレイの配置を含めた画面座標系上の一点。 */
 export type ScreenPoint = {
   x: number;
   y: number;
 };
 
+/** ウィンドウの表示に使えるディスプレイの作業領域。 */
 export type ScreenWorkArea = {
   x: number;
   y: number;
@@ -10,6 +12,7 @@ export type ScreenWorkArea = {
   height: number;
 };
 
+/** カーソルを基準にウィンドウの左上を決めるための寸法とオフセット。 */
 export type CursorPlacementInput = {
   cursor: ScreenPoint;
   workArea: ScreenWorkArea;
@@ -19,8 +22,10 @@ export type CursorPlacementInput = {
   offsetY?: number;
 };
 
+/** 軸ごとのオフセットが未指定の場合にカーソルから離す距離。 */
 export const DEFAULT_WINDOW_CURSOR_OFFSET = 24;
 
+/** 座標を作業領域のこの軸で許容される範囲に収める。 */
 function clamp(value: number, min: number, max: number): number {
   if (value < min) {
     return min;
@@ -31,7 +36,11 @@ function clamp(value: number, min: number, max: number): number {
   return value;
 }
 
-export function resolveCursorAnchoredPosition(input: CursorPlacementInput): { x: number; y: number } {
+/** カーソルを起点に配置し、作業領域をはみ出す軸は補正する。領域より大きい軸は領域の原点にそろえる。 */
+export function resolveCursorAnchoredPosition(input: CursorPlacementInput): {
+  x: number;
+  y: number;
+} {
   const { cursor, workArea, width, height } = input;
   const offsetX = input.offsetX ?? DEFAULT_WINDOW_CURSOR_OFFSET;
   const offsetY = input.offsetY ?? DEFAULT_WINDOW_CURSOR_OFFSET;

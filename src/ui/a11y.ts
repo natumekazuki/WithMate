@@ -1,16 +1,23 @@
-import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import {
+  useEffect,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "[href]",
-  "input:not([disabled]):not([type=\"hidden\"])",
+  'input:not([disabled]):not([type="hidden"])',
   "select:not([disabled])",
   "textarea:not([disabled])",
-  "[tabindex]:not([tabindex=\"-1\"])",
+  '[tabindex]:not([tabindex="-1"])',
 ].join(", ");
 
+/** 矢印キーによる項目移動を受け付ける方向。Home と End は方向によらない。 */
 export type RovingOrientation = "horizontal" | "vertical" | "both";
 
+/** 指定方向の矢印では項目間を循環し、Home・End は端へ移動する。対象外のキーや空一覧は null。 */
 export function getNextRovingIndex(
   currentIndex: number,
   itemCount: number,
@@ -30,7 +37,8 @@ export function getNextRovingIndex(
   }
 
   const normalizedCurrentIndex = currentIndex >= 0 ? currentIndex : 0;
-  const allowHorizontal = orientation === "horizontal" || orientation === "both";
+  const allowHorizontal =
+    orientation === "horizontal" || orientation === "both";
   const allowVertical = orientation === "vertical" || orientation === "both";
 
   if (allowHorizontal && key === "ArrowRight") {
@@ -52,6 +60,7 @@ export function getNextRovingIndex(
   return null;
 }
 
+/** ダイアログ内で Tab の候補にする要素を、共通セレクターを使って DOM 順に列挙する。 */
 function getFocusableElements(root: HTMLElement | null): HTMLElement[] {
   if (!root) {
     return [];
@@ -60,19 +69,24 @@ function getFocusableElements(root: HTMLElement | null): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
 }
 
+/** フォーカス中の候補を起点とし、なければ選択済み・チェック済み、次いで先頭を使う。 */
 function getCurrentRovingIndex(items: HTMLElement[]): number {
-  const activeElement = typeof document === "undefined" ? null : document.activeElement;
+  const activeElement =
+    typeof document === "undefined" ? null : document.activeElement;
   const focusedIndex = items.findIndex((item) => item === activeElement);
   if (focusedIndex >= 0) {
     return focusedIndex;
   }
 
-  const selectedIndex = items.findIndex((item) =>
-    item.getAttribute("aria-selected") === "true" || item.getAttribute("aria-checked") === "true"
+  const selectedIndex = items.findIndex(
+    (item) =>
+      item.getAttribute("aria-selected") === "true" ||
+      item.getAttribute("aria-checked") === "true",
   );
   return selectedIndex >= 0 ? selectedIndex : 0;
 }
 
+/** 対象キーで選んだ項目にフォーカスを移し、指定がある場合に限りクリックも発行する。 */
 export function focusRovingItemByKey(
   event: ReactKeyboardEvent<HTMLElement>,
   options: {
@@ -81,8 +95,12 @@ export function focusRovingItemByKey(
     activateOnFocus?: boolean;
   },
 ): HTMLElement | null {
-  const selector = options.selector ?? "[role=\"option\"], [role=\"radio\"], button:not([disabled])";
-  const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(selector));
+  const selector =
+    options.selector ??
+    '[role="option"], [role="radio"], button:not([disabled])';
+  const items = Array.from(
+    event.currentTarget.querySelectorAll<HTMLElement>(selector),
+  );
   const nextIndex = getNextRovingIndex(
     getCurrentRovingIndex(items),
     items.length,
@@ -107,7 +125,11 @@ export function focusRovingItemByKey(
   return nextItem;
 }
 
-function trapDialogTabKey(root: HTMLElement | null, event: ReactKeyboardEvent<HTMLElement>): boolean {
+/** Tab がダイアログの端を越えそうな場合だけ折り返し、候補が空なら移動を止める。 */
+function trapDialogTabKey(
+  root: HTMLElement | null,
+  event: ReactKeyboardEvent<HTMLElement>,
+): boolean {
   if (event.key !== "Tab") {
     return false;
   }
@@ -120,7 +142,8 @@ function trapDialogTabKey(root: HTMLElement | null, event: ReactKeyboardEvent<HT
 
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
-  const activeElement = typeof document === "undefined" ? null : document.activeElement;
+  const activeElement =
+    typeof document === "undefined" ? null : document.activeElement;
 
   if (event.shiftKey && (activeElement === first || activeElement === root)) {
     event.preventDefault();
@@ -137,6 +160,7 @@ function trapDialogTabKey(root: HTMLElement | null, event: ReactKeyboardEvent<HT
   return false;
 }
 
+/** モーダル内での初期フォーカスと Tab・Escape の操作を管理し、閉じた後は元の要素に戻す。 */
 export function useDialogA11y<T extends HTMLElement>(options: {
   open: boolean;
   onClose: () => void;
@@ -151,10 +175,13 @@ export function useDialogA11y<T extends HTMLElement>(options: {
       return;
     }
 
-    const previousFocused = typeof document !== "undefined" && document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
+    const previousFocused =
+      typeof document !== "undefined" &&
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
 
+    /** 指定した初期要素にフォーカスできなければ、最初の候補かダイアログ自体へ移す。 */
     const focusTarget = () => {
       const initialFocus = initialFocusRef?.current;
       if (initialFocus) {
@@ -175,6 +202,7 @@ export function useDialogA11y<T extends HTMLElement>(options: {
     };
   }, [open, initialFocusRef]);
 
+  /** Escape の既定動作を止め、設定に従って閉じる。その他のキーは Tab の折り返しだけを処理する。 */
   const handleDialogKeyDown = (event: ReactKeyboardEvent<T>) => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -184,7 +212,10 @@ export function useDialogA11y<T extends HTMLElement>(options: {
       return;
     }
 
-    trapDialogTabKey(dialogRef.current, event as ReactKeyboardEvent<HTMLElement>);
+    trapDialogTabKey(
+      dialogRef.current,
+      event as ReactKeyboardEvent<HTMLElement>,
+    );
   };
 
   return { dialogRef, handleDialogKeyDown };

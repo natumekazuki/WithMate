@@ -12,8 +12,14 @@ import {
   type BoundedProviderRawItem,
 } from "../../session/provider-payload-limits.js";
 import type { WorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
-import { getCodexActivityOperation, getCodexCommandOutputPreview, getCodexMcpResultPreview, type CodexTurnItem } from "./codex-turn-events.js";
+import {
+  getCodexActivityOperation,
+  getCodexCommandOutputPreview,
+  getCodexMcpResultPreview,
+  type CodexTurnItem,
+} from "./codex-turn-events.js";
 export type { CodexTurnItem } from "./codex-turn-events.js";
+/** Codex の変更通知と前後のワークスペース取得結果を、共通のファイル差分に写すための処理。 */
 export type CodexChangedFileProjectionDeps = {
   normalizeWorkspaceRelativePath: (
     workspacePath: string,
@@ -30,6 +36,7 @@ export type CodexChangedFileProjectionDeps = {
   buildDiffRows: (before: string | null, after: string | null) => DiffRow[];
 };
 
+/** 完了した Codex の通知を優先し、指定時は通知のないパスをスナップショット差分から補って、パス順に返す。 */
 export function buildChangedFilesFromSources(
   workspacePath: string,
   items: CodexTurnItem[],
@@ -69,26 +76,34 @@ export function buildChangedFilesFromSources(
     }));
 }
 
+/** ユーザー入力と推論を除いたネイティブ項目を容量内に収め、切り詰めたコマンド出力の元の長さを残す。 */
 export function buildCodexStableRawItems(
   items: CodexTurnItem[],
 ): BoundedProviderRawItem[] {
   return items
     .filter((item) => item.type !== "reasoning" && item.type !== "userMessage")
     .map((item) => {
-      if (item.type !== "commandExecution") return boundProviderRawItem({ type: item.type, data: { ...item } });
+      if (item.type !== "commandExecution")
+        return boundProviderRawItem({ type: item.type, data: { ...item } });
       const { aggregatedOutputOriginalLength, ...data } = item;
       const bounded = boundProviderRawItem({ type: item.type, data });
-      if (aggregatedOutputOriginalLength !== undefined && aggregatedOutputOriginalLength > (item.aggregatedOutput?.length ?? 0) && bounded.data) {
+      if (
+        aggregatedOutputOriginalLength !== undefined &&
+        aggregatedOutputOriginalLength > (item.aggregatedOutput?.length ?? 0) &&
+        bounded.data
+      ) {
         bounded.data.aggregatedOutput = {
           text: getCodexCommandOutputPreview(item),
           truncated: true,
           originalLength: aggregatedOutputOriginalLength,
         };
-        if (JSON.stringify(bounded).length > PROVIDER_RAW_ITEM_CLONE_LIMIT) return boundProviderRawItem(bounded);
+        if (JSON.stringify(bounded).length > PROVIDER_RAW_ITEM_CLONE_LIMIT)
+          return boundProviderRawItem(bounded);
       }
       return bounded;
     });
 }
+/** 未対応の Codex 項目だけを、上限付きの診断ペイロードと項目種別に写す。 */
 export function buildCodexProviderMetadata(
   items: CodexTurnItem[],
 ): ProviderDiagnosticMetadata[] {
@@ -118,8 +133,17 @@ export function buildCodexProviderMetadata(
       payload: boundProviderRawItem({ type: item.type, data: { item } }),
     }));
 }
-export function toMessageOperations(items: CodexTurnItem[]): MessageOperation[] {
-  const operationStatus = (status: string): string => status === "inProgress" ? "in_progress" : status === "declined" ? "failed" : status;
+/** Codex 項目を保存できる操作一覧へ変換する。ユーザー入力と推論は除き、未対応項目は不明操作として残す。 */
+export function toMessageOperations(
+  items: CodexTurnItem[],
+): MessageOperation[] {
+  /** 進行中と拒否の状態を保存形式にそろえ、その他の状態はそのまま残す。 */
+  const operationStatus = (status: string): string =>
+    status === "inProgress"
+      ? "in_progress"
+      : status === "declined"
+        ? "failed"
+        : status;
   return items.flatMap((item): MessageOperation[] => {
     const activity = getCodexActivityOperation(item);
     if (activity) return [activity];
@@ -141,10 +165,18 @@ export function toMessageOperations(items: CodexTurnItem[]): MessageOperation[] 
             id: item.id,
             status: operationStatus(item.status),
             ...(item.exitCode !== null ? { exitCode: item.exitCode } : {}),
-            ...(item.aggregatedOutputOriginalLength !== undefined ? { truncated: item.aggregatedOutputOriginalLength > (item.aggregatedOutput?.length ?? 0) } : {}),
+            ...(item.aggregatedOutputOriginalLength !== undefined
+              ? {
+                  truncated:
+                    item.aggregatedOutputOriginalLength >
+                    (item.aggregatedOutput?.length ?? 0),
+                }
+              : {}),
             type: "command_execution",
             summary: toProviderTextPreview(item.command) ?? "",
-            details: getCodexCommandOutputPreview(item) ?? (item.exitCode === null ? "" : `exit code: ${item.exitCode}`),
+            details:
+              getCodexCommandOutputPreview(item) ??
+              (item.exitCode === null ? "" : `exit code: ${item.exitCode}`),
           },
         ];
       case "fileChange":
@@ -160,7 +192,13 @@ export function toMessageOperations(items: CodexTurnItem[]): MessageOperation[] 
           {
             id: item.id,
             status: operationStatus(item.status),
-            ...(item.error ? { error: { message: toProviderTextPreview(item.error.message) ?? "" } } : {}),
+            ...(item.error
+              ? {
+                  error: {
+                    message: toProviderTextPreview(item.error.message) ?? "",
+                  },
+                }
+              : {}),
             type: "mcp_tool_call",
             summary: `${item.server}/${item.tool}`,
             details: getCodexMcpResultPreview(item),
@@ -186,7 +224,13 @@ export function toMessageOperations(items: CodexTurnItem[]): MessageOperation[] 
           },
         ];
       case "plan":
-        return [{ id: item.id, type: "plan", summary: toProviderTextPreview(item.text) ?? "" }];
+        return [
+          {
+            id: item.id,
+            type: "plan",
+            summary: toProviderTextPreview(item.text) ?? "",
+          },
+        ];
       default:
         return [
           {

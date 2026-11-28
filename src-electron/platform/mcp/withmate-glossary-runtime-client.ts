@@ -1,4 +1,3 @@
-
 import {
   GLOSSARY_RUNTIME_SCHEMA_VERSION,
   type GlossaryOperationError,
@@ -21,6 +20,7 @@ import {
   type AgentRuntimeResolution,
 } from "../agent-runtime/runtime-client.js";
 
+/** CLI と MCP が共用する、用語集ランタイムの接続特定・通信・タイムアウト設定。 */
 export type GlossaryRuntimeClientDeps = {
   adapter: "cli" | "mcp";
   env?: NodeJS.ProcessEnv;
@@ -45,15 +45,20 @@ export type GlossaryRuntimeClientDeps = {
   requestTimeoutMs?: number;
 };
 
-export function isGlossaryRuntimeResult(value: unknown): value is GlossaryRuntimeEnvelope<object> {
+/** 応答が配列ではないオブジェクトで、用語集プロトコルの版と一致するか確認する。 */
+export function isGlossaryRuntimeResult(
+  value: unknown,
+): value is GlossaryRuntimeEnvelope<object> {
   return Boolean(
-    value
-    && typeof value === "object"
-    && !Array.isArray(value)
-    && (value as { schemaVersion?: unknown }).schemaVersion === GLOSSARY_RUNTIME_SCHEMA_VERSION,
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as { schemaVersion?: unknown }).schemaVersion ===
+      GLOSSARY_RUNTIME_SCHEMA_VERSION,
   );
 }
 
+/** 通信失敗を用語集の応答形式に変換する。副作用なしと分類した場合だけ再試行可能とする。 */
 export function createGlossaryTransportError(
   message: string,
   effect: GlossaryOperationError["effect"] = "none",
@@ -68,17 +73,20 @@ export function createGlossaryTransportError(
   };
 }
 
+/** Session の紐付け情報を解決できず、用語集操作を送っていないことを返す。 */
 function createGlossaryBindingRequiredError(): GlossaryRuntimeEnvelope<GlossaryOperationError> {
   return {
     schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
     ok: false,
     code: "GLOSSARY_SESSION_BINDING_REQUIRED",
-    message: "Glossary operations require the active WithMate provider Session runtime binding.",
+    message:
+      "Glossary operations require the active WithMate provider Session runtime binding.",
     effect: "none",
     retryable: false,
   };
 }
 
+/** 共通ランタイムの検出エラーを、同じ原因を示す用語集の公開コードへ写す。 */
 function mapGlossaryRuntimeDiscoveryCode(
   discoveryCode: AgentRuntimePublicDiscoveryCode,
 ): GlossaryOperationError["code"] {
@@ -102,9 +110,13 @@ function mapGlossaryRuntimeDiscoveryCode(
   }
 }
 
+/** 接続先を確定できなかった理由と候補を返し、利用不能・期限切れだけを再試行可能とする。 */
 function createGlossaryPublicDiscoveryError(
   discoveryCode: AgentRuntimePublicDiscoveryCode,
-  candidates: Extract<AgentRuntimeResolution, { kind: "error" }>["candidates"] = [],
+  candidates: Extract<
+    AgentRuntimeResolution,
+    { kind: "error" }
+  >["candidates"] = [],
 ): GlossaryRuntimeEnvelope<GlossaryOperationError> {
   return {
     schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
@@ -112,7 +124,9 @@ function createGlossaryPublicDiscoveryError(
     code: mapGlossaryRuntimeDiscoveryCode(discoveryCode),
     message: "WithMate glossary runtime discovery could not select a runtime.",
     effect: "none",
-    retryable: discoveryCode === "WITHMATE_RUNTIME_UNAVAILABLE" || discoveryCode === "WITHMATE_RUNTIME_STALE",
+    retryable:
+      discoveryCode === "WITHMATE_RUNTIME_UNAVAILABLE" ||
+      discoveryCode === "WITHMATE_RUNTIME_STALE",
     details: {
       discoveryCode,
       candidates,
@@ -120,6 +134,7 @@ function createGlossaryPublicDiscoveryError(
   };
 }
 
+/** 接続選択の失敗を、候補を保持したまま公開用の用語集エラーへ変換する。 */
 function createGlossaryRuntimeDiscoveryError(
   resolution: Extract<AgentRuntimeResolution, { kind: "error" }>,
 ): GlossaryRuntimeEnvelope<GlossaryOperationError> {
@@ -129,6 +144,7 @@ function createGlossaryRuntimeDiscoveryError(
   );
 }
 
+/** 本文の容量超過による拒否を、副作用なし・再試行不可の用語集エラーとして返す。 */
 function createGlossaryRequestTooLargeError(): GlossaryRuntimeEnvelope<GlossaryOperationError> {
   return {
     schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
@@ -140,18 +156,25 @@ function createGlossaryRequestTooLargeError(): GlossaryRuntimeEnvelope<GlossaryO
   };
 }
 
+/** 応答がない場合に書き込み結果の確認が必要になり得る操作を判定する。 */
 function isWriteOperation(operation: GlossaryRuntimeOperation): boolean {
-  return operation === "create"
-    || operation === "create_batch"
-    || operation === "update"
-    || operation === "delete";
+  return (
+    operation === "create" ||
+    operation === "create_batch" ||
+    operation === "update" ||
+    operation === "delete"
+  );
 }
 
-export async function callGlossaryRuntime(input: {
-  operation: GlossaryRuntimeOperation;
-  path: string;
-  body: unknown;
-}, deps: GlossaryRuntimeClientDeps): Promise<GlossaryRuntimeEnvelope<object>> {
+/** ランタイムを選択して用語集要求を送る。送信状況と操作種別で通信失敗時の副作用を分類する。 */
+export async function callGlossaryRuntime(
+  input: {
+    operation: GlossaryRuntimeOperation;
+    path: string;
+    body: unknown;
+  },
+  deps: GlossaryRuntimeClientDeps,
+): Promise<GlossaryRuntimeEnvelope<object>> {
   let bindingReference: string | undefined;
   let turnCapability: string | undefined;
   try {
@@ -160,19 +183,23 @@ export async function callGlossaryRuntime(input: {
   } catch {
     return createGlossaryBindingRequiredError();
   }
-  let resolution: AgentRuntimeResolution | { kind: "selected"; connection: AgentRuntimeConnection };
+  let resolution:
+    | AgentRuntimeResolution
+    | { kind: "selected"; connection: AgentRuntimeConnection };
   try {
-    resolution = deps.connection ? { kind: "selected", connection: deps.connection } : await resolveAgentRuntimeApi({
-      adapter: deps.adapter,
-      env: deps.env,
-      apiUrl: deps.apiUrl,
-      applicationInstanceId: deps.applicationInstanceId,
-      runtimeGenerationId: deps.runtimeGenerationId,
-      registryRootDirectoryPath: deps.registryRootDirectoryPath,
-      clock: deps.clock,
-      staleThresholdMs: deps.staleThresholdMs,
-      fetch: deps.fetch,
-    });
+    resolution = deps.connection
+      ? { kind: "selected", connection: deps.connection }
+      : await resolveAgentRuntimeApi({
+          adapter: deps.adapter,
+          env: deps.env,
+          apiUrl: deps.apiUrl,
+          applicationInstanceId: deps.applicationInstanceId,
+          runtimeGenerationId: deps.runtimeGenerationId,
+          registryRootDirectoryPath: deps.registryRootDirectoryPath,
+          clock: deps.clock,
+          staleThresholdMs: deps.staleThresholdMs,
+          fetch: deps.fetch,
+        });
   } catch {
     return createGlossaryTransportError("WithMate runtime discovery failed.");
   }
@@ -181,19 +208,26 @@ export async function callGlossaryRuntime(input: {
   }
   const connection = resolution.connection;
   const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? 10_000);
+  const timeout = setTimeout(
+    () => abortController.abort(),
+    deps.requestTimeoutMs ?? 10_000,
+  );
   let dispatched = false;
   try {
-    const response = await (deps.runtimeCall ?? callAgentRuntime)(connection, {
-      method: "POST",
-      path: input.path,
-      body: input.body,
-    }, {
-      signal: abortController.signal,
-      bindingReference,
-      turnCapability,
-      exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
-    });
+    const response = await (deps.runtimeCall ?? callAgentRuntime)(
+      connection,
+      {
+        method: "POST",
+        path: input.path,
+        body: input.body,
+      },
+      {
+        signal: abortController.signal,
+        bindingReference,
+        turnCapability,
+        exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+      },
+    );
     dispatched = true;
     if (isGlossaryRuntimeResult(response.value)) {
       return response.value;
@@ -206,10 +240,15 @@ export async function callGlossaryRuntime(input: {
       isWriteOperation(input.operation) ? "unknown" : "none",
     );
   } catch (error) {
-    const wasDispatched = error instanceof AgentRuntimeExchangeError
-      ? error.dispatched
-      : dispatched;
-    if (error instanceof AgentRuntimeExchangeError && !wasDispatched && error.discoveryCode) {
+    const wasDispatched =
+      error instanceof AgentRuntimeExchangeError
+        ? error.dispatched
+        : dispatched;
+    if (
+      error instanceof AgentRuntimeExchangeError &&
+      !wasDispatched &&
+      error.discoveryCode
+    ) {
       return createGlossaryPublicDiscoveryError(error.discoveryCode);
     }
     return createGlossaryTransportError(
