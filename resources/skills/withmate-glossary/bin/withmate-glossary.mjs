@@ -21614,7 +21614,7 @@ function createAgentRuntimeOwnerChallenge(apiSecret, applicationInstanceId, runt
 // src-shared/agent-runtime/agent-runtime-binding-contract.ts
 var WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE";
 var WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED";
-/** Canonical, client-scoped selector for the agent runtime owner. */
+/** Agent runtime の所有者をクライアント単位で特定する正規のセレクター。 */
 var WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV = "WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID";
 var WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV = "WITHMATE_AGENT_RUNTIME_GENERATION_ID";
 var RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME = "runtime-discovery";

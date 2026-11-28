@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   typecheck:
-    name: Lint and typecheck
+    name: Typecheck
     runs-on: windows-latest
 
     steps:
