@@ -659,39 +659,9 @@
       "count": 27
     }
   },
-  "src-shared/character/character-catalog.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 15
-    }
-  },
-  "src-shared/character/character-definition.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 22
-    }
-  },
-  "src-shared/character/character-icon.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 10
-    }
-  },
-  "src-shared/character/character-participant.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
-    }
-  },
-  "src-shared/character/character-state.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 10
-    }
-  },
   "src-shared/file-explorer/file-explorer-contract.ts": {
     "jsdoc/require-jsdoc": {
       "count": 90
-    }
-  },
-  "src-shared/file-explorer/unified-diff.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
     }
   },
   "src-shared/ipc/withmate-ipc-channels.ts": {

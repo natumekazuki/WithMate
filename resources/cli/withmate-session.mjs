@@ -6227,6 +6227,7 @@ discriminatedUnion("type", [object({
 	type: literal("character"),
 	id: string().trim().min(1).refine((id) => !isUnknownCharacterOwnerId(id) && id !== "withmate-neutral-character")
 }).strict()]);
+/** 定義や内部メモを含めず、ID・表示名・紹介だけを公開する。 */
 var characterPublicProfileSchema = object({
 	id: string(),
 	name: string(),

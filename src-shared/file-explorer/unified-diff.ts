@@ -1,3 +1,4 @@
+/** 差分本文の一行。左右の元ファイル行番号、本文、パッチ中の位置を持つ。 */
 export type UnifiedDiffContentRow = {
   kind: "context" | "add" | "delete" | "modify";
   leftNumber?: number;
@@ -8,18 +9,23 @@ export type UnifiedDiffContentRow = {
   rightPatchLineIndex?: number;
 };
 
+/** 原文の行番号とは別に、ハンク境界・メタデータ・改行注記を表示する行。 */
 export type UnifiedDiffAnnotationRow =
   | { kind: "metadata"; text: string; patchLineIndex: number }
   | { kind: "hunk"; text: string; patchLineIndex: number }
   | { kind: "note"; text: string; patchLineIndex: number };
 
-export type UnifiedDiffDisplayRow = UnifiedDiffContentRow | UnifiedDiffAnnotationRow;
+/** 左右比較で描画する本文行、または左右に分けない注記行。 */
+export type UnifiedDiffDisplayRow =
+  UnifiedDiffContentRow | UnifiedDiffAnnotationRow;
 
+/** 表示行の列と、追加・削除の本文があったかどうか。 */
 export type ParsedUnifiedDiff = {
   rows: UnifiedDiffDisplayRow[];
   hasTextChanges: boolean;
 };
 
+/** 左右ペアとして組む前にためる追加・削除の原文行。 */
 type PendingChange = {
   kind: "add" | "delete";
   number: number;
@@ -34,7 +40,8 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
   const lines = patch.split(/\r\n|\n|\r/);
   const rows: UnifiedDiffDisplayRow[] = [];
   let pendingChanges: PendingChange[] = [];
-  let pendingNotes: Array<Extract<UnifiedDiffAnnotationRow, { kind: "note" }>> = [];
+  let pendingNotes: Array<Extract<UnifiedDiffAnnotationRow, { kind: "note" }>> =
+    [];
   let leftNumber = 0;
   let rightNumber = 0;
   let leftRemaining = 0;
@@ -42,6 +49,7 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
   let inHunk = false;
   let hasTextChanges = false;
 
+  /** 溜めた削除・追加を順に組み、余りを単独行にしてから注記を出す。 */
   const flushPendingChanges = () => {
     const deletes = pendingChanges.filter((change) => change.kind === "delete");
     const adds = pendingChanges.filter((change) => change.kind === "add");
@@ -81,6 +89,7 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
     pendingNotes = [];
   };
 
+  /** 左右ともハンクが宣言した行数を読み終えた時点で、本文の蓄積を確定する。 */
   const closeHunkIfComplete = () => {
     if (leftRemaining === 0 && rightRemaining === 0) {
       flushPendingChanges();
@@ -94,8 +103,10 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
       flushPendingChanges();
       leftNumber = Number.parseInt(hunkMatch[1], 10);
       rightNumber = Number.parseInt(hunkMatch[3], 10);
-      leftRemaining = hunkMatch[2] === undefined ? 1 : Number.parseInt(hunkMatch[2], 10);
-      rightRemaining = hunkMatch[4] === undefined ? 1 : Number.parseInt(hunkMatch[4], 10);
+      leftRemaining =
+        hunkMatch[2] === undefined ? 1 : Number.parseInt(hunkMatch[2], 10);
+      rightRemaining =
+        hunkMatch[4] === undefined ? 1 : Number.parseInt(hunkMatch[4], 10);
       inHunk = true;
       rows.push({ kind: "hunk", text: line, patchLineIndex });
       closeHunkIfComplete();
@@ -134,7 +145,12 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
       return;
     }
     if (marker === "-" && leftRemaining > 0) {
-      pendingChanges.push({ kind: "delete", number: leftNumber, text, patchLineIndex });
+      pendingChanges.push({
+        kind: "delete",
+        number: leftNumber,
+        text,
+        patchLineIndex,
+      });
       leftNumber += 1;
       leftRemaining -= 1;
       hasTextChanges = true;
@@ -142,7 +158,12 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
       return;
     }
     if (marker === "+" && rightRemaining > 0) {
-      pendingChanges.push({ kind: "add", number: rightNumber, text, patchLineIndex });
+      pendingChanges.push({
+        kind: "add",
+        number: rightNumber,
+        text,
+        patchLineIndex,
+      });
       rightNumber += 1;
       rightRemaining -= 1;
       hasTextChanges = true;

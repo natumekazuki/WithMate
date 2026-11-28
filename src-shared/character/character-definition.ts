@@ -1,21 +1,27 @@
+/** 実行用Character定義のfrontmatterで要求するスキーマ名。 */
 export const CHARACTER_DEFINITION_SCHEMA = "withmate-character-v5";
 
+/** 改行をLFに揃えた定義全体のコードポイント数の上限。 */
 export const CHARACTER_DEFINITION_MAX_CHARACTERS = 8_000;
 
+/** 実行用定義とは別に保存する補助メモのUTF-8バイト数の上限。 */
 export const CHARACTER_NOTES_MAX_BYTES = 256 * 1024;
 
+/** 読み取り済みのスキーマ名と公開情報。説明がなければ空文字列にする。 */
 export type CharacterDefinitionFrontmatter = {
   schema: typeof CHARACTER_DEFINITION_SCHEMA;
   name: string;
   description: string;
 };
 
+/** 正規化した公開情報、前後の空白を除いた本文と保存時の原文。 */
 export type ParsedCharacterDefinition = {
   frontmatter: CharacterDefinitionFrontmatter;
   body: string;
   markdown: string;
 };
 
+/** 定義・メモの形式、長さ、必須要素、参照先に関する診断の識別子。 */
 export type CharacterDefinitionValidationIssueCode =
   | "missing_frontmatter"
   | "invalid_frontmatter"
@@ -26,51 +32,58 @@ export type CharacterDefinitionValidationIssueCode =
   | "null_byte"
   | "unsafe_path_reference";
 
+/** 検証で見つかった理由と、参照先の指摘であれば該当するパス。 */
 export type CharacterDefinitionValidationIssue = {
   code: CharacterDefinitionValidationIssueCode;
   message: string;
   path?: string;
 };
 
+/** 解析できた定義、または必要事項を満たさない場合の診断一覧。 */
 export type CharacterDefinitionParseResult =
   | {
-    ok: true;
-    value: ParsedCharacterDefinition;
-  }
+      ok: true;
+      value: ParsedCharacterDefinition;
+    }
   | {
-    ok: false;
-    issues: CharacterDefinitionValidationIssue[];
-  };
+      ok: false;
+      issues: CharacterDefinitionValidationIssue[];
+    };
 
+/** 先頭のメタデータを行単位で読んだ結果。スキーマの適否は後の処理で調べる。 */
 type FrontmatterParseResult =
   | {
-    ok: true;
-    values: Record<string, string>;
-    body: string;
-  }
+      ok: true;
+      values: Record<string, string>;
+      body: string;
+    }
   | {
-    ok: false;
-    issues: CharacterDefinitionValidationIssue[];
-  };
+      ok: false;
+      issues: CharacterDefinitionValidationIssue[];
+    };
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
-const PATH_REFERENCE_PATTERN = /(?:!\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)|\[[^\]]+]\(([^)\s]+)(?:\s+"[^"]*")?\)|^\s*[-*]?\s*[a-zA-Z][\w-]*_path:\s*`?([^`\s]+)`?\s*$)/gm;
+const PATH_REFERENCE_PATTERN =
+  /(?:!\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)|\[[^\]]+]\(([^)\s]+)(?:\s+"[^"]*")?\)|^\s*[-*]?\s*[a-zA-Z][\w-]*_path:\s*`?([^`\s]+)`?\s*$)/gm;
 
+/** 補助メモの保存サイズをUTF-8のバイト数で数える。 */
 function getUtf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
+/** 改行表現を統一し、サロゲートペアを二重計上せずに定義の文字数を数える。 */
 export function countCharacterDefinitionCharacters(markdown: string): number {
   return Array.from(markdown.replace(/\r\n?|\n/g, "\n")).length;
 }
 
+/** 引用符とバックスラッシュの既知のエスケープだけを展開し、未知の並びを残す。 */
 function unescapeDoubleQuotedFrontmatterValue(value: string): string {
   let result = "";
 
   for (let index = 0; index < value.length; index += 1) {
     const current = value[index] ?? "";
     const next = value[index + 1];
-    if (current === "\\" && (next === "\\" || next === "\"")) {
+    if (current === "\\" && (next === "\\" || next === '"')) {
       result += next;
       index += 1;
       continue;
@@ -81,9 +94,10 @@ function unescapeDoubleQuotedFrontmatterValue(value: string): string {
   return result;
 }
 
+/** 単一行の値を読み、両端が揃った引用符を外して空白を整える。 */
 function parseFrontmatterValue(rawValue: string): string {
   const trimmed = rawValue.trim();
-  if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
     return unescapeDoubleQuotedFrontmatterValue(trimmed.slice(1, -1)).trim();
   }
   if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
@@ -92,15 +106,18 @@ function parseFrontmatterValue(rawValue: string): string {
   return trimmed;
 }
 
+/** 先頭の囲みから単純なキーと値を読み、未対応の行があればまとめて診断する。 */
 function parseFrontmatter(markdown: string): FrontmatterParseResult {
   const frontmatterMatch = FRONTMATTER_PATTERN.exec(markdown);
   if (!frontmatterMatch) {
     return {
       ok: false,
-      issues: [{
-        code: "missing_frontmatter",
-        message: "`character.md` must start with YAML frontmatter.",
-      }],
+      issues: [
+        {
+          code: "missing_frontmatter",
+          message: "`character.md` must start with YAML frontmatter.",
+        },
+      ],
     };
   }
 
@@ -139,16 +156,21 @@ function parseFrontmatter(markdown: string): FrontmatterParseResult {
   };
 }
 
+/** ローカルの相対ファイルとして解決しないWeb、ページ内、メール参照を識別する。 */
 function isExternalReference(pathReference: string): boolean {
-  return /^https?:\/\//i.test(pathReference)
-    || pathReference.startsWith("#")
-    || pathReference.startsWith("mailto:");
+  return (
+    /^https?:\/\//i.test(pathReference) ||
+    pathReference.startsWith("#") ||
+    pathReference.startsWith("mailto:")
+  );
 }
 
+/** 許可済みの外部参照を先に除いた後、残ったスキーム付き参照を検出する。 */
 function hasUnsupportedScheme(pathReference: string): boolean {
   return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(pathReference);
 }
 
+/** 対応する外部参照を許し、ローカル参照は定義に添えられる相対形式に限る。 */
 export function isSafeCharacterRelativePath(pathReference: string): boolean {
   const trimmed = pathReference.trim();
   if (trimmed.length === 0 || trimmed.includes("\0")) {
@@ -161,17 +183,20 @@ export function isSafeCharacterRelativePath(pathReference: string): boolean {
     return false;
   }
   if (
-    trimmed.startsWith("/")
-    || trimmed.startsWith("\\")
-    || trimmed.includes("\\")
-    || trimmed.includes("..")
+    trimmed.startsWith("/") ||
+    trimmed.startsWith("\\") ||
+    trimmed.includes("\\") ||
+    trimmed.includes("..")
   ) {
     return false;
   }
   return true;
 }
 
-export function collectCharacterDefinitionPathReferences(markdownBody: string): string[] {
+/** 本文の画像・リンク・パス欄から、検証対象になる参照を出現順に抽出する。 */
+export function collectCharacterDefinitionPathReferences(
+  markdownBody: string,
+): string[] {
   const references: string[] = [];
   for (const match of markdownBody.matchAll(PATH_REFERENCE_PATTERN)) {
     const reference = match[1] ?? match[2] ?? match[3];
@@ -182,12 +207,18 @@ export function collectCharacterDefinitionPathReferences(markdownBody: string): 
   return references;
 }
 
+/** 先頭にメタデータがあれば外し、本文の前後の空白を除く。 */
 export function stripCharacterDefinitionFrontmatter(markdown: string): string {
   const frontmatterMatch = FRONTMATTER_PATTERN.exec(markdown);
-  return (frontmatterMatch ? markdown.slice(frontmatterMatch[0].length) : markdown).trim();
+  return (
+    frontmatterMatch ? markdown.slice(frontmatterMatch[0].length) : markdown
+  ).trim();
 }
 
-export function validateCharacterNotesMarkdown(markdown: string): CharacterDefinitionValidationIssue[] {
+/** 補助メモには定義のスキーマを求めず、NULと保存サイズを検査する。 */
+export function validateCharacterNotesMarkdown(
+  markdown: string,
+): CharacterDefinitionValidationIssue[] {
   const issues: CharacterDefinitionValidationIssue[] = [];
   if (markdown.includes("\0")) {
     issues.push({
@@ -204,7 +235,10 @@ export function validateCharacterNotesMarkdown(markdown: string): CharacterDefin
   return issues;
 }
 
-export function validateCharacterDefinitionMarkdown(markdown: string): CharacterDefinitionValidationIssue[] {
+/** 容量・メタデータ・本文・ファイル参照を検査して、保存前に解消すべき理由を返す。 */
+export function validateCharacterDefinitionMarkdown(
+  markdown: string,
+): CharacterDefinitionValidationIssue[] {
   const issues: CharacterDefinitionValidationIssue[] = [];
 
   if (markdown.includes("\0")) {
@@ -214,7 +248,10 @@ export function validateCharacterDefinitionMarkdown(markdown: string): Character
     });
   }
 
-  if (countCharacterDefinitionCharacters(markdown) > CHARACTER_DEFINITION_MAX_CHARACTERS) {
+  if (
+    countCharacterDefinitionCharacters(markdown) >
+    CHARACTER_DEFINITION_MAX_CHARACTERS
+  ) {
     issues.push({
       code: "size_limit_exceeded",
       message: `\`character.md\` must be ${CHARACTER_DEFINITION_MAX_CHARACTERS.toLocaleString("en-US")} characters or less after LF line-ending normalization.`,
@@ -249,7 +286,9 @@ export function validateCharacterDefinitionMarkdown(markdown: string): Character
     });
   }
 
-  for (const pathReference of collectCharacterDefinitionPathReferences(frontmatterResult.body)) {
+  for (const pathReference of collectCharacterDefinitionPathReferences(
+    frontmatterResult.body,
+  )) {
     if (!isSafeCharacterRelativePath(pathReference)) {
       issues.push({
         code: "unsafe_path_reference",
@@ -262,7 +301,10 @@ export function validateCharacterDefinitionMarkdown(markdown: string): Character
   return issues;
 }
 
-export function parseCharacterDefinitionMarkdown(markdown: string): CharacterDefinitionParseResult {
+/** 検証に通った定義から公開情報と本文を分離し、元のMarkdownも保持する。 */
+export function parseCharacterDefinitionMarkdown(
+  markdown: string,
+): CharacterDefinitionParseResult {
   const issues = validateCharacterDefinitionMarkdown(markdown);
   if (issues.length > 0) {
     return { ok: false, issues };
