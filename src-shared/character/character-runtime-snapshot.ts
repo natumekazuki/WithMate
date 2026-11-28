@@ -9,7 +9,10 @@ import {
 import { stripCharacterDefinitionFrontmatter } from "./character-definition.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "./character-state.js";
 
-export function normalizeCharacterRuntimeSnapshot(value: unknown): CharacterRuntimeSnapshot | null {
+/** 所有者・名前・定義本文を必須とし、旧形式で欠けた表示情報や配色を既定値で補う。 */
+export function normalizeCharacterRuntimeSnapshot(
+  value: unknown,
+): CharacterRuntimeSnapshot | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -28,25 +31,42 @@ export function normalizeCharacterRuntimeSnapshot(value: unknown): CharacterRunt
   return {
     characterId,
     name: candidate.name,
-    description: typeof candidate.description === "string" ? candidate.description : "",
-    iconFilePath: typeof candidate.iconFilePath === "string" ? candidate.iconFilePath : "",
+    description:
+      typeof candidate.description === "string" ? candidate.description : "",
+    iconFilePath:
+      typeof candidate.iconFilePath === "string" ? candidate.iconFilePath : "",
     theme: {
-      main: typeof candidate.theme?.main === "string" ? candidate.theme.main : DEFAULT_CHARACTER_THEME_COLORS.main,
-      sub: typeof candidate.theme?.sub === "string" ? candidate.theme.sub : DEFAULT_CHARACTER_THEME_COLORS.sub,
+      main:
+        typeof candidate.theme?.main === "string"
+          ? candidate.theme.main
+          : DEFAULT_CHARACTER_THEME_COLORS.main,
+      sub:
+        typeof candidate.theme?.sub === "string"
+          ? candidate.theme.sub
+          : DEFAULT_CHARACTER_THEME_COLORS.sub,
     },
     definitionMarkdown: candidate.definitionMarkdown,
-    definitionSha256: typeof candidate.definitionSha256 === "string" ? candidate.definitionSha256 : "",
-    definitionByteSize: typeof candidate.definitionByteSize === "number" ? candidate.definitionByteSize : 0,
-    snapshotAt: typeof candidate.snapshotAt === "string" ? candidate.snapshotAt : "",
+    definitionSha256:
+      typeof candidate.definitionSha256 === "string"
+        ? candidate.definitionSha256
+        : "",
+    definitionByteSize:
+      typeof candidate.definitionByteSize === "number"
+        ? candidate.definitionByteSize
+        : 0,
+    snapshotAt:
+      typeof candidate.snapshotAt === "string" ? candidate.snapshotAt : "",
   };
 }
 
+/** 定義のスナップショットと配色を複製し、不在はnullに揃える。 */
 export function cloneNullableCharacterRuntimeSnapshot(
   snapshot: CharacterRuntimeSnapshot | null | undefined,
 ): CharacterRuntimeSnapshot | null {
   return snapshot ? cloneCharacterRuntimeSnapshot(snapshot) : null;
 }
 
+/** 不在同士は同一とし、有効な値は正規化した表示・本文・識別情報と取得時刻を比較する。 */
 export function areCharacterRuntimeSnapshotsEqual(
   left: CharacterRuntimeSnapshot | null | undefined,
   right: CharacterRuntimeSnapshot | null | undefined,
@@ -75,22 +95,36 @@ export function areCharacterRuntimeSnapshotsEqual(
   );
 }
 
+/** 所有者のCharacter IDと、固定された実行時の定義が両方一致するか確認する。 */
 export function hasSameCharacterRuntimeIdentity(
-  left: Pick<CharacterRuntimeSnapshotOwner, "characterId" | "characterRuntimeSnapshot">,
-  right: Pick<CharacterRuntimeSnapshotOwner, "characterId" | "characterRuntimeSnapshot">,
+  left: Pick<
+    CharacterRuntimeSnapshotOwner,
+    "characterId" | "characterRuntimeSnapshot"
+  >,
+  right: Pick<
+    CharacterRuntimeSnapshotOwner,
+    "characterId" | "characterRuntimeSnapshot"
+  >,
 ): boolean {
   return (
     left.characterId === right.characterId &&
-    areCharacterRuntimeSnapshotsEqual(left.characterRuntimeSnapshot, right.characterRuntimeSnapshot)
+    areCharacterRuntimeSnapshotsEqual(
+      left.characterRuntimeSnapshot,
+      right.characterRuntimeSnapshot,
+    )
   );
 }
 
+/** CharacterのIDと、実行に紐付けた任意の定義を持つ比較対象。 */
 type CharacterRuntimeSnapshotOwner = {
   characterId: string;
   characterRuntimeSnapshot?: CharacterRuntimeSnapshot | null;
 };
 
-export function parseCharacterRuntimeSnapshotJson(value: string | null | undefined): CharacterRuntimeSnapshot | null {
+/** 保存時のJSONを正規化し、未保存・構文不正・定義に必要な情報不足をnullで返す。 */
+export function parseCharacterRuntimeSnapshotJson(
+  value: string | null | undefined,
+): CharacterRuntimeSnapshot | null {
   const normalized = value?.trim() ?? "";
   if (!normalized) {
     return null;
@@ -103,21 +137,29 @@ export function parseCharacterRuntimeSnapshotJson(value: string | null | undefin
   }
 }
 
+/** 保存用のJSONを生成し、スナップショットがなければ空文字列にする。 */
 export function stringifyCharacterRuntimeSnapshot(
   snapshot: CharacterRuntimeSnapshot | null | undefined,
 ): string {
   return snapshot ? JSON.stringify(snapshot) : "";
 }
 
+/** 定義本文に含まれるバッククォート連続よりも長いコードフェンスを選ぶ。 */
 function buildMarkdownFence(content: string): string {
-  const longestBacktickRun = Math.max(2, ...[...content.matchAll(/`+/g)].map((match) => match[0].length));
+  const longestBacktickRun = Math.max(
+    2,
+    ...[...content.matchAll(/`+/g)].map((match) => match[0].length),
+  );
   return "`".repeat(longestBacktickRun + 1);
 }
 
+/** frontmatterを除いた定義を本文中の記号では閉じないフェンスで囲み、表示名と説明を添える。 */
 export function buildCharacterRuntimePromptSection(
   snapshot: CharacterRuntimeSnapshot | null | undefined,
 ): string {
-  const definitionMarkdown = stripCharacterDefinitionFrontmatter(snapshot?.definitionMarkdown ?? "");
+  const definitionMarkdown = stripCharacterDefinitionFrontmatter(
+    snapshot?.definitionMarkdown ?? "",
+  );
   if (!definitionMarkdown) {
     return "";
   }

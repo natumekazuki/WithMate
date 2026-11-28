@@ -704,16 +704,6 @@
       "count": 27
     }
   },
-  "src-shared/auxiliary/auxiliary-draft-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
-  "src-shared/auxiliary/auxiliary-session-state.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 39
-    }
-  },
   "src-shared/character/character-catalog.ts": {
     "jsdoc/require-jsdoc": {
       "count": 15
@@ -734,11 +724,6 @@
       "count": 7
     }
   },
-  "src-shared/character/character-runtime-snapshot.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 9
-    }
-  },
   "src-shared/character/character-state.ts": {
     "jsdoc/require-jsdoc": {
       "count": 10
@@ -747,16 +732,6 @@
   "src-shared/file-explorer/file-explorer-contract.ts": {
     "jsdoc/require-jsdoc": {
       "count": 90
-    }
-  },
-  "src-shared/file-explorer/pdf-reader-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 10
-    }
-  },
-  "src-shared/file-explorer/session-file-object-copy-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
     }
   },
   "src-shared/file-explorer/unified-diff.ts": {
