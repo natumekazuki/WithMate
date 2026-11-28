@@ -13,8 +13,10 @@ import { MainInfrastructureRegistry } from "../../src-electron/app/main-infrastr
 // scope = "MainInfrastructureRegistry"
 // lifecycle = "permanent"
 // @end-test-value
+/** サービスを初回取得まで作らず、同じ登録を再利用し、reset 後に両サービスを作り直すことを確認する。 */
 test("MainInfrastructureRegistry は service を lazy に 1 回だけ生成し reset で再生成する", () => {
   let counter = 0;
+  /** 生成のたびに別ラベルを返して、サービスの再利用と生成順を区別できるようにする。 */
   const create = (label: string) => () => `${label}-${++counter}`;
   const registry = new MainInfrastructureRegistry({
     createPersistentStoreLifecycleService: create("store"),

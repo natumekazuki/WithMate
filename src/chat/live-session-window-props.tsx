@@ -2,6 +2,7 @@ import type { ComponentProps, ReactNode, RefObject } from "react";
 import { ChatDockSplitter, type ChatWindowProps } from "./chat-window.js";
 import type { SessionContextPaneProps } from "./shell/session-context-pane.js";
 
+/** ライブ会話の各ペインとドックを接続する表示状態、参照、操作の集合。 */
 type LiveSessionWindowShellPropsInput = {
   mode: ChatWindowProps["mode"];
   style?: ChatWindowProps["style"];
@@ -25,7 +26,10 @@ type LiveSessionWindowShellPropsInput = {
   skillPickerProps: ChatWindowProps["skillPickerProps"];
   compactActionDockProps: ChatWindowProps["compactActionDockProps"];
   headerSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
-  actionDockSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
+  actionDockSplitterProps?: Omit<
+    ComponentProps<typeof ChatDockSplitter>,
+    "edge"
+  >;
   splitterProps: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
   leftPane?: ReactNode;
   leftSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
@@ -38,6 +42,7 @@ type LiveSessionWindowShellPropsInput = {
   concurrentChats?: ChatWindowProps["concurrentChats"];
 };
 
+/** ライブ会話の枠を組み立て、中央に代替コンテンツがある間はメッセージ列を非アクティブにする。 */
 export function buildLiveSessionWindowShellProps(
   input: LiveSessionWindowShellPropsInput,
 ): ChatWindowProps {
@@ -67,11 +72,17 @@ export function buildLiveSessionWindowShellProps(
     additionalDirectoryListProps: input.additionalDirectoryListProps,
     skillPickerProps: input.skillPickerProps,
     compactActionDockProps: input.compactActionDockProps,
-    headerSplitter: <ChatDockSplitter edge="top" {...input.headerSplitterProps} />,
-    actionDockSplitter: <ChatDockSplitter edge="bottom" {...input.actionDockSplitterProps} />,
+    headerSplitter: (
+      <ChatDockSplitter edge="top" {...input.headerSplitterProps} />
+    ),
+    actionDockSplitter: (
+      <ChatDockSplitter edge="bottom" {...input.actionDockSplitterProps} />
+    ),
     splitter: <ChatDockSplitter edge="right" {...input.splitterProps} />,
     leftPane: input.leftPane,
-    leftSplitter: input.leftSplitterProps ? <ChatDockSplitter edge="left" {...input.leftSplitterProps} /> : null,
+    leftSplitter: input.leftSplitterProps ? (
+      <ChatDockSplitter edge="left" {...input.leftSplitterProps} />
+    ) : null,
     isLeftPaneVisible: input.isLeftPaneVisible ?? false,
     isRightPaneVisible: input.isRightPaneVisible,
     rightPane: null,

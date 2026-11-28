@@ -1,9 +1,22 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { mkdtemp, mkdir, rename, rm, symlink, lstat, readlink, writeFile, readFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  rename,
+  rm,
+  symlink,
+  lstat,
+  readlink,
+  writeFile,
+  readFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { captureSessionLifecycleResource, prepareSessionLifecycleFiles } from "../../src-electron/session/session-lifecycle-files.js";
+import {
+  captureSessionLifecycleResource,
+  prepareSessionLifecycleFiles,
+} from "../../src-electron/session/session-lifecycle-files.js";
 
 // @test-value v2
 // kind = "invariant"
@@ -18,9 +31,18 @@ import { captureSessionLifecycleResource, prepareSessionLifecycleFiles } from ".
 // distinction = "native no-replace単体では記録済みinodeとstaging/finalの再照合を保証できない"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** 準備元の欠落・置換・リンクや公開先の別所有物があれば保留のまま拒否し、所有権を再記録せず既存項目の識別情報と内容を保つ。 */
 it("keeps missing, replaced and linked creation resources pending without reallocating ownership", async () => {
-  for (const state of ["both-missing", "staging-replaced", "staging-symlink", "final-foreign", "final-symlink"] as const) {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-publication-owner-"));
+  for (const state of [
+    "both-missing",
+    "staging-replaced",
+    "staging-symlink",
+    "final-foreign",
+    "final-symlink",
+  ] as const) {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-publication-owner-"),
+    );
     const stagingPath = path.join(directory, "staging");
     const finalPath = path.join(directory, "final");
     const parked = path.join(directory, "parked");
@@ -32,25 +54,68 @@ it("keeps missing, replaced and linked creation resources pending without reallo
       if (state === "both-missing") await rm(stagingPath, { recursive: true });
       else if (state === "staging-replaced" || state === "staging-symlink") {
         await rename(stagingPath, parked);
-        await writeFile(path.join(parked, "source.txt"), "original staging", "utf8");
+        await writeFile(
+          path.join(parked, "source.txt"),
+          "original staging",
+          "utf8",
+        );
         if (state === "staging-replaced") await mkdir(stagingPath);
-        else await symlink(parked, stagingPath, process.platform === "win32" ? "junction" : "dir");
+        else
+          await symlink(
+            parked,
+            stagingPath,
+            process.platform === "win32" ? "junction" : "dir",
+          );
       } else if (state === "final-foreign") {
         await mkdir(finalPath);
-        await writeFile(path.join(finalPath, "foreign.txt"), "keep foreign contents", "utf8");
-      } else await symlink(stagingPath, finalPath, process.platform === "win32" ? "junction" : "dir");
-      const existingPath = state.startsWith("staging-") ? stagingPath : state.startsWith("final-") ? finalPath : null;
-      const before = existingPath ? await lstat(existingPath, { bigint: true }) : null;
-      const link = state.endsWith("symlink") ? await readlink(existingPath!) : null;
-      await assert.rejects(prepareSessionLifecycleFiles({ finalPath, resource, persistResource: async () => { recorded = true; } }));
+        await writeFile(
+          path.join(finalPath, "foreign.txt"),
+          "keep foreign contents",
+          "utf8",
+        );
+      } else
+        await symlink(
+          stagingPath,
+          finalPath,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      const existingPath = state.startsWith("staging-")
+        ? stagingPath
+        : state.startsWith("final-")
+          ? finalPath
+          : null;
+      const before = existingPath
+        ? await lstat(existingPath, { bigint: true })
+        : null;
+      const link = state.endsWith("symlink")
+        ? await readlink(existingPath!)
+        : null;
+      await assert.rejects(
+        prepareSessionLifecycleFiles({
+          finalPath,
+          resource,
+          /** 拒否されるべき条件で、準備済みの所有情報が誤って保存された場合を検出する。 */
+          persistResource: async () => {
+            recorded = true;
+          },
+        }),
+      );
       assert.equal(recorded, false);
       if (before) {
         const after = await lstat(existingPath!, { bigint: true });
         assert.deepEqual([after.dev, after.ino], [before.dev, before.ino]);
       }
       if (link !== null) assert.equal(await readlink(existingPath!), link);
-      if (state === "final-foreign") assert.equal(await readFile(path.join(finalPath, "foreign.txt"), "utf8"), "keep foreign contents");
-      if (state.startsWith("staging-")) assert.equal(await readFile(path.join(parked, "source.txt"), "utf8"), "original staging");
+      if (state === "final-foreign")
+        assert.equal(
+          await readFile(path.join(finalPath, "foreign.txt"), "utf8"),
+          "keep foreign contents",
+        );
+      if (state.startsWith("staging-"))
+        assert.equal(
+          await readFile(path.join(parked, "source.txt"), "utf8"),
+          "original staging",
+        );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

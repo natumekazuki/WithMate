@@ -19,12 +19,16 @@ import {
 // scope = "storage-operation-diagnostics"
 // lifecycle = "permanent"
 // @end-test-value
+/** 非同期処理に入っても、現在の相関 ID と新しく組み立てた診断コンテキストの ID が一致する。 */
 test("storage operation correlation は async 境界をまたいで保持される", async () => {
-  const context = await runWithStorageOperationCorrelation("correlation-test", async () => {
-    await Promise.resolve();
-    assert.equal(getStorageOperationCorrelationId(), "correlation-test");
-    return createStorageOperationDiagnosticContext();
-  });
+  const context = await runWithStorageOperationCorrelation(
+    "correlation-test",
+    async () => {
+      await Promise.resolve();
+      assert.equal(getStorageOperationCorrelationId(), "correlation-test");
+      return createStorageOperationDiagnosticContext();
+    },
+  );
   assert.equal(context.correlationId, "correlation-test");
 });
 
@@ -38,8 +42,14 @@ test("storage operation correlation は async 境界をまたいで保持され�
 // scope = "event-loop-delay-monitoring"
 // lifecycle = "permanent"
 // @end-test-value
+/** 最初の要約通知で例外が起きても後続の有限な遅延統計を取得でき、停止後は通知が増えないことを確認する。 */
 test("event loop delay monitor は停止可能な要約callbackを提供する", async () => {
-  const reports: Array<{ p50Ms: number; p99Ms: number; maxMs: number; meanMs: number }> = [];
+  const reports: Array<{
+    p50Ms: number;
+    p99Ms: number;
+    maxMs: number;
+    meanMs: number;
+  }> = [];
   let attempts = 0;
   let resolveReport!: () => void;
   const reportReady = new Promise<void>((resolve) => {
@@ -47,21 +57,27 @@ test("event loop delay monitor は停止可能な要約callbackを提供する",
   });
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const reportTimeout = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => reject(new Error("event loop delay report timeout")), 2_000);
+    timeoutHandle = setTimeout(
+      () => reject(new Error("event loop delay report timeout")),
+      2_000,
+    );
   });
   let stop: (() => void) | undefined;
   try {
-    stop = startEventLoopDelayMonitoring((report) => {
-      attempts += 1;
-      if (attempts === 1) {
-        throw new Error("diagnostic sink failure");
-      }
-      reports.push(report);
-      resolveReport();
-    }, {
-      intervalMs: 10,
-      resolutionMs: 1,
-    });
+    stop = startEventLoopDelayMonitoring(
+      (report) => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("diagnostic sink failure");
+        }
+        reports.push(report);
+        resolveReport();
+      },
+      {
+        intervalMs: 10,
+        resolutionMs: 1,
+      },
+    );
     await Promise.race([reportReady, reportTimeout]);
   } finally {
     if (timeoutHandle) {
@@ -74,5 +90,11 @@ test("event loop delay monitor は停止可能な要約callbackを提供する",
   assert.equal(reports.length, countAfterStop);
   assert.ok(attempts > 0);
   assert.ok(reports.length > 0);
-  assert.ok(reports.every((report) => Object.values(report).every((value) => Number.isFinite(value) && value >= 0)));
+  assert.ok(
+    reports.every((report) =>
+      Object.values(report).every(
+        (value) => Number.isFinite(value) && value >= 0,
+      ),
+    ),
+  );
 });

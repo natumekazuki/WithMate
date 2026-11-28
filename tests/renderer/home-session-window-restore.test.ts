@@ -6,13 +6,20 @@ import {
   selectPendingSessionWindowRestoreIds,
 } from "../../src/home/home-session-window-restore.js";
 
+/** 保存済みの復元候補から既に開いている ID を除き、すべて開いていれば追加の復元操作の対象を返さない。 */
 test("未復元SessionだけをCTA対象にし、全件open済みなら空にする", () => {
   assert.deepEqual(
-    selectPendingSessionWindowRestoreIds(["session-a", "session-b"], ["session-c"]),
+    selectPendingSessionWindowRestoreIds(
+      ["session-a", "session-b"],
+      ["session-c"],
+    ),
     ["session-a", "session-b"],
   );
   assert.deepEqual(
-    selectPendingSessionWindowRestoreIds(["session-a", "session-b"], ["session-a", "session-b"]),
+    selectPendingSessionWindowRestoreIds(
+      ["session-a", "session-b"],
+      ["session-a", "session-b"],
+    ),
     [],
   );
 });
@@ -29,29 +36,42 @@ test("未復元SessionだけをCTA対象にし、全件open済みなら空にす
 // impact = "復元結果を誤認させる成功文を避け、開けなかったSessionと理由を利用者が識別できる"
 // distinction = "復元対象集合の選択ではなく、正常系・部分失敗・全件失敗を利用者向け文字列へ投影する境界を確認する"
 // @end-test-value
+/** すべて成功または対象なしなら通知せず、失敗があるときは開けなかった ID と理由別の文言だけを表示する。 */
 test("復元feedbackは正常系を空にし、失敗したSessionと理由だけを返す", () => {
-  assert.equal(buildSessionWindowRestoreFeedback({
-    requestedSessionIds: ["session-a", "session-b"],
-    openedSessionIds: ["session-a", "session-b"],
-    failures: [],
-  }), "");
-  assert.equal(buildSessionWindowRestoreFeedback({
-    requestedSessionIds: [],
-    openedSessionIds: [],
-    failures: [],
-  }), "");
-  assert.equal(buildSessionWindowRestoreFeedback({
-    requestedSessionIds: ["session-a", "session-b", "session-c", "session-d"],
-    openedSessionIds: ["session-a"],
-    failures: [
-      { sessionId: "session-b", reason: "missing" },
-      { sessionId: "session-c", reason: "unreadable" },
-      { sessionId: "session-d", reason: "open-failed" },
-    ],
-  }), "Could not restore sessions: session-b (Deleted), session-c (Unavailable), session-d (Could not open window)");
-  assert.equal(buildSessionWindowRestoreFeedback({
-    requestedSessionIds: ["session-e"],
-    openedSessionIds: [],
-    failures: [{ sessionId: "session-e", reason: "missing" }],
-  }), "Could not restore sessions: session-e (Deleted)");
+  assert.equal(
+    buildSessionWindowRestoreFeedback({
+      requestedSessionIds: ["session-a", "session-b"],
+      openedSessionIds: ["session-a", "session-b"],
+      failures: [],
+    }),
+    "",
+  );
+  assert.equal(
+    buildSessionWindowRestoreFeedback({
+      requestedSessionIds: [],
+      openedSessionIds: [],
+      failures: [],
+    }),
+    "",
+  );
+  assert.equal(
+    buildSessionWindowRestoreFeedback({
+      requestedSessionIds: ["session-a", "session-b", "session-c", "session-d"],
+      openedSessionIds: ["session-a"],
+      failures: [
+        { sessionId: "session-b", reason: "missing" },
+        { sessionId: "session-c", reason: "unreadable" },
+        { sessionId: "session-d", reason: "open-failed" },
+      ],
+    }),
+    "Could not restore sessions: session-b (Deleted), session-c (Unavailable), session-d (Could not open window)",
+  );
+  assert.equal(
+    buildSessionWindowRestoreFeedback({
+      requestedSessionIds: ["session-e"],
+      openedSessionIds: [],
+      failures: [{ sessionId: "session-e", reason: "missing" }],
+    }),
+    "Could not restore sessions: session-e (Deleted)",
+  );
 });

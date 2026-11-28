@@ -5,11 +5,27 @@ import type { LiveElicitationRequest } from "../../src-shared/session/runtime-st
 import { normalizeMessage } from "../../src-shared/session/session-state.js";
 
 const request: LiveElicitationRequest = {
-  requestId: "question", provider: "opencode", kind: "question", mode: "form", message: "Choose",
+  requestId: "question",
+  provider: "opencode",
+  kind: "question",
+  mode: "form",
+  message: "Choose",
   fields: [
-    { type: "select", name: "choice", title: "Choice", required: true, options: [{ value: "a", label: "Option A" }] },
+    {
+      type: "select",
+      name: "choice",
+      title: "Choice",
+      required: true,
+      options: [{ value: "a", label: "Option A" }],
+    },
     { type: "text", name: "comment", title: "Comment", required: true },
-    { type: "text", name: "secret", title: "Secret", required: true, secret: true },
+    {
+      type: "text",
+      name: "secret",
+      title: "Secret",
+      required: true,
+      secret: true,
+    },
   ],
 };
 
@@ -26,12 +42,35 @@ const request: LiveElicitationRequest = {
 // impact = "利用者が選んでいない回答を履歴で誤認するか、秘密値が露出する"
 // distinction = "型検査とフォーム表示testは保存前の値と秘密fieldの一致を検証しない"
 // @end-test-value
+/** 実際の選択肢と本文に対応する表示情報だけを採用し、秘密欄と内容不一致の表示情報を履歴に書かない。 */
 test("question history retains matching choices and text but not secrets", () => {
-  const result = questionAnswerHistory(request, { action: "accept", content: { choice: "a", comment: "line one\nline two", secret: "sensitive" },
-    answerPresentation: { choice: { selected: [0], text: [] }, comment: { selected: [], text: ["line one\nline two"] }, secret: { selected: [], text: ["sensitive"] } } });
-  assert.deepEqual(result, [{ selected: [0], text: [] }, { selected: [], text: ["line one\nline two"] }, undefined]);
+  const result = questionAnswerHistory(request, {
+    action: "accept",
+    content: {
+      choice: "a",
+      comment: "line one\nline two",
+      secret: "sensitive",
+    },
+    answerPresentation: {
+      choice: { selected: [0], text: [] },
+      comment: { selected: [], text: ["line one\nline two"] },
+      secret: { selected: [], text: ["sensitive"] },
+    },
+  });
+  assert.deepEqual(result, [
+    { selected: [0], text: [] },
+    { selected: [], text: ["line one\nline two"] },
+    undefined,
+  ]);
   assert.doesNotMatch(JSON.stringify(result), /sensitive/);
-  assert.deepEqual(questionAnswerHistory(request, { action: "accept", content: { choice: "a" }, answerPresentation: { choice: { selected: [], text: ["other"] } } }), [undefined, undefined, undefined]);
+  assert.deepEqual(
+    questionAnswerHistory(request, {
+      action: "accept",
+      content: { choice: "a" },
+      answerPresentation: { choice: { selected: [], text: ["other"] } },
+    }),
+    [undefined, undefined, undefined],
+  );
 });
 
 // @test-value v2
@@ -47,14 +86,43 @@ test("question history retains matching choices and text but not secrets", () =>
 // impact = "一般フォームの入力が意図せず保存されるか、回答を正しく見返せない"
 // distinction = "adapter往復testは質問履歴への保存境界を検証しない"
 // @end-test-value
+/** 質問の複数選択と自由記入は維持し、保存を指定しない質問・汎用フォーム・キャンセルでは回答履歴を作らない。 */
 test("question history excludes generic forms and keeps multi-select answers", () => {
-  const multi: LiveElicitationRequest = { ...request, fields: [{ type: "multi-select", name: "choices", title: "Choices", required: true,
-    options: [{ value: "a", label: "A" }, { value: "b", label: "B" }], allowFreeText: true }] };
-  const response = { action: "accept" as const, content: { choices: ["custom", "b", "a"] },
-    answerPresentation: { choices: { selected: [1, 0], text: ["custom"] } } };
-  assert.deepEqual(questionAnswerHistory(multi, response), [{ selected: [1, 0], text: ["custom"] }]);
-  assert.equal(questionAnswerHistory({ ...multi, retainQuestionAnswer: false }, response), undefined);
-  assert.equal(questionAnswerHistory({ ...multi, kind: undefined, provider: "copilot" }, response), undefined);
+  const multi: LiveElicitationRequest = {
+    ...request,
+    fields: [
+      {
+        type: "multi-select",
+        name: "choices",
+        title: "Choices",
+        required: true,
+        options: [
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ],
+        allowFreeText: true,
+      },
+    ],
+  };
+  const response = {
+    action: "accept" as const,
+    content: { choices: ["custom", "b", "a"] },
+    answerPresentation: { choices: { selected: [1, 0], text: ["custom"] } },
+  };
+  assert.deepEqual(questionAnswerHistory(multi, response), [
+    { selected: [1, 0], text: ["custom"] },
+  ]);
+  assert.equal(
+    questionAnswerHistory({ ...multi, retainQuestionAnswer: false }, response),
+    undefined,
+  );
+  assert.equal(
+    questionAnswerHistory(
+      { ...multi, kind: undefined, provider: "copilot" },
+      response,
+    ),
+    undefined,
+  );
   assert.equal(questionAnswerHistory(multi, { action: "cancel" }), undefined);
 });
 
@@ -70,8 +138,30 @@ test("question history excludes generic forms and keeps multi-select answers", (
 // impact = "会話の再表示で選択と自由回答を見返せない"
 // distinction = "live recordのtestは保存用message正規化を通らない"
 // @end-test-value
+/** JSON に保存した質問履歴を読み戻して正規化しても、選択位置と改行を含む自由記入本文が維持される。 */
 test("saved question answer survives message normalization", () => {
-  const message = { role: "assistant", text: "Choose", elicitationRecords: [{ requestId: "q", kind: "question", message: "Choose", status: "answered",
-    fields: [{ title: "Choose", options: ["A", "B"], answer: { selected: [1], text: ["custom\ntext"] } }] }] };
-  assert.deepEqual(normalizeMessage(JSON.parse(JSON.stringify(message)))?.elicitationRecords?.[0].fields[0], message.elicitationRecords[0].fields[0]);
+  const message = {
+    role: "assistant",
+    text: "Choose",
+    elicitationRecords: [
+      {
+        requestId: "q",
+        kind: "question",
+        message: "Choose",
+        status: "answered",
+        fields: [
+          {
+            title: "Choose",
+            options: ["A", "B"],
+            answer: { selected: [1], text: ["custom\ntext"] },
+          },
+        ],
+      },
+    ],
+  };
+  assert.deepEqual(
+    normalizeMessage(JSON.parse(JSON.stringify(message)))
+      ?.elicitationRecords?.[0].fields[0],
+    message.elicitationRecords[0].fields[0],
+  );
 });

@@ -16,12 +16,14 @@ import {
   type StaticTextChatComposerCapabilityProps,
 } from "./chat-window-adapter.js";
 
+/** テキスト会話の表示に必要な、行の ID、発話者の役割、本文。 */
 export type TextChatWindowMessage = {
   id: string;
   role: string;
   text: string;
 };
 
+/** テキスト会話から共有ウィンドウへ渡す表示状態、編集・送信とモデル選択の操作。 */
 export type TextChatWindowProjectionInput = {
   mode: ChatWindowProps["mode"];
   pageTitle: string;
@@ -63,6 +65,7 @@ export type TextChatWindowProjectionInput = {
   composerCapabilityProps?: StaticTextChatComposerCapabilityProps;
 };
 
+/** テキスト会話を共有チャット枠に配置し、利用可能な機能だけを操作欄へ接続する。 */
 export function buildTextChatWindowProps({
   mode,
   pageTitle,

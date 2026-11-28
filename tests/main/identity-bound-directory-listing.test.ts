@@ -18,8 +18,11 @@ import { listIdentityBoundDirectory } from "../../src-electron/files/identity-bo
 // impact = "認可したdirectoryとworker結果の照合を誤り、差替先の内容を返すことを防ぐ"
 // distinction = "serviceのmockでは別processのcwd固定とJSON transportの精度を検証できない"
 // @end-test-value
+/** 名前で指定したパスが取得中に差し替わっても、最初に束縛したディレクトリのデバイス・inode と内容だけを返す。 */
 test("listIdentityBoundDirectory は path が差し替えられても bound cwd の一覧だけを返す", async () => {
-  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-bound-directory-"));
+  const basePath = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-bound-directory-"),
+  );
   const targetPath = path.join(basePath, "target");
   const movedPath = path.join(basePath, "moved");
   let resolveBound!: () => void;
@@ -41,7 +44,10 @@ test("listIdentityBoundDirectory は path が差し替えられても bound cwd 
       await rename(targetPath, movedPath);
       moved = true;
       await mkdir(targetPath);
-      await writeFile(path.join(targetPath, "inside.txt"), "outside replacement");
+      await writeFile(
+        path.join(targetPath, "inside.txt"),
+        "outside replacement",
+      );
     } catch (error) {
       assert.equal(process.platform, "win32");
       assert.equal((error as NodeJS.ErrnoException).code, "EBUSY");
@@ -50,9 +56,14 @@ test("listIdentityBoundDirectory は path が差し替えられても bound cwd 
     const snapshot = await listing;
     assert.equal(snapshot.device, originalStats.dev);
     assert.equal(snapshot.inode, originalStats.ino);
-    assert.deepEqual(snapshot.entries.map(({ name, kind, byteLength }) => ({ name, kind, byteLength })), [
-      { name: "inside.txt", kind: "file", byteLength: 6 },
-    ]);
+    assert.deepEqual(
+      snapshot.entries.map(({ name, kind, byteLength }) => ({
+        name,
+        kind,
+        byteLength,
+      })),
+      [{ name: "inside.txt", kind: "file", byteLength: 6 }],
+    );
     assert.equal(snapshot.maxConcurrentStats, 1);
   } finally {
     await rm(basePath, { recursive: true, force: true });
@@ -62,12 +73,17 @@ test("listIdentityBoundDirectory は path が差し替えられても bound cwd 
   }
 });
 
+/** 多数の項目のメタデータを並行取得しても、同時に実行する取得数は32を超えず、全項目の更新時刻を返す。 */
 test("listIdentityBoundDirectory は entry metadata の並列取得数を制限する", async () => {
-  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-bound-directory-stats-"));
+  const basePath = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-bound-directory-stats-"),
+  );
   try {
-    await Promise.all(Array.from({ length: 96 }, (_, index) => (
-      writeFile(path.join(basePath, `file-${index}.txt`), `${index}`)
-    )));
+    await Promise.all(
+      Array.from({ length: 96 }, (_, index) =>
+        writeFile(path.join(basePath, `file-${index}.txt`), `${index}`),
+      ),
+    );
     const snapshot = await listIdentityBoundDirectory(basePath);
     assert.equal(snapshot.entries.length, 96);
     assert.ok(snapshot.maxConcurrentStats > 1);
@@ -90,23 +106,29 @@ test("listIdentityBoundDirectory は entry metadata の並列取得数を制限�
 // impact = "ファイル一覧処理が呼び出し元を停止させ、後続のSession操作へ進めない"
 // distinction = "応答しないworkerを明示的に起動し、deadline後の拒否とsettleを同時に観測する"
 // @end-test-value
+/** 準備後に応答しない Worker をタイムアウトで終わらせ、開始・終了を各一回だけ通知して呼び出しを拒否する。 */
 test("listIdentityBoundDirectory は応答しない worker を deadline 後に終了して settle する", async () => {
-  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-bound-directory-timeout-"));
+  const basePath = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-bound-directory-timeout-"),
+  );
   let started = 0;
   let settled = 0;
   const startedAt = Date.now();
   try {
     await assert.rejects(
-      () => listIdentityBoundDirectory(basePath, {
-        hangAfterReady: true,
-        timeoutMs: 100,
-        onWorkerStarted: () => {
-          started += 1;
-        },
-        onWorkerSettled: () => {
-          settled += 1;
-        },
-      }),
+      () =>
+        listIdentityBoundDirectory(basePath, {
+          hangAfterReady: true,
+          timeoutMs: 100,
+          /** 期限切れになるケースでも、実 Worker が開始された回数を記録する。 */
+          onWorkerStarted: () => {
+            started += 1;
+          },
+          /** 応答がなくても後片付けが完了したことを、終了通知の回数で観測する。 */
+          onWorkerSettled: () => {
+            settled += 1;
+          },
+        }),
       /The directory listing did not finish within 100 ms\./,
     );
     assert.equal(started, 1);

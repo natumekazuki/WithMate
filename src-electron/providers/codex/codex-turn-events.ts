@@ -10,17 +10,29 @@ import {
   stringifyBoundedProviderValue,
 } from "../../session/provider-payload-limits.js";
 import { ProviderProgressMap } from "../provider-progress.js";
-import { projectProviderOutput, type ProviderOutput, type ProviderOutputTextUnit } from "../../../src-shared/session/provider-output.js";
+import {
+  projectProviderOutput,
+  type ProviderOutput,
+  type ProviderOutputTextUnit,
+} from "../../../src-shared/session/provider-output.js";
 
 // ここで扱うフィールドは Codex App Server 0.171.0 の ThreadItem スキーマに従う。
+/** ネイティブのファイル変更一件。パス・操作種別に加え、移動先の手掛かりと差分本文を保持する。 */
 export type CodexFileChange = {
   path: string;
   kind: { type: "add" | "delete" | "update"; move_path?: string | null };
   diff: string;
 };
+/** Codex の Turn 内に現れる項目から、回答や操作履歴の投影に必要なフィールドを表す。 */
 export type CodexTurnItem =
-  | { type: "agentMessage"; id: string; text: string; phase?: string | null;
-      delivery?: "async" | null; questions?: { title: string; options?: string[] | null }[] | null }
+  | {
+      type: "agentMessage";
+      id: string;
+      text: string;
+      phase?: string | null;
+      delivery?: "async" | null;
+      questions?: { title: string; options?: string[] | null }[] | null;
+    }
   | { type: "reasoning"; id: string; summary: string[]; content: string[] }
   | { type: "plan"; id: string; text: string }
   | {
@@ -59,10 +71,19 @@ export type CodexTurnItem =
   | { type: "imageView"; id: string; path: string }
   | { type: "sleep"; id: string; durationMs: number }
   | { type: "contextCompaction"; id: string }
-  | { type: "subAgentActivity"; id: string; kind: "started" | "interacted" | "interrupted" | "completed";
-      agentThreadId: string; agentPath: string; model?: string | null; reasoningEffort?: string | null }
+  | {
+      type: "subAgentActivity";
+      id: string;
+      kind: "started" | "interacted" | "interrupted" | "completed";
+      agentThreadId: string;
+      agentPath: string;
+      model?: string | null;
+      reasoningEffort?: string | null;
+    }
   | { type: "userMessage"; id: string; content: unknown[] };
+/** App Server からの通知。メソッド別のパラメーターは受信側で確認する。 */
 export type CodexNativeNotification = { method: string; params?: unknown };
+/** 一つのスレッドと Turn の項目、進捗、使用量と終了状態を追跡する。revision は表示可能な変化を識別する。 */
 export type CodexTurnStreamState = {
   revision: number;
   items: Map<string, CodexTurnItem>;
@@ -78,6 +99,7 @@ export type CodexTurnStreamState = {
   terminalStatus: string | null;
 };
 
+/** ネイティブ項目の初出順を保ち、全文と上限付きプレビューを変更時だけ再構築するキャッシュ。 */
 class OrderedItemText {
   private readonly entries = new Map<string, { order: number; text: string }>();
   private readonly ordered: { order: number; text: string }[] = [];
@@ -87,6 +109,7 @@ class OrderedItemText {
   private fullText: string | undefined = "";
   private previewText: string | undefined = "";
 
+  /** 空でない新規項目と本文の変化だけを登録し、変化した場合に全文とプレビューのキャッシュを無効化する。 */
   set(id: string, order: number, text: string): boolean {
     let entry = this.entries.get(id);
     if (entry?.text === text || (!entry && !text)) return false;
@@ -105,47 +128,68 @@ class OrderedItemText {
     return true;
   }
 
+  /** 空の項目を省き、順序に従って区切り付きの全文を返す。 */
   full(): string {
     this.ensureOrder();
-    return this.fullText ??= this.ordered.map((entry) => entry.text).filter(Boolean).join("\n\n");
+    return (this.fullText ??= this.ordered
+      .map((entry) => entry.text)
+      .filter(Boolean)
+      .join("\n\n"));
   }
 
+  /** 順序が逆転した項目が追加された場合だけ並べ替え、通常の追加では現在の順序を使う。 */
   private ensureOrder(): void {
     if (!this.orderChanged) return;
     this.ordered.sort((left, right) => left.order - right.order);
     this.orderChanged = false;
   }
 
+  /** 全文を連結せず、上限までの先頭と、必要なら元の長さを含む省略表示を返す。 */
   preview(): string {
     if (this.previewText !== undefined) return this.previewText;
     this.ensureOrder();
-    const originalLength = this.textLength + Math.max(0, this.nonEmptyCount - 1) * 2;
+    const originalLength =
+      this.textLength + Math.max(0, this.nonEmptyCount - 1) * 2;
     let prefix = "";
     let hasText = false;
     for (const entry of this.ordered) {
       if (!entry.text) continue;
-      if (hasText) prefix += "\n\n".slice(0, PROVIDER_TEXT_PREVIEW_LIMIT - prefix.length);
-      prefix += entry.text.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT - prefix.length);
+      if (hasText)
+        prefix += "\n\n".slice(0, PROVIDER_TEXT_PREVIEW_LIMIT - prefix.length);
+      prefix += entry.text.slice(
+        0,
+        PROVIDER_TEXT_PREVIEW_LIMIT - prefix.length,
+      );
       hasText = true;
       if (prefix.length === PROVIDER_TEXT_PREVIEW_LIMIT) break;
     }
-    this.previewText = originalLength > PROVIDER_TEXT_PREVIEW_LIMIT
-      ? `${prefix}\n...[truncated ${originalLength - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${originalLength}]`
-      : prefix;
+    this.previewText =
+      originalLength > PROVIDER_TEXT_PREVIEW_LIMIT
+        ? `${prefix}\n...[truncated ${originalLength - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${originalLength}]`
+        : prefix;
     return this.previewText;
   }
 }
 
-const textCaches = new WeakMap<CodexTurnStreamState, {
-  assistant: OrderedItemText;
-  reasoning: OrderedItemText;
-  order: Map<string, number>;
-}>();
+const textCaches = new WeakMap<
+  CodexTurnStreamState,
+  {
+    assistant: OrderedItemText;
+    reasoning: OrderedItemText;
+    order: Map<string, number>;
+  }
+>();
 
+/** 空白だけの項目を除いて応答を構成し、完了通知のある final_answer だけを最終として扱う。 */
 export function collectCodexAssistantResponseFromItems(
   items: Iterable<CodexTurnItem>,
   completedItemIds?: ReadonlySet<string>,
-): { assistantText: string; output: ProviderOutput; lastNonEmptyAssistantMessageText: string; assistantQuestionRanges: AssistantQuestionRange[] } {
+): {
+  assistantText: string;
+  output: ProviderOutput;
+  lastNonEmptyAssistantMessageText: string;
+  assistantQuestionRanges: AssistantQuestionRange[];
+} {
   const entries = Array.from(items);
   const parts = entries
     .filter(
@@ -154,21 +198,47 @@ export function collectCodexAssistantResponseFromItems(
     )
     .map((item) => item.text);
   const assistantText = parts.join("\n\n");
-  const units: ProviderOutputTextUnit[] = entries.filter((item): item is Extract<CodexTurnItem, { type: "agentMessage" }> => item.type === "agentMessage" && item.text.trim().length > 0).map((item) => ({
-    id: item.id, messageId: item.id, text: item.text, phase: item.phase ?? null,
-    role: item.phase === "commentary" ? "progress" : item.phase === "final_answer" || item.phase === "partial_answer" ? "answer" : "unclassified",
-    completion: completedItemIds?.has(item.id) ? "complete" : "partial",
-    final: item.phase === "final_answer" && Boolean(completedItemIds?.has(item.id)),
-    evidence: item.phase === "final_answer" && completedItemIds?.has(item.id) ? "codex.final_answer:item/completed" : null,
-  }));
+  const units: ProviderOutputTextUnit[] = entries
+    .filter(
+      (item): item is Extract<CodexTurnItem, { type: "agentMessage" }> =>
+        item.type === "agentMessage" && item.text.trim().length > 0,
+    )
+    .map((item) => ({
+      id: item.id,
+      messageId: item.id,
+      text: item.text,
+      phase: item.phase ?? null,
+      role:
+        item.phase === "commentary"
+          ? "progress"
+          : item.phase === "final_answer" || item.phase === "partial_answer"
+            ? "answer"
+            : "unclassified",
+      completion: completedItemIds?.has(item.id) ? "complete" : "partial",
+      final:
+        item.phase === "final_answer" &&
+        Boolean(completedItemIds?.has(item.id)),
+      evidence:
+        item.phase === "final_answer" && completedItemIds?.has(item.id)
+          ? "codex.final_answer:item/completed"
+          : null,
+    }));
   return {
     assistantText,
-    output: projectProviderOutput(units, units.some((unit) => unit.final) ? "identified" : units.length ? "unknown" : "none").output,
+    output: projectProviderOutput(
+      units,
+      units.some((unit) => unit.final)
+        ? "identified"
+        : units.length
+          ? "unknown"
+          : "none",
+    ).output,
     assistantQuestionRanges: collectCodexQuestionRanges(entries, assistantText),
     lastNonEmptyAssistantMessageText: parts.at(-1) ?? "",
   };
 }
 
+/** 非同期質問を持つ項目のうち、上限内に収まるものを秘匿化後の表示文字位置に対応付ける。 */
 export function collectCodexQuestionRanges(
   items: Iterable<CodexTurnItem>,
   text: string,
@@ -182,13 +252,18 @@ export function collectCodexQuestionRanges(
     const start = offset;
     const end = start + item.text.length;
     if (item.delivery === "async" && item.questions?.length && end <= limit) {
-      ranges.push({ itemId: item.id, start: sanitize(text.slice(0, start)).length, end: sanitize(text.slice(0, end)).length });
+      ranges.push({
+        itemId: item.id,
+        start: sanitize(text.slice(0, start)).length,
+        end: sanitize(text.slice(0, end)).length,
+      });
     }
     offset = end + 2;
     if (offset > limit) break;
   }
   return ranges;
 }
+/** 指定スレッドの空の投影状態を作り、本文と推論のキャッシュを別々に初期化する。 */
 export function createCodexTurnStreamState(
   threadId: string | null,
 ): CodexTurnStreamState {
@@ -201,7 +276,10 @@ export function createCodexTurnStreamState(
     liveSteps: new ProviderProgressMap(),
     threadId,
     turnId: null,
-    get reasoningText() { return reasoning.full(); },
+    /** 現在の推論全文を要求時に読み出す。 */
+    get reasoningText() {
+      return reasoning.full();
+    },
     usage: null,
     usageBaseline: null,
     streamErrorMessage: "",
@@ -211,6 +289,7 @@ export function createCodexTurnStreamState(
   textCaches.set(state, { assistant, reasoning, order: new Map() });
   return state;
 }
+/** 入力と出力の件数を必須とし、欠けたキャッシュ・推論・合計を共通の使用量形式で補う。 */
 function usageBreakdown(value: unknown): ProviderUsage | null {
   const usage = record(value);
   if (
@@ -233,6 +312,7 @@ function usageBreakdown(value: unknown): ProviderUsage | null {
         : usage.inputTokens + usage.outputTokens,
   };
 }
+/** スレッド累計から基準の使用量を差し引き、各項目の差が負なら 0 とする。 */
 function subtractUsage(
   total: ProviderUsage,
   baseline: ProviderUsage,
@@ -255,30 +335,43 @@ function subtractUsage(
     ),
   };
 }
+/** ライブ項目から作った順序付きのアシスタント全文を取得する。 */
 export function getLiveCodexAssistantText(state: CodexTurnStreamState): string {
   return textCaches.get(state)!.assistant.full();
 }
-export function getLiveCodexAssistantPreview(state: CodexTurnStreamState): string {
+/** ライブ項目から作ったアシスタント本文の上限付きプレビューを取得する。 */
+export function getLiveCodexAssistantPreview(
+  state: CodexTurnStreamState,
+): string {
   return textCaches.get(state)!.assistant.preview();
 }
-export function getLiveCodexReasoningPreview(state: CodexTurnStreamState): string {
+/** 回答本文とは別に保持する推論の上限付きプレビューを取得する。 */
+export function getLiveCodexReasoningPreview(
+  state: CodexTurnStreamState,
+): string {
   return textCaches.get(state)!.reasoning.preview();
 }
+/** 通知の属性を読むため、配列などの未対応値は空のオブジェクトに置き換える。 */
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 }
+/** コマンド出力があれば容量を制限した表示を返し、先に切り詰められた場合も元の長さを示す。 */
 export function getCodexCommandOutputPreview(
   item: Extract<CodexTurnItem, { type: "commandExecution" }>,
 ): string | undefined {
   if (item.aggregatedOutput === null) return undefined;
-  if (item.aggregatedOutputOriginalLength === undefined) return toProviderTextPreview(item.aggregatedOutput);
-  const originalLength = item.aggregatedOutputOriginalLength ?? item.aggregatedOutput.length;
-  if (originalLength <= PROVIDER_TEXT_PREVIEW_LIMIT) return item.aggregatedOutput;
+  if (item.aggregatedOutputOriginalLength === undefined)
+    return toProviderTextPreview(item.aggregatedOutput);
+  const originalLength =
+    item.aggregatedOutputOriginalLength ?? item.aggregatedOutput.length;
+  if (originalLength <= PROVIDER_TEXT_PREVIEW_LIMIT)
+    return item.aggregatedOutput;
   return `${item.aggregatedOutput}\n...[truncated ${originalLength - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${originalLength}]`;
 }
 
+/** MCP の構造化結果を優先し、なければ通常の内容を容量制限付きで文字列化する。 */
 export function getCodexMcpResultPreview(
   item: Extract<CodexTurnItem, { type: "mcpToolCall" }>,
 ): string | undefined {
@@ -288,28 +381,63 @@ export function getCodexMcpResultPreview(
 }
 
 /** テキスト以外のアクティビティでは、ライブ表示と保存済み Operations で同じ概要・詳細を使う。 */
-export function getCodexActivityOperation(item: CodexTurnItem): MessageOperation | null {
+export function getCodexActivityOperation(
+  item: CodexTurnItem,
+): MessageOperation | null {
   switch (item.type) {
     case "imageView":
-      return { id: item.id, type: "image_view", summary: toProviderTextPreview(item.path.replace(/\\/g, "/").split("/").at(-1)) ?? "Image",
-        details: toProviderTextPreview(item.path) };
+      return {
+        id: item.id,
+        type: "image_view",
+        summary:
+          toProviderTextPreview(
+            item.path.replace(/\\/g, "/").split("/").at(-1),
+          ) ?? "Image",
+        details: toProviderTextPreview(item.path),
+      };
     case "sleep":
-      return { id: item.id, type: "sleep", summary: `Wait ${item.durationMs / 1000} s` };
+      return {
+        id: item.id,
+        type: "sleep",
+        summary: `Wait ${item.durationMs / 1000} s`,
+      };
     case "contextCompaction":
-      return { id: item.id, type: "context_compaction", summary: "Compact conversation" };
+      return {
+        id: item.id,
+        type: "context_compaction",
+        summary: "Compact conversation",
+      };
     case "subAgentActivity":
-      return { id: item.id, type: "subagent_activity", summary: toProviderTextPreview(`${item.kind}: ${item.agentPath}`) ?? item.kind,
-        details: stringifyBoundedProviderValue({ agentThreadId: item.agentThreadId, model: item.model, reasoningEffort: item.reasoningEffort }) };
+      return {
+        id: item.id,
+        type: "subagent_activity",
+        summary:
+          toProviderTextPreview(`${item.kind}: ${item.agentPath}`) ?? item.kind,
+        details: stringifyBoundedProviderValue({
+          agentThreadId: item.agentThreadId,
+          model: item.model,
+          reasoningEffort: item.reasoningEffort,
+        }),
+      };
     default:
       return null;
   }
 }
 
-function liveStep(item: CodexTurnItem, lifecycle: "in_progress" | "completed"): LiveRunStep | null {
+/** 非テキスト項目をライブの進捗に写す。表示対象外の項目は null とし、状態は共通表記に整える。 */
+function liveStep(
+  item: CodexTurnItem,
+  lifecycle: "in_progress" | "completed",
+): LiveRunStep | null {
   const activity = getCodexActivityOperation(item);
   if (activity) return { ...activity, id: item.id, status: lifecycle };
   const status = "status" in item ? item.status : "completed";
-  const liveStatus = status === "inProgress" ? "in_progress" : status === "declined" ? "failed" : status;
+  const liveStatus =
+    status === "inProgress"
+      ? "in_progress"
+      : status === "declined"
+        ? "failed"
+        : status;
   switch (item.type) {
     case "commandExecution":
       return {
@@ -318,7 +446,13 @@ function liveStep(item: CodexTurnItem, lifecycle: "in_progress" | "completed"): 
         summary: toProviderTextPreview(item.command) ?? "",
         details: getCodexCommandOutputPreview(item),
         ...(item.exitCode !== null ? { exitCode: item.exitCode } : {}),
-        ...(item.aggregatedOutputOriginalLength !== undefined ? { truncated: item.aggregatedOutputOriginalLength > (item.aggregatedOutput?.length ?? 0) } : {}),
+        ...(item.aggregatedOutputOriginalLength !== undefined
+          ? {
+              truncated:
+                item.aggregatedOutputOriginalLength >
+                (item.aggregatedOutput?.length ?? 0),
+            }
+          : {}),
         status: liveStatus,
       };
     case "fileChange":
@@ -335,7 +469,13 @@ function liveStep(item: CodexTurnItem, lifecycle: "in_progress" | "completed"): 
         id: item.id,
         type: "mcp_tool_call",
         summary: `${item.server}/${item.tool}`,
-        ...(item.error ? { error: { message: toProviderTextPreview(item.error.message) ?? "" } } : {}),
+        ...(item.error
+          ? {
+              error: {
+                message: toProviderTextPreview(item.error.message) ?? "",
+              },
+            }
+          : {}),
         details: getCodexMcpResultPreview(item),
         status: liveStatus,
       };
@@ -352,7 +492,9 @@ function liveStep(item: CodexTurnItem, lifecycle: "in_progress" | "completed"): 
         id: item.id,
         type: "web_search",
         summary:
-          item.query ?? stringifyBoundedProviderValue(item.action) ?? "Web search",
+          item.query ??
+          stringifyBoundedProviderValue(item.action) ??
+          "Web search",
         status: "completed",
       };
     case "plan":
@@ -366,30 +508,52 @@ function liveStep(item: CodexTurnItem, lifecycle: "in_progress" | "completed"): 
       return null;
   }
 }
+/** 同じ ID の表示内容が変化したときだけ進捗を差し替え、変更の有無を返す。 */
 function setLiveStep(state: CodexTurnStreamState, step: LiveRunStep): boolean {
   const previous = state.liveSteps.get(step.id);
-  if (previous && previous.type === step.type && previous.summary === step.summary
-    && previous.details === step.details && previous.status === step.status
-    && previous.exitCode === step.exitCode
-    && previous.error?.message === step.error?.message
-    && previous.error?.code === step.error?.code
-    && previous.truncated === step.truncated) return false;
+  if (
+    previous &&
+    previous.type === step.type &&
+    previous.summary === step.summary &&
+    previous.details === step.details &&
+    previous.status === step.status &&
+    previous.exitCode === step.exitCode &&
+    previous.error?.message === step.error?.message &&
+    previous.error?.code === step.error?.code &&
+    previous.truncated === step.truncated
+  )
+    return false;
   state.liveSteps.set(step.id, step);
   return true;
 }
-function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput = false, lifecycle: "in_progress" | "completed" = "completed"): void {
+/** ネイティブ項目を同じ ID で更新し、出力の容量制限、テキストと操作の投影、表示変更の追跡を揃える。 */
+function acceptItem(
+  state: CodexTurnStreamState,
+  value: unknown,
+  boundedOutput = false,
+  lifecycle: "in_progress" | "completed" = "completed",
+): void {
   const raw = record(value);
   if (typeof raw.id !== "string" || typeof raw.type !== "string")
     throw new Error("Invalid Codex App Server item");
   let item = value as CodexTurnItem;
-  if (!boundedOutput && item.type === "commandExecution" && typeof item.aggregatedOutput === "string") {
+  if (
+    !boundedOutput &&
+    item.type === "commandExecution" &&
+    typeof item.aggregatedOutput === "string"
+  ) {
     // 先頭部分を切り出しても、ネイティブ出力の元の文字列全体が内部で保持されることがある。
     item = {
       ...item,
       aggregatedOutputOriginalLength: item.aggregatedOutput.length,
-      aggregatedOutput: item.aggregatedOutput.length > PROVIDER_TEXT_PREVIEW_LIMIT
-        ? JSON.parse(JSON.stringify(item.aggregatedOutput.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT))) as string
-        : item.aggregatedOutput,
+      aggregatedOutput:
+        item.aggregatedOutput.length > PROVIDER_TEXT_PREVIEW_LIMIT
+          ? (JSON.parse(
+              JSON.stringify(
+                item.aggregatedOutput.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT),
+              ),
+            ) as string)
+          : item.aggregatedOutput,
     };
   }
   const previousItem = state.items.get(item.id);
@@ -400,12 +564,30 @@ function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput =
     order = cache.order.size;
     cache.order.set(item.id, order);
   }
-  let changed = cache.assistant.set(item.id, order,
-    item.type === "agentMessage" && item.text.trim().length > 0 ? item.text : "");
-  if (item.type === "agentMessage" && item.delivery === "async" && item.questions?.length
-    && (previousItem?.type !== "agentMessage" || previousItem.delivery !== "async" || !previousItem.questions?.length)) changed = true;
-  changed = cache.reasoning.set(item.id, order,
-    item.type === "reasoning" ? [...item.summary, ...item.content].join("\n") : "") || changed;
+  let changed = cache.assistant.set(
+    item.id,
+    order,
+    item.type === "agentMessage" && item.text.trim().length > 0
+      ? item.text
+      : "",
+  );
+  if (
+    item.type === "agentMessage" &&
+    item.delivery === "async" &&
+    item.questions?.length &&
+    (previousItem?.type !== "agentMessage" ||
+      previousItem.delivery !== "async" ||
+      !previousItem.questions?.length)
+  )
+    changed = true;
+  changed =
+    cache.reasoning.set(
+      item.id,
+      order,
+      item.type === "reasoning"
+        ? [...item.summary, ...item.content].join("\n")
+        : "",
+    ) || changed;
   const step = liveStep(item, lifecycle);
   if (step) changed = setLiveStep(state, step) || changed;
   if (!state.turnCompleted && state.streamErrorMessage) {
@@ -414,6 +596,7 @@ function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput =
   }
   if (changed) state.revision += 1;
 }
+/** 対象スレッド・Turn の通知を反映し、対象外・対応済み・未対応を区別する。以前の Turn の使用量は基準値にだけ使う。 */
 export function applyCodexTurnEvent(
   state: CodexTurnStreamState,
   event: CodexNativeNotification,
@@ -445,8 +628,17 @@ export function applyCodexTurnEvent(
       break;
     case "item/started":
     case "item/completed":
-      acceptItem(state, params.item, false, event.method === "item/started" ? "in_progress" : "completed");
-      if (event.method === "item/completed" && typeof record(params.item).id === "string") state.completedItemIds.add(record(params.item).id as string);
+      acceptItem(
+        state,
+        params.item,
+        false,
+        event.method === "item/started" ? "in_progress" : "completed",
+      );
+      if (
+        event.method === "item/completed" &&
+        typeof record(params.item).id === "string"
+      )
+        state.completedItemIds.add(record(params.item).id as string);
       break;
     case "item/agentMessage/delta": {
       if (typeof params.itemId !== "string" || typeof params.delta !== "string")
@@ -462,14 +654,23 @@ export function applyCodexTurnEvent(
         break;
       const item = state.items.get(params.itemId);
       if (item?.type === "commandExecution") {
-        const remaining = Math.max(0, PROVIDER_TEXT_PREVIEW_LIMIT - (item.aggregatedOutput?.length ?? 0));
-        const prefix = params.delta.length > remaining
-          ? JSON.parse(JSON.stringify(params.delta.slice(0, remaining))) as string
-          : params.delta;
+        const remaining = Math.max(
+          0,
+          PROVIDER_TEXT_PREVIEW_LIMIT - (item.aggregatedOutput?.length ?? 0),
+        );
+        const prefix =
+          params.delta.length > remaining
+            ? (JSON.parse(
+                JSON.stringify(params.delta.slice(0, remaining)),
+              ) as string)
+            : params.delta;
         const next = {
           ...item,
           aggregatedOutput: (item.aggregatedOutput ?? "") + prefix,
-          aggregatedOutputOriginalLength: (item.aggregatedOutputOriginalLength ?? item.aggregatedOutput?.length ?? 0) + params.delta.length,
+          aggregatedOutputOriginalLength:
+            (item.aggregatedOutputOriginalLength ??
+              item.aggregatedOutput?.length ??
+              0) + params.delta.length,
         };
         acceptItem(state, next, true);
       }
@@ -510,22 +711,25 @@ export function applyCodexTurnEvent(
     case "turn/plan/updated": {
       if (!Array.isArray(params.plan)) break;
       const steps = params.plan.map(record);
-      if (setLiveStep(state, {
-        id: "turn-plan",
-        type: "plan",
-        summary: `${steps.filter((step) => step.status === "completed").length}/${steps.length} completed`,
-        details: toProviderTextPreview(
-          steps
-            .map(
-              (step) =>
-                `${step.status === "completed" ? "[x]" : "[ ]"} ${typeof step.step === "string" ? step.step : ""}`,
-            )
-            .join("\n"),
-        ),
-        status: steps.every((step) => step.status === "completed")
-          ? "completed"
-          : "in_progress",
-      })) state.revision += 1;
+      if (
+        setLiveStep(state, {
+          id: "turn-plan",
+          type: "plan",
+          summary: `${steps.filter((step) => step.status === "completed").length}/${steps.length} completed`,
+          details: toProviderTextPreview(
+            steps
+              .map(
+                (step) =>
+                  `${step.status === "completed" ? "[x]" : "[ ]"} ${typeof step.step === "string" ? step.step : ""}`,
+              )
+              .join("\n"),
+          ),
+          status: steps.every((step) => step.status === "completed")
+            ? "completed"
+            : "in_progress",
+        })
+      )
+        state.revision += 1;
       break;
     }
     case "error": {
@@ -543,7 +747,11 @@ export function applyCodexTurnEvent(
       if (Array.isArray(turn.items))
         for (const item of turn.items) {
           acceptItem(state, item);
-          if (turn.status === "completed" && typeof record(item).id === "string") state.completedItemIds.add(record(item).id as string);
+          if (
+            turn.status === "completed" &&
+            typeof record(item).id === "string"
+          )
+            state.completedItemIds.add(record(item).id as string);
         }
       state.terminalStatus = turn.status;
       state.turnCompleted = true;
@@ -557,11 +765,18 @@ export function applyCodexTurnEvent(
     default:
       return "unhandled";
   }
-  const usageChanged = previousUsage !== state.usage
-    && JSON.stringify(previousUsage) !== JSON.stringify(state.usage);
-  state.revision = previousRevision + Number(state.revision !== previousRevision
-    || previousTurnId !== state.turnId || previousError !== state.streamErrorMessage
-    || previousCompleted !== state.turnCompleted || previousStatus !== state.terminalStatus
-    || usageChanged);
+  const usageChanged =
+    previousUsage !== state.usage &&
+    JSON.stringify(previousUsage) !== JSON.stringify(state.usage);
+  state.revision =
+    previousRevision +
+    Number(
+      state.revision !== previousRevision ||
+        previousTurnId !== state.turnId ||
+        previousError !== state.streamErrorMessage ||
+        previousCompleted !== state.turnCompleted ||
+        previousStatus !== state.terminalStatus ||
+        usageChanged,
+    );
   return "handled";
 }

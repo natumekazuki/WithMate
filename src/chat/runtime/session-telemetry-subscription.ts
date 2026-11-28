@@ -1,20 +1,39 @@
-import type { ProviderQuotaTelemetry, SessionContextTelemetry } from "../../../src-shared/session/runtime-state.js";
-import type { ProviderOwnedQuotaTelemetry, SessionOwnedContextTelemetry } from "./session-telemetry-state.js";
+import type {
+  ProviderQuotaTelemetry,
+  SessionContextTelemetry,
+} from "../../../src-shared/session/runtime-state.js";
+import type {
+  ProviderOwnedQuotaTelemetry,
+  SessionOwnedContextTelemetry,
+} from "./session-telemetry-state.js";
 
+/** Provider を指定した利用枠の取得と、Provider ごとの更新通知を購読する API。 */
 export type ProviderQuotaTelemetrySubscriptionApi = {
-  getProviderQuotaTelemetry: (providerId: string) => Promise<ProviderQuotaTelemetry | null>;
+  getProviderQuotaTelemetry: (
+    providerId: string,
+  ) => Promise<ProviderQuotaTelemetry | null>;
   subscribeProviderQuotaTelemetry: (
-    listener: (providerId: string, telemetry: ProviderQuotaTelemetry | null) => void,
+    listener: (
+      providerId: string,
+      telemetry: ProviderQuotaTelemetry | null,
+    ) => void,
   ) => () => void;
 };
 
+/** Session を指定したコンテキスト使用量の取得と、その後の更新を購読する API。 */
 export type SessionContextTelemetrySubscriptionApi = {
-  getSessionContextTelemetry: (sessionId: string) => Promise<SessionContextTelemetry | null>;
+  getSessionContextTelemetry: (
+    sessionId: string,
+  ) => Promise<SessionContextTelemetry | null>;
   subscribeSessionContextTelemetry: (
-    listener: (sessionId: string, telemetry: SessionContextTelemetry | null) => void,
+    listener: (
+      sessionId: string,
+      telemetry: SessionContextTelemetry | null,
+    ) => void,
   ) => () => void;
 };
 
+/** 対象外の値を消して Provider ごとに利用枠を取得し、先に届いた同じ Provider の通知を優先する。 */
 export function startProviderQuotaTelemetrySubscription(input: {
   api: ProviderQuotaTelemetrySubscriptionApi | null;
   providerId: string | null;
@@ -25,33 +44,53 @@ export function startProviderQuotaTelemetrySubscription(input: {
   const providerId = input.providerId;
 
   if (!input.api || !providerId || !input.enabled) {
-    input.applyProviderQuotaTelemetry({ ownerProviderId: providerId, telemetry: null });
+    input.applyProviderQuotaTelemetry({
+      ownerProviderId: providerId,
+      telemetry: null,
+    });
     return () => {
       active = false;
     };
   }
 
-  input.applyProviderQuotaTelemetry({ ownerProviderId: providerId, telemetry: null });
+  input.applyProviderQuotaTelemetry({
+    ownerProviderId: providerId,
+    telemetry: null,
+  });
   let receivedSubscriptionUpdate = false;
 
-  void input.api.getProviderQuotaTelemetry(providerId).then((telemetry) => {
-    if (active && !receivedSubscriptionUpdate) {
-      input.applyProviderQuotaTelemetry({ ownerProviderId: providerId, telemetry });
-    }
-  }).catch(() => {
-    if (active && !receivedSubscriptionUpdate) {
-      input.applyProviderQuotaTelemetry({ ownerProviderId: providerId, telemetry: null });
-    }
-  });
+  void input.api
+    .getProviderQuotaTelemetry(providerId)
+    .then((telemetry) => {
+      if (active && !receivedSubscriptionUpdate) {
+        input.applyProviderQuotaTelemetry({
+          ownerProviderId: providerId,
+          telemetry,
+        });
+      }
+    })
+    .catch(() => {
+      if (active && !receivedSubscriptionUpdate) {
+        input.applyProviderQuotaTelemetry({
+          ownerProviderId: providerId,
+          telemetry: null,
+        });
+      }
+    });
 
-  const unsubscribe = input.api.subscribeProviderQuotaTelemetry((nextProviderId, telemetry) => {
-    if (!active || nextProviderId !== providerId) {
-      return;
-    }
+  const unsubscribe = input.api.subscribeProviderQuotaTelemetry(
+    (nextProviderId, telemetry) => {
+      if (!active || nextProviderId !== providerId) {
+        return;
+      }
 
-    receivedSubscriptionUpdate = true;
-    input.applyProviderQuotaTelemetry({ ownerProviderId: nextProviderId, telemetry });
-  });
+      receivedSubscriptionUpdate = true;
+      input.applyProviderQuotaTelemetry({
+        ownerProviderId: nextProviderId,
+        telemetry,
+      });
+    },
+  );
 
   return () => {
     active = false;
@@ -59,6 +98,7 @@ export function startProviderQuotaTelemetrySubscription(input: {
   };
 }
 
+/** 対象の Session のコンテキスト使用量だけを受け付け、初回取得は購読通知を上書きしない。 */
 export function startSessionContextTelemetrySubscription(input: {
   api: SessionContextTelemetrySubscriptionApi | null;
   sessionId: string | null;
@@ -69,33 +109,53 @@ export function startSessionContextTelemetrySubscription(input: {
   const sessionId = input.sessionId;
 
   if (!input.api || !sessionId || !input.enabled) {
-    input.applySessionContextTelemetry({ ownerSessionId: sessionId, telemetry: null });
+    input.applySessionContextTelemetry({
+      ownerSessionId: sessionId,
+      telemetry: null,
+    });
     return () => {
       active = false;
     };
   }
 
-  input.applySessionContextTelemetry({ ownerSessionId: sessionId, telemetry: null });
+  input.applySessionContextTelemetry({
+    ownerSessionId: sessionId,
+    telemetry: null,
+  });
   let receivedSubscriptionUpdate = false;
 
-  void input.api.getSessionContextTelemetry(sessionId).then((telemetry) => {
-    if (active && !receivedSubscriptionUpdate) {
-      input.applySessionContextTelemetry({ ownerSessionId: sessionId, telemetry });
-    }
-  }).catch(() => {
-    if (active && !receivedSubscriptionUpdate) {
-      input.applySessionContextTelemetry({ ownerSessionId: sessionId, telemetry: null });
-    }
-  });
+  void input.api
+    .getSessionContextTelemetry(sessionId)
+    .then((telemetry) => {
+      if (active && !receivedSubscriptionUpdate) {
+        input.applySessionContextTelemetry({
+          ownerSessionId: sessionId,
+          telemetry,
+        });
+      }
+    })
+    .catch(() => {
+      if (active && !receivedSubscriptionUpdate) {
+        input.applySessionContextTelemetry({
+          ownerSessionId: sessionId,
+          telemetry: null,
+        });
+      }
+    });
 
-  const unsubscribe = input.api.subscribeSessionContextTelemetry((nextSessionId, telemetry) => {
-    if (!active || nextSessionId !== sessionId) {
-      return;
-    }
+  const unsubscribe = input.api.subscribeSessionContextTelemetry(
+    (nextSessionId, telemetry) => {
+      if (!active || nextSessionId !== sessionId) {
+        return;
+      }
 
-    receivedSubscriptionUpdate = true;
-    input.applySessionContextTelemetry({ ownerSessionId: nextSessionId, telemetry });
-  });
+      receivedSubscriptionUpdate = true;
+      input.applySessionContextTelemetry({
+        ownerSessionId: nextSessionId,
+        telemetry,
+      });
+    },
+  );
 
   return () => {
     active = false;

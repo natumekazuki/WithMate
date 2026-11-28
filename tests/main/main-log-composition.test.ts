@@ -17,6 +17,7 @@ import type { BrowserWindow } from "electron";
 // impact = "複数Window稼働中にcrash/freeze/load異常の発生Windowを特定でき、診断ログに不要なユーザー由来情報を含めない"
 // distinction = "型検査ではoptionalなwindowIdの欠落も実event callbackのWindow間混同も検出できず、既存testにMainLogCompositionのevent出力を確認するものがない"
 // @end-test-value
+/** 七種類のイベントすべてを発生元の数値 Window ID へ結び付け、タイトル・URL・エラー本文をログへ出さないことを確認する。 */
 test("MainLogComposition は7種のWindow eventを数値windowIdで相関し、payloadを記録しない", async () => {
   Object.assign(globalThis, {
     __withmateElectronMock: {
@@ -26,11 +27,13 @@ test("MainLogComposition は7種のWindow eventを数値windowIdで相関し、p
     },
   });
   registerHooks({
+    /** Electron の import だけをテスト用モジュールに向け、その他の依存は通常の解決へ渡す。 */
     resolve(specifier, context, nextResolve) {
       if (specifier === "electron")
         return { url: "withmate:test-electron", shortCircuit: true };
       return nextResolve(specifier, context);
     },
+    /** 実 Electron を起動せず、Main のログ構成が参照する Electron の名前だけを fixture から提供する。 */
     load(url, context, nextLoad) {
       if (url === "withmate:test-electron")
         return {
@@ -46,14 +49,16 @@ test("MainLogComposition は7種のWindow eventを数値windowIdで相関し、p
     },
   });
 
-  const { MainLogComposition } = await import(
-    "../../src-electron/app/main-log-composition.js"
-  );
+  const { MainLogComposition } =
+    await import("../../src-electron/app/main-log-composition.js");
   const logs: Array<Record<string, unknown>> = [];
   const sourceWindowIds: number[] = [];
   let sourceWindowId = 0;
   const composition = new MainLogComposition(
-    (entry) => { logs.push(entry); sourceWindowIds.push(sourceWindowId); },
+    (entry) => {
+      logs.push(entry);
+      sourceWindowIds.push(sourceWindowId);
+    },
     (error) => ({ name: "Error", message: String(error) }),
   );
   const windows = [12, 34].map((id) => {
@@ -61,6 +66,7 @@ test("MainLogComposition は7種のWindow eventを数値windowIdで相関し、p
     const window = Object.assign(new EventEmitter(), {
       id,
       title: `private-window-title-${id}`,
+      /** イベント送信中は Window が有効なものとして扱う。 */
       isDestroyed: () => false,
       webContents: new EventEmitter(),
     });
@@ -71,10 +77,14 @@ test("MainLogComposition は7種のWindow eventを数値windowIdで相関し、p
   for (const window of windows) {
     sourceWindowId = window.id;
     window.emit("closed");
-    window.webContents.emit("render-process-gone", {}, {
-      reason: "crashed",
-      exitCode: 1,
-    });
+    window.webContents.emit(
+      "render-process-gone",
+      {},
+      {
+        reason: "crashed",
+        exitCode: 1,
+      },
+    );
     window.webContents.emit("unresponsive");
     window.webContents.emit("responsive");
     window.webContents.emit(
@@ -113,7 +123,11 @@ test("MainLogComposition は7種のWindow eventを数値windowIdで相関し、p
     assert.ok(entries.every((entry) => typeof entry.windowId === "number"));
   }
   logs.forEach((entry, index) => {
-    assert.equal(entry.windowId, sourceWindowIds[index], `${String(entry.kind)} must identify its source Window`);
+    assert.equal(
+      entry.windowId,
+      sourceWindowIds[index],
+      `${String(entry.kind)} must identify its source Window`,
+    );
   });
 
   const serializedLogs = JSON.stringify(logs);

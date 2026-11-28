@@ -4,7 +4,10 @@ import test from "node:test";
 import type { SessionSummary } from "../../src-shared/session/session-state.js";
 import { mergePinnedSessionSummary } from "../../src/home/session-pinning.js";
 
-function createSessionSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
+/** 現在の一覧項目と古い pin 応答を同じ ID で比較できるよう、最新の表示値を持つ Session 要約を作る。 */
+function createSessionSummary(
+  overrides: Partial<SessionSummary> = {},
+): SessionSummary {
   return {
     id: "session-1",
     taskTitle: "Current title",
@@ -40,6 +43,7 @@ function createSessionSummary(overrides: Partial<SessionSummary> = {}): SessionS
   };
 }
 
+/** 古い pin 応答を受け取っても最新の名前・状態・更新時刻を戻さず、ピン留めだけを反映する。 */
 test("pin応答は新しいSessionSummaryを巻き戻さずisPinnedだけを反映する", () => {
   const current = createSessionSummary();
   const stalePinResponse = createSessionSummary({

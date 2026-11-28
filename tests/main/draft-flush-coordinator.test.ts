@@ -21,22 +21,40 @@ import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "../../src-electron/session/ses
 // impact = "未保存入力を保存済みと誤認し、Renderer障害を区別できない"
 // distinction = "sender整合とtimeout期限の既存testでは扱わない終了経路全体の保存成否分類を検証する"
 // @end-test-value
+/** 保存の成功・拒否・切断・タイムアウトを一回だけ確定し、理由と経過時間を通知して遅い ACK を無視する。 */
 test("DraftFlushCoordinatorは保存成否と終了理由を一度だけ分類する", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
-  for (const outcome of ["saved", "rejected", "timeout", "send-failed", "window-closed", "renderer-gone"] as const) {
+  for (const outcome of [
+    "saved",
+    "rejected",
+    "timeout",
+    "send-failed",
+    "window-closed",
+    "renderer-gone",
+  ] as const) {
     const settled: DraftFlushResult[] = [];
     let requestId = "";
     const window = {};
-    const coordinator = new DraftFlushCoordinator((_, request) => {
-      requestId = request.requestId;
-      if (outcome === "send-failed") throw new Error("send failed");
-    }, 100, (result) => { settled.push(result); });
+    const coordinator = new DraftFlushCoordinator(
+      (_, request) => {
+        requestId = request.requestId;
+        if (outcome === "send-failed") throw new Error("send failed");
+      },
+      100,
+      (result) => {
+        settled.push(result);
+      },
+    );
     const result = coordinator.request(window, "session", "sender", "close");
     if (outcome === "timeout") t.mock.timers.tick(100);
-    else if (outcome === "window-closed" || outcome === "renderer-gone") coordinator.forgetWindow(window, outcome);
-    else if (outcome !== "send-failed") coordinator.acknowledge(requestId, "sender", outcome === "saved");
+    else if (outcome === "window-closed" || outcome === "renderer-gone")
+      coordinator.forgetWindow(window, outcome);
+    else if (outcome !== "send-failed")
+      coordinator.acknowledge(requestId, "sender", outcome === "saved");
     assert.equal(await result, outcome === "saved");
-    assert.deepEqual(settled, [{ reason: "close", outcome, elapsedMs: outcome === "timeout" ? 100 : 0 }]);
+    assert.deepEqual(settled, [
+      { reason: "close", outcome, elapsedMs: outcome === "timeout" ? 100 : 0 },
+    ]);
     assert.equal(coordinator.acknowledge(requestId, "sender", true), false);
     assert.equal(settled.length, 1);
   }
@@ -52,14 +70,23 @@ test("DraftFlushCoordinatorは保存成否と終了理由を一度だけ分類�
 // scope = "draft-flush-transport"
 // lifecycle = "permanent"
 // @end-test-value
+/** 未知の要求 ID や別送信元の ACK では確定せず、要求と発信元の両方が合う場合だけ保存成功にする。 */
 test("DraftFlushCoordinatorはsender不一致のackを無視する", async () => {
   let request: { requestId: string } | undefined;
-  const coordinator = new DraftFlushCoordinator((_, payload) => { request = payload; }, 100);
+  const coordinator = new DraftFlushCoordinator((_, payload) => {
+    request = payload;
+  }, 100);
   const result = coordinator.request({}, "session", "sender-a", "close");
   assert.equal((request as { reason?: string } | undefined)?.reason, "close");
   assert.equal(coordinator.acknowledge("unknown", "sender-a", true), false);
-  assert.equal(coordinator.acknowledge(request!.requestId, "sender-b", true), false);
-  assert.equal(coordinator.acknowledge(request!.requestId, "sender-a", true), true);
+  assert.equal(
+    coordinator.acknowledge(request!.requestId, "sender-b", true),
+    false,
+  );
+  assert.equal(
+    coordinator.acknowledge(request!.requestId, "sender-a", true),
+    true,
+  );
   assert.equal(await result, true);
 });
 
@@ -73,24 +100,36 @@ test("DraftFlushCoordinatorはsender不一致のackを無視する", async () =>
 // scope = "draft-flush-transport"
 // lifecycle = "permanent"
 // @end-test-value
+/** アプリ終了時は通常の Window 閉鎖より長く、プロバイダー取消の猶予を確保する。ACK が来なければ成功扱いにしない。 */
 test("DraftFlushCoordinatorはquitのcancel猶予を確保しack欠落をfalseで終端する", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let requestId = "";
-  const coordinator = new DraftFlushCoordinator((_, payload) => { requestId = payload.requestId; });
+  const coordinator = new DraftFlushCoordinator((_, payload) => {
+    requestId = payload.requestId;
+  });
   const close = coordinator.request({}, "session", "sender", "close");
   let quitSettled = false;
-  const quit = coordinator.request({}, "session", "sender", "quit").then((result) => {
-    quitSettled = true;
-    return result;
-  });
+  const quit = coordinator
+    .request({}, "session", "sender", "quit")
+    .then((result) => {
+      quitSettled = true;
+      return result;
+    });
   t.mock.timers.tick(DEFAULT_DRAFT_FLUSH_TIMEOUT_MS);
   assert.equal(await close, false);
   assert.equal(quitSettled, false);
-  assert.ok(DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS > DEFAULT_PROVIDER_CANCEL_GRACE_MS);
+  assert.ok(
+    DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS > DEFAULT_PROVIDER_CANCEL_GRACE_MS,
+  );
   assert.equal(coordinator.acknowledge(requestId, "sender", true), true);
   assert.equal(await quit, true);
 
-  const unacknowledgedQuit = coordinator.request({}, "session", "sender", "quit");
+  const unacknowledgedQuit = coordinator.request(
+    {},
+    "session",
+    "sender",
+    "quit",
+  );
   t.mock.timers.tick(DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS);
   assert.equal(await unacknowledgedQuit, false);
 });

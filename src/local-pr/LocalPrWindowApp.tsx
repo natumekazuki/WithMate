@@ -1,8 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithRef, type CSSProperties, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentPropsWithRef,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { ChatDockSplitter } from "../chat/chat-window.js";
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
-import { commentThreads, isSameSession, unifiedReviewRows } from "./local-pr-review.js";
+import {
+  commentThreads,
+  isSameSession,
+  unifiedReviewRows,
+} from "./local-pr-review.js";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
   LocalPrComment,
@@ -16,12 +29,19 @@ import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
 import { ErrorDetailsButton } from "../ui/error-details.js";
-import { LocalPrDescription, LocalPrDescriptionEditor } from "./LocalPrDescription.js";
+import {
+  LocalPrDescription,
+  LocalPrDescriptionEditor,
+} from "./LocalPrDescription.js";
 import "./local-pr.css";
 
+/** PR 全体の比較と、一つ前の版との差分を区別する。 */
 type Mode = "full" | "previous";
+/** 選択中の PR に対する概要、変更、CI 結果のタブ。 */
 type Tab = "overview" | "changes" | "checks";
+/** 操作が作用しなかったことが確定している失敗と、結果不明の失敗を区別する。 */
 type Failure = { message: string; effect: "none" | "unknown" };
+/** Agent へ送るレビューの対象コメントと版、および任意の初期メッセージ。 */
 type OpenReview = { commentIds: string[]; version: number; message?: string };
 
 const prStateLabels: Record<LocalPrDetail["state"], string> = {
@@ -74,6 +94,7 @@ function formatDateTime(value: string): string {
   return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date);
 }
 
+/** ローカルブランチ参照は接頭辞を除き、参照がなければ切り離された HEAD として表示する。 */
 function branchName(ref: string | null): string {
   return ref?.replace(/^refs\/heads\//, "") ?? "Detached Head";
 }
@@ -151,7 +172,10 @@ function ReadState({
       )}
       {state.error && (
         <div className="local-pr-read-error" role="alert">
-          <ErrorDetailsButton message={state.error.message} label="Read Error Details" />
+          <ErrorDetailsButton
+            message={state.error.message}
+            label="Read Error Details"
+          />
           <button onClick={retry}>Retry</button>
         </div>
       )}
@@ -161,13 +185,20 @@ function ReadState({
 
 /** 操作ラベルの寸法を保ち、変更を開始したボタンを識別する。 */
 function ActionButton({
-  children, disabled, onAction, ...props
+  children,
+  disabled,
+  onAction,
+  ...props
 }: Omit<ComponentPropsWithRef<"button">, "onClick" | "aria-busy"> & {
   onAction: () => Promise<unknown> | undefined;
 }) {
   const [pending, setPending] = useState(false);
   return (
-    <button {...props} type="button" disabled={disabled || pending} aria-busy={pending}
+    <button
+      {...props}
+      type="button"
+      disabled={disabled || pending}
+      aria-busy={pending}
       onClick={() => {
         const result = onAction();
         if (result) {
@@ -199,7 +230,10 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
   const [failure, setFailure] = useState<Failure | null>(null);
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState<OpenReview | null>(null);
-  const [delivery, setDelivery] = useState<{ prId: string; title: string } | null>(null);
+  const [delivery, setDelivery] = useState<{
+    prId: string;
+    title: string;
+  } | null>(null);
   const [uncertainDiscussions, setUncertainDiscussions] = useState<
     Record<string, LocalPrInput<"discuss">>
   >({});
@@ -228,12 +262,21 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
   const detail = useRead(selected ?? "none", detailLoad, revision);
   const pr = detail.data;
   const pendingReview = pr ? uncertainDiscussions[pr.id] : undefined;
-  const agentNamesLoad = useCallback(() => selected
-    ? api.execute("session_choices", {})
-    : Promise.resolve({ ok: true as const, data: { sessions: [], hasMore: false } }), [api, selected]);
+  const agentNamesLoad = useCallback(
+    () =>
+      selected
+        ? api.execute("session_choices", {})
+        : Promise.resolve({
+            ok: true as const,
+            data: { sessions: [], hasMore: false },
+          }),
+    [api, selected],
+  );
   const agentNames = useRead(selected ?? "none", agentNamesLoad, revision);
+  /** 世代まで一致する送信先候補から表示名を引き、見つからなければ名前を推測しない。 */
   const nameAgent = (target: SessionTarget) =>
-    agentNames.data?.sessions.find((item) => isSameSession(item.target, target))?.title ?? "Agent";
+    agentNames.data?.sessions.find((item) => isSameSession(item.target, target))
+      ?.title ?? "Agent";
   const currentVersion =
     pr?.versions.find((item) => item.version === version) ??
     pr?.versions.find((item) => item.version === pr.latestVersion) ??
@@ -318,19 +361,37 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
     setTab("overview");
   }
 
-  function startReview(commentIds: string[], reviewVersion: number, message?: string) {
+  /** 送信確認を開く。前回結果が不明なら、新しい選択より元の版とコメント集合を優先する。 */
+  function startReview(
+    commentIds: string[],
+    reviewVersion: number,
+    message?: string,
+  ) {
     setFailure(null);
-    setReview({ commentIds: pendingReview?.commentIds ?? commentIds, version: pendingReview?.version ?? reviewVersion, message });
+    setReview({
+      commentIds: pendingReview?.commentIds ?? commentIds,
+      version: pendingReview?.version ?? reviewVersion,
+      message,
+    });
   }
 
   return (
-    <div ref={workspace} className={`page-shell session-page local-pr-app${listExpanded ? "" : " is-list-collapsed"}`}
-      style={{ "--local-pr-list-width": `${listWidth}px` } as CSSProperties}>
-      <aside id="local-pr-list" className="local-pr-list" aria-label="Pull Requests" hidden={!listExpanded}>
+    <div
+      ref={workspace}
+      className={`page-shell session-page local-pr-app${listExpanded ? "" : " is-list-collapsed"}`}
+      style={{ "--local-pr-list-width": `${listWidth}px` } as CSSProperties}
+    >
+      <aside
+        id="local-pr-list"
+        className="local-pr-list"
+        aria-label="Pull Requests"
+        hidden={!listExpanded}
+      >
         <header className="local-pr-list-toolbar">
           <h1>Pull Requests</h1>
           <div className="session-file-preview-actions">
-            <button className="local-pr-primary"
+            <button
+              className="local-pr-primary"
               onClick={() => {
                 setCreating(true);
                 setSelected(null);
@@ -340,17 +401,19 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
             >
               New PR
             </button>
-            <button aria-label="Reload Pull Requests" title="Reload Pull Requests"
-            aria-busy={list.loading || detail.loading}
-            disabled={list.loading || detail.loading}
-            onClick={refresh}
-          >
-            <ButtonContent
-              busy={list.loading || detail.loading}
-              busyLabel="Refreshing Pull Requests"
+            <button
+              aria-label="Reload Pull Requests"
+              title="Reload Pull Requests"
+              aria-busy={list.loading || detail.loading}
+              disabled={list.loading || detail.loading}
+              onClick={refresh}
             >
-              ↻
-            </ButtonContent>
+              <ButtonContent
+                busy={list.loading || detail.loading}
+                busyLabel="Refreshing Pull Requests"
+              >
+                ↻
+              </ButtonContent>
             </button>
           </div>
         </header>
@@ -373,19 +436,53 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
           <ReadState state={list} retry={refresh} />
         </div>
       </aside>
-      <ChatDockSplitter edge="left" className="local-pr-list-splitter"
-        isPanelExpanded={listExpanded} ariaControls="local-pr-list"
-        ariaLabel={listExpanded ? "Collapse Pull Request List" : "Expand Pull Request List"}
-        title={listExpanded ? "Collapse Pull Request List" : "Expand Pull Request List"}
+      <ChatDockSplitter
+        edge="left"
+        className="local-pr-list-splitter"
+        isPanelExpanded={listExpanded}
+        ariaControls="local-pr-list"
+        ariaLabel={
+          listExpanded
+            ? "Collapse Pull Request List"
+            : "Expand Pull Request List"
+        }
+        title={
+          listExpanded
+            ? "Collapse Pull Request List"
+            : "Expand Pull Request List"
+        }
         onTogglePanel={() => setListExpanded((expanded) => !expanded)}
-        onPointerDown={() => { listDragStart.current = listWidth; }}
+        onPointerDown={() => {
+          listDragStart.current = listWidth;
+        }}
         onDrag={(_event, delta) => {
-          if (listExpanded) setListWidth(Math.max(160, Math.min(listDragStart.current + delta.x, (workspace.current?.clientWidth ?? 512) - 240)));
+          if (listExpanded)
+            setListWidth(
+              Math.max(
+                160,
+                Math.min(
+                  listDragStart.current + delta.x,
+                  (workspace.current?.clientWidth ?? 512) - 240,
+                ),
+              ),
+            );
         }}
         onKeyDown={(event) => {
-          if (!listExpanded || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+          if (
+            !listExpanded ||
+            (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+          )
+            return;
           event.preventDefault();
-          setListWidth((width) => Math.max(160, Math.min(width + (event.key === "ArrowRight" ? 16 : -16), (workspace.current?.clientWidth ?? 512) - 240)));
+          setListWidth((width) =>
+            Math.max(
+              160,
+              Math.min(
+                width + (event.key === "ArrowRight" ? 16 : -16),
+                (workspace.current?.clientWidth ?? 512) - 240,
+              ),
+            ),
+          );
         }}
       />
       <main className="local-pr-main">
@@ -410,9 +507,16 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                   <div className="local-pr-heading">
                     <h2>{pr.title}</h2>
                     <p className="local-pr-pr-meta">
-                      <span className="local-pr-status" data-state={pr.state}>{prStateLabels[pr.state]}</span>
-                      <span title={`${pr.sourceBranch ?? "Detached Head"} → ${pr.targetBranch}`}>
-                        <code>{branchName(pr.sourceBranch)} → {branchName(pr.targetBranch)}</code>
+                      <span className="local-pr-status" data-state={pr.state}>
+                        {prStateLabels[pr.state]}
+                      </span>
+                      <span
+                        title={`${pr.sourceBranch ?? "Detached Head"} → ${pr.targetBranch}`}
+                      >
+                        <code>
+                          {branchName(pr.sourceBranch)} →{" "}
+                          {branchName(pr.targetBranch)}
+                        </code>
                       </span>
                     </p>
                   </div>
@@ -434,7 +538,10 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                     </select>
                   </label>
                 </header>
-                <nav className="local-pr-tabs session-file-preview-segmented" aria-label="PR Sections">
+                <nav
+                  className="local-pr-tabs session-file-preview-segmented"
+                  aria-label="PR Sections"
+                >
                   {(["overview", "changes", "checks"] as const).map((name) => (
                     <button
                       key={name}
@@ -458,7 +565,17 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                 {pendingReview && !review && (
                   <div className="local-pr-delivery" role="status">
                     <span>Review delivery not confirmed.</span>
-                    <button disabled={busy} onClick={() => startReview(pendingReview.commentIds, pendingReview.version)}>Review Pending Send</button>
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        startReview(
+                          pendingReview.commentIds,
+                          pendingReview.version,
+                        )
+                      }
+                    >
+                      Review Pending Send
+                    </button>
                   </div>
                 )}
                 {review && (
@@ -508,7 +625,9 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                     refresh={refresh}
                     run={run}
                     busy={busy || detail.loading || !!detail.error}
-                    openReview={(commentIds, message) => startReview(commentIds, currentVersion.version, message)}
+                    openReview={(commentIds, message) =>
+                      startReview(commentIds, currentVersion.version, message)
+                    }
                     nameAgent={nameAgent}
                     initialComment={
                       anchorComment?.version === currentVersion.version
@@ -532,8 +651,8 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
               </>
             )}
           </>
-        ) : list.data && (
-          <div className="local-pr-scroll local-pr-empty" />
+        ) : (
+          list.data && <div className="local-pr-scroll local-pr-empty" />
         )}
         <div className="local-pr-main-feedback">
           {failure && !review && (
@@ -581,7 +700,9 @@ function Changes({
     initialComment?.anchor?.mode ?? "full",
   );
   const [selectedPath, setPath] = useState(initialComment?.anchor?.path ?? "");
-  const [draftAnchor, setDraftAnchor] = useState<NonNullable<LocalPrComment["anchor"]> | null>(null);
+  const [draftAnchor, setDraftAnchor] = useState<NonNullable<
+    LocalPrComment["anchor"]
+  > | null>(null);
   const [rangeOrigin, setRangeOrigin] = useState<number | null>(null);
   const [rangeError, setRangeError] = useState(false);
   const [body, setBody] = useState("");
@@ -622,7 +743,9 @@ function Changes({
   const anchorMoved = useRef(false);
   const virtualRows = useVirtualizer({
     count: rows.length,
+    /** 差分行の仮想表示に、現在のコード領域のスクロールを使う。 */
     getScrollElement: () => codeRef.current,
+    /** 差分行の描画前に用いる1行の高さの見積もり。 */
     estimateSize: () => 19,
     overscan: 20,
   });
@@ -648,9 +771,15 @@ function Changes({
     codeRef.current?.focus();
     anchorMoved.current = true;
   }, [rows, initialComment, mode, path, patch.data, virtualRows]);
-  const fileComments = pr.comments.filter((comment) => comment.version === version
-    && comment.anchor?.path === path && comment.anchor.mode === mode);
-  const drafts = pr.comments.filter((comment) => comment.version === version && comment.draft);
+  const fileComments = pr.comments.filter(
+    (comment) =>
+      comment.version === version &&
+      comment.anchor?.path === path &&
+      comment.anchor.mode === mode,
+  );
+  const drafts = pr.comments.filter(
+    (comment) => comment.version === version && comment.draft,
+  );
   const authorComments = new Map<string, number>();
   for (const comment of fileComments) {
     const anchor = comment.anchor;
@@ -659,9 +788,15 @@ function Changes({
     authorComments.set(key, (authorComments.get(key) ?? 0) + 1);
   }
 
+  /** 同じ比較側の連続して表示された行だけを範囲にし、省略行をまたぐ選択は拒否する。 */
   function selectLine(side: "before" | "after", line: number, extend: boolean) {
-    const first = extend && draftAnchor?.path === path && draftAnchor.mode === mode && draftAnchor.side === side
-      ? rangeOrigin ?? line : line;
+    const first =
+      extend &&
+      draftAnchor?.path === path &&
+      draftAnchor.mode === mode &&
+      draftAnchor.side === side
+        ? (rangeOrigin ?? line)
+        : line;
     const startLine = Math.min(first, line);
     const endLine = Math.max(first, line);
     for (let number = startLine; number <= endLine; number += 1) {
@@ -677,7 +812,11 @@ function Changes({
   return (
     <div className="local-pr-changes local-pr-reader">
       <header className="local-pr-reader-toolbar">
-        <div className="session-file-preview-segmented" role="group" aria-label="Diff Comparison">
+        <div
+          className="session-file-preview-segmented"
+          role="group"
+          aria-label="Diff Comparison"
+        >
           <button
             className={mode === "full" ? "is-active" : undefined}
             aria-pressed={mode === "full"}
@@ -701,11 +840,19 @@ function Changes({
           </button>
         </div>
         <div className="local-pr-actions local-pr-diff-actions">
-          {files.data && <code className="local-pr-revision-range">
+          {files.data && (
+            <code className="local-pr-revision-range">
               {files.data.beforeCommit.slice(0, 12)} →{" "}
               {files.data.afterCommit.slice(0, 12)}
-          </code>}
-          <button className={drafts.length ? "local-pr-primary" : undefined} disabled={busy} onClick={() => openReview(drafts.slice(0, 50).map((comment) => comment.id))}>
+            </code>
+          )}
+          <button
+            className={drafts.length ? "local-pr-primary" : undefined}
+            disabled={busy}
+            onClick={() =>
+              openReview(drafts.slice(0, 50).map((comment) => comment.id))
+            }
+          >
             {drafts.length ? `Send Review (${drafts.length})` : "Send to Agent"}
           </button>
         </div>
@@ -733,10 +880,21 @@ function Changes({
           <>
             <div className="local-pr-file-toolbar">
               <h3>{path}</h3>
-              <button disabled={busy || !selectedFile} onClick={() => {
-                setRangeError(false);
-                setDraftAnchor({ mode, path, side: selectedFile?.kind === "deleted" ? "before" : "after", startLine: null, endLine: null });
-              }}>Comment on File</button>
+              <button
+                disabled={busy || !selectedFile}
+                onClick={() => {
+                  setRangeError(false);
+                  setDraftAnchor({
+                    mode,
+                    path,
+                    side: selectedFile?.kind === "deleted" ? "before" : "after",
+                    startLine: null,
+                    endLine: null,
+                  });
+                }}
+              >
+                Comment on File
+              </button>
             </div>
             <ReadState state={patch} retry={refresh} />
             <div
@@ -795,29 +953,48 @@ function Changes({
                       className={`local-pr-code-row local-pr-row-${row.kind}${matched ? " local-pr-row-anchor" : ""}`}
                       style={{ transform: `translateY(${item.start}px)` }}
                       onDoubleClick={(event) => {
-                        if (busy || event.target instanceof window.Element && event.target.closest("button")) return;
+                        if (
+                          busy ||
+                          (event.target instanceof window.Element &&
+                            event.target.closest("button"))
+                        )
+                          return;
                         const side = row.kind === "delete" ? "before" : "after";
-                        const number = side === "before" ? row.leftNumber : row.rightNumber;
-                        if (number != null) selectLine(side, number, event.shiftKey);
+                        const number =
+                          side === "before" ? row.leftNumber : row.rightNumber;
+                        if (number != null)
+                          selectLine(side, number, event.shiftKey);
                       }}
                     >
                       {(["before", "after"] as const).map((side) => {
-                        const number = side === "before" ? row.leftNumber : row.rightNumber;
+                        const number =
+                          side === "before" ? row.leftNumber : row.rightNumber;
                         if (number == null) return <span key={side} />;
-                        const notes = authorComments.get(`${side}:${number}`) ?? 0;
+                        const notes =
+                          authorComments.get(`${side}:${number}`) ?? 0;
                         const label = `Comment on ${side} line ${number}`;
-                        return <button
-                          type="button"
-                          className="local-pr-line-number"
-                          key={side}
-                          aria-label={label}
-                          title={`${label} (Shift to extend selection)`}
-                          data-has-comment={notes ? "true" : undefined}
-                            aria-pressed={draftAnchor?.path === path && draftAnchor.mode === mode
-                              && draftAnchor.side === side && matched === true}
+                        return (
+                          <button
+                            type="button"
+                            className="local-pr-line-number"
+                            key={side}
+                            aria-label={label}
+                            title={`${label} (Shift to extend selection)`}
+                            data-has-comment={notes ? "true" : undefined}
+                            aria-pressed={
+                              draftAnchor?.path === path &&
+                              draftAnchor.mode === mode &&
+                              draftAnchor.side === side &&
+                              matched === true
+                            }
                             disabled={busy}
-                          onClick={(event) => selectLine(side, number, event.shiftKey)}
-                        >{number}</button>;
+                            onClick={(event) =>
+                              selectLine(side, number, event.shiftKey)
+                            }
+                          >
+                            {number}
+                          </button>
+                        );
                       })}
                       <pre>
                         {`${row.kind === "add" ? "+" : row.kind === "delete" ? "−" : " "} ${row.rightText ?? row.leftText ?? ""}`}
@@ -830,53 +1007,92 @@ function Changes({
                 <p>Patch unavailable for this file.</p>
               )}
             </div>
-            {draftAnchor && <section className="local-pr-draft">
-              <h4>New Comment · v{version}</h4>
-              <p className="local-pr-anchor-label">{formatAnchor(draftAnchor)}</p>
-              {rangeError && <p role="status" className="local-pr-warning">Select a range without gaps in the diff.</p>}
-              <label>
-                Comment
-                <textarea
-                  value={body}
-                  disabled={busy}
-                  onChange={(e) => setBody(e.target.value)}
-                />
-              </label>
-              <div className="local-pr-actions">
-                <ActionButton className="local-pr-primary"
-                  disabled={busy || !body.trim() || rangeError}
-                  onAction={() =>
-                    run("save_draft", { prId: pr.id, version, body, anchor: draftAnchor }).then((result) => {
-                      if (result) {
-                        setBody("");
-                        setDraftAnchor(null);
-                      }
-                    })
-                  }
-                >Save Draft</ActionButton>
-                <ActionButton disabled={busy || !body.trim() || rangeError}
-                  onAction={() => run("save_draft", { prId: pr.id, version, body, anchor: draftAnchor }).then((result) => {
-                    if (result) {
-                      setBody("");
-                      setDraftAnchor(null);
-                      openReview([result.id], body);
+            {draftAnchor && (
+              <section className="local-pr-draft">
+                <h4>New Comment · v{version}</h4>
+                <p className="local-pr-anchor-label">
+                  {formatAnchor(draftAnchor)}
+                </p>
+                {rangeError && (
+                  <p role="status" className="local-pr-warning">
+                    Select a range without gaps in the diff.
+                  </p>
+                )}
+                <label>
+                  Comment
+                  <textarea
+                    value={body}
+                    disabled={busy}
+                    onChange={(e) => setBody(e.target.value)}
+                  />
+                </label>
+                <div className="local-pr-actions">
+                  <ActionButton
+                    className="local-pr-primary"
+                    disabled={busy || !body.trim() || rangeError}
+                    onAction={() =>
+                      run("save_draft", {
+                        prId: pr.id,
+                        version,
+                        body,
+                        anchor: draftAnchor,
+                      }).then((result) => {
+                        if (result) {
+                          setBody("");
+                          setDraftAnchor(null);
+                        }
+                      })
                     }
-                  })}
-                >Send to Agent</ActionButton>
-                <button disabled={busy} onClick={() => { setDraftAnchor(null); setRangeError(false); setBody(""); }}>Cancel</button>
-              </div>
-            </section>}
+                  >
+                    Save Draft
+                  </ActionButton>
+                  <ActionButton
+                    disabled={busy || !body.trim() || rangeError}
+                    onAction={() =>
+                      run("save_draft", {
+                        prId: pr.id,
+                        version,
+                        body,
+                        anchor: draftAnchor,
+                      }).then((result) => {
+                        if (result) {
+                          setBody("");
+                          setDraftAnchor(null);
+                          openReview([result.id], body);
+                        }
+                      })
+                    }
+                  >
+                    Send to Agent
+                  </ActionButton>
+                  <button
+                    disabled={busy}
+                    onClick={() => {
+                      setDraftAnchor(null);
+                      setRangeError(false);
+                      setBody("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </section>
+            )}
             <Conversation
               pr={pr}
               version={version}
-              threads={commentThreads(pr.comments).filter(({ comment }) => fileComments.some((entry) => entry.id === comment.id))}
+              threads={commentThreads(pr.comments).filter(({ comment }) =>
+                fileComments.some((entry) => entry.id === comment.id),
+              )}
               run={run}
               busy={busy}
               openReview={(ids) => openReview(ids)}
               nameAgent={nameAgent}
             />
           </>
-        ) : files.data ? <p>No changed files.</p> : null}
+        ) : files.data ? (
+          <p>No changed files.</p>
+        ) : null}
       </section>
     </div>
   );
@@ -921,11 +1137,17 @@ function Checks({
     let offset = 0;
     let content = "";
     for (;;) {
-      const result = await api.execute("pr_ci_log", { prId, version, runId, offset });
+      const result = await api.execute("pr_ci_log", {
+        prId,
+        version,
+        runId,
+        offset,
+      });
       if (!result.ok) return result;
       content += result.data.log;
       if (!result.data.hasMore) return { ok: true as const, data: content };
-      if (result.data.nextOffset <= offset) throw new Error("Log cursor did not advance.");
+      if (result.data.nextOffset <= offset)
+        throw new Error("Log cursor did not advance.");
       offset = result.data.nextOffset;
     }
   }, [api, prId, version, runId]);
@@ -938,15 +1160,20 @@ function Checks({
         {definition.data && (
           <>
             <div className="local-pr-check-definition">
-              <strong>Definition: {ciDefinitionLabels[definition.data.state]}</strong>
+              <strong>
+                Definition: {ciDefinitionLabels[definition.data.state]}
+              </strong>
               <code>{definition.data.headCommit}</code>
-              {definition.data.error && <p role="alert">{definition.data.error}</p>}
+              {definition.data.error && (
+                <p role="alert">{definition.data.error}</p>
+              )}
             </div>
             <details className="local-pr-definition-file">
               <summary>.withmate/ci.yml</summary>
               <pre>{definition.data.source ?? "Not Configured"}</pre>
             </details>
-            <ActionButton className="local-pr-primary"
+            <ActionButton
+              className="local-pr-primary"
               disabled={busy || definition.data.state !== "valid"}
               onAction={() => run("pr_ci_start", { prId, version })}
             >
@@ -977,7 +1204,9 @@ function Checks({
         {chosen ? (
           <>
             <header className="local-pr-log-heading">
-              <h3 className="local-pr-status" data-state={chosen.state}>{ciRunLabels[chosen.state]}</h3>
+              <h3 className="local-pr-status" data-state={chosen.state}>
+                {ciRunLabels[chosen.state]}
+              </h3>
               <div className="local-pr-actions">
                 <ActionButton
                   disabled={busy || chosen.state !== "running"}
@@ -998,11 +1227,21 @@ function Checks({
               </div>
             </header>
             <dl className="local-pr-commit-list">
-              <dt>Head</dt><dd><code>{chosen.headCommit}</code></dd>
-              <dt>Target</dt><dd><code>{chosen.targetCommit}</code></dd>
+              <dt>Head</dt>
+              <dd>
+                <code>{chosen.headCommit}</code>
+              </dd>
+              <dt>Target</dt>
+              <dd>
+                <code>{chosen.targetCommit}</code>
+              </dd>
             </dl>
             {chosen.error && <p role="alert">{chosen.error}</p>}
-            <ReadState state={log} retry={refresh} loadingLabel="Loading CI Log" />
+            <ReadState
+              state={log}
+              retry={refresh}
+              loadingLabel="Loading CI Log"
+            />
             <pre tabIndex={0} aria-label="CI Log" aria-busy={log.loading}>
               {log.data}
             </pre>
@@ -1013,6 +1252,7 @@ function Checks({
   );
 }
 
+/** PR 操作ごとの入力と結果を対応させ、失敗を呼び出し元へ null として返す実行口。 */
 type Run = <T extends LocalPrOperation>(
   operation: T,
   input: LocalPrInput<T>,
@@ -1056,7 +1296,13 @@ function CreatePr({
           onChange={(e) => setTitle(e.target.value)}
         />
       </label>
-      <LocalPrDescriptionEditor api={api} text={description} onChange={setDescription} disabled={busy} onAttachmentBusy={setAttachmentBusy} />
+      <LocalPrDescriptionEditor
+        api={api}
+        text={description}
+        onChange={setDescription}
+        disabled={busy}
+        onAttachmentBusy={setAttachmentBusy}
+      />
       <label>
         Source Branch
         <select value={source} onChange={(e) => setSource(e.target.value)}>
@@ -1079,19 +1325,25 @@ function CreatePr({
           ))}
         </select>
       </label>
-      <ActionButton className="local-pr-primary"
-        disabled={busy || attachmentBusy || !title.trim() || !sourceRef || !targetRef}
-        onAction={() => sourceRef && targetRef
-          ? run("pr_create", {
-              title,
-              description,
-              headCommit: sourceRef.commit,
-              sourceBranch: sourceRef.ref,
-              targetBranch: targetRef.ref,
-              expectedTargetCommit: targetRef.commit,
-            }).then((result) => {
-              if (result) onCreated(result.id);
-            }) : undefined}
+      <ActionButton
+        className="local-pr-primary"
+        disabled={
+          busy || attachmentBusy || !title.trim() || !sourceRef || !targetRef
+        }
+        onAction={() =>
+          sourceRef && targetRef
+            ? run("pr_create", {
+                title,
+                description,
+                headCommit: sourceRef.commit,
+                sourceBranch: sourceRef.ref,
+                targetBranch: targetRef.ref,
+                expectedTargetCommit: targetRef.commit,
+              }).then((result) => {
+                if (result) onCreated(result.id);
+              })
+            : undefined
+        }
       >
         Create PR
       </ActionButton>
@@ -1156,7 +1408,8 @@ function Overview({
     !!latest &&
     pr.currentTargetCommit !== null &&
     latest.targetCommit !== pr.currentTargetCommit;
-  const sourceChanged = !!source && !!latest && source.commit !== latest.headCommit;
+  const sourceChanged =
+    !!source && !!latest && source.commit !== latest.headCommit;
   return (
     <div className="local-pr-scroll">
       <div className="local-pr-overview-grid">
@@ -1165,9 +1418,13 @@ function Overview({
             <div className="local-pr-section-heading">
               <h3 id="local-pr-description-title">Description</h3>
             </div>
-            {pr.description.trim()
-              ? <LocalPrDescription api={api} text={pr.description} revision={revision} />
-              : null}
+            {pr.description.trim() ? (
+              <LocalPrDescription
+                api={api}
+                text={pr.description}
+                revision={revision}
+              />
+            ) : null}
           </section>
           <Conversation
             pr={pr}
@@ -1183,15 +1440,27 @@ function Overview({
         </div>
         <aside className="local-pr-submission" aria-label="Review and Merge">
           <p className="local-pr-submission-status">
-            <span className="local-pr-status" data-state={isApproved ? "approved" : undefined}>
-              {isApproved ? `Approved v${pr.approval?.version}` : `v${version} · ${version === pr.latestVersion ? "Not Approved" : "Previous Submission"}`}
+            <span
+              className="local-pr-status"
+              data-state={isApproved ? "approved" : undefined}
+            >
+              {isApproved
+                ? `Approved v${pr.approval?.version}`
+                : `v${version} · ${version === pr.latestVersion ? "Not Approved" : "Previous Submission"}`}
             </span>
-            {targetChanged && <span className="local-pr-warning">Target Branch Has Changed</span>}
+            {targetChanged && (
+              <span className="local-pr-warning">
+                Target Branch Has Changed
+              </span>
+            )}
           </p>
-          {pr.state === "open" && pr.currentTargetCommit === null && <p>Current Target Unavailable</p>}
+          {pr.state === "open" && pr.currentTargetCommit === null && (
+            <p>Current Target Unavailable</p>
+          )}
           {pr.state === "open" && (
             <div className="local-pr-actions local-pr-review-actions">
-              <ActionButton className={!isApproved ? "local-pr-primary" : undefined}
+              <ActionButton
+                className={!isApproved ? "local-pr-primary" : undefined}
                 disabled={
                   busy ||
                   !approvalTarget ||
@@ -1205,7 +1474,8 @@ function Overview({
               >
                 Approve
               </ActionButton>
-              <ActionButton className={isApproved ? "local-pr-primary" : undefined}
+              <ActionButton
+                className={isApproved ? "local-pr-primary" : undefined}
                 disabled={
                   busy ||
                   !approvalTarget ||
@@ -1214,33 +1484,38 @@ function Overview({
                   pr.currentTargetCommit === null ||
                   targetChanged
                 }
-                onAction={() => approvalTarget ? run("pr_merge", approvalTarget) : undefined}
+                onAction={() =>
+                  approvalTarget ? run("pr_merge", approvalTarget) : undefined
+                }
               >
                 Merge
               </ActionButton>
             </div>
           )}
           {pr.state === "open" && (
-            <details className="local-pr-more-actions" open={confirmClose || undefined}>
+            <details
+              className="local-pr-more-actions"
+              open={confirmClose || undefined}
+            >
               <summary>More Actions</summary>
               <div className="local-pr-actions">
-              <ActionButton
-                disabled={busy || !isApproved || !approvalTarget}
-                onAction={() =>
-                  approvalTarget ? run("revoke", approvalTarget) : undefined
-                }
-              >
-                Revoke Approval
-              </ActionButton>
-              <button
-                disabled={busy}
-                onClick={(event) => {
-                  triggerButton.current = event.currentTarget;
-                  setConfirmClose(true);
-                }}
-              >
-                Close PR
-              </button>
+                <ActionButton
+                  disabled={busy || !isApproved || !approvalTarget}
+                  onAction={() =>
+                    approvalTarget ? run("revoke", approvalTarget) : undefined
+                  }
+                >
+                  Revoke Approval
+                </ActionButton>
+                <button
+                  disabled={busy}
+                  onClick={(event) => {
+                    triggerButton.current = event.currentTarget;
+                    setConfirmClose(true);
+                  }}
+                >
+                  Close PR
+                </button>
               </div>
             </details>
           )}
@@ -1297,16 +1572,20 @@ function Overview({
                     !!branches.error ||
                     !latest ||
                     !target ||
-                    !source || !sourceChanged
+                    !source ||
+                    !sourceChanged
                   }
                   onAction={() =>
                     latest && target && source
-                    ? run("pr_submit", {
-                      prId: pr.id,
-                      expectedVersion: latest.version,
-                      headCommit: source.commit,
-                      expectedTargetCommit: target.commit,
-                    }).then((saved) => { if (saved) onSubmitted(); }) : undefined
+                      ? run("pr_submit", {
+                          prId: pr.id,
+                          expectedVersion: latest.version,
+                          headCommit: source.commit,
+                          expectedTargetCommit: target.commit,
+                        }).then((saved) => {
+                          if (saved) onSubmitted();
+                        })
+                      : undefined
                   }
                 >
                   Submit New Version
@@ -1323,12 +1602,15 @@ function Overview({
                     }
                     onAction={() =>
                       latest && target
-                      ? run("pr_submit", {
-                        prId: pr.id,
-                        expectedVersion: latest.version,
-                        headCommit: latest.headCommit,
-                        expectedTargetCommit: target.commit,
-                      }).then((saved) => { if (saved) onSubmitted(); }) : undefined
+                        ? run("pr_submit", {
+                            prId: pr.id,
+                            expectedVersion: latest.version,
+                            headCommit: latest.headCommit,
+                            expectedTargetCommit: target.commit,
+                          }).then((saved) => {
+                            if (saved) onSubmitted();
+                          })
+                        : undefined
                     }
                   >
                     Re-submit Reviewed Head for New Target
@@ -1337,15 +1619,30 @@ function Overview({
               </div>
             </div>
           )}
-          {pr.state === "open" && <ReadState state={branches} retry={() => setBranchRevision((n) => n + 1)} />}
+          {pr.state === "open" && (
+            <ReadState
+              state={branches}
+              retry={() => setBranchRevision((n) => n + 1)}
+            />
+          )}
           {selectedVersion && (
             <details className="local-pr-version-details">
               <summary>Submission Details</summary>
               <dl className="local-pr-commit-list">
-                <dt>Submitted</dt><dd>{formatDateTime(selectedVersion.submittedAt)}</dd>
-                <dt>Head</dt><dd><code>{selectedVersion.headCommit}</code></dd>
-                <dt>Target</dt><dd><code>{selectedVersion.targetCommit}</code></dd>
-                <dt>Merge Base</dt><dd><code>{selectedVersion.mergeBaseCommit}</code></dd>
+                <dt>Submitted</dt>
+                <dd>{formatDateTime(selectedVersion.submittedAt)}</dd>
+                <dt>Head</dt>
+                <dd>
+                  <code>{selectedVersion.headCommit}</code>
+                </dd>
+                <dt>Target</dt>
+                <dd>
+                  <code>{selectedVersion.targetCommit}</code>
+                </dd>
+                <dt>Merge Base</dt>
+                <dd>
+                  <code>{selectedVersion.mergeBaseCommit}</code>
+                </dd>
               </dl>
             </details>
           )}
@@ -1355,17 +1652,35 @@ function Overview({
   );
 }
 
+/** コメント位置をファイル全体、片側の単一行、または行範囲として表示する。 */
 function formatAnchor(anchor: NonNullable<LocalPrComment["anchor"]>): string {
-  const lines = anchor.startLine === null ? "Whole File"
-    : anchor.startLine === anchor.endLine ? `Line ${anchor.startLine}`
-    : `Lines ${anchor.startLine}–${anchor.endLine}`;
-  return anchor.startLine === null ? `${anchor.path} · ${lines}`
+  const lines =
+    anchor.startLine === null
+      ? "Whole File"
+      : anchor.startLine === anchor.endLine
+        ? `Line ${anchor.startLine}`
+        : `Lines ${anchor.startLine}–${anchor.endLine}`;
+  return anchor.startLine === null
+    ? `${anchor.path} · ${lines}`
     : `${anchor.path} · ${sideLabels[anchor.side]} · ${lines}`;
 }
 
-type CommentEditor = { kind: "new" } | { kind: "reply" | "edit"; comment: LocalPrComment };
+/** コメントの新規作成、返信、既存下書きの編集を区別し、後二者は元のコメントに紐付ける。 */
+type CommentEditor =
+  { kind: "new" } | { kind: "reply" | "edit"; comment: LocalPrComment };
 
-function Conversation({ pr, version, threads, run, busy, openReview, openAnchor, general = false, nameAgent }: {
+/** PR または差分の会話を表示し、返信や下書きの操作を元の版・アンカーに紐付ける。 */
+function Conversation({
+  pr,
+  version,
+  threads,
+  run,
+  busy,
+  openReview,
+  openAnchor,
+  general = false,
+  nameAgent,
+}: {
   pr: LocalPrDetail;
   version: number;
   threads: ReturnType<typeof commentThreads>;
@@ -1379,90 +1694,204 @@ function Conversation({ pr, version, threads, run, busy, openReview, openAnchor,
   const [editor, setEditor] = useState<CommentEditor | null>(null);
   const [body, setBody] = useState("");
   const field = useRef<HTMLTextAreaElement>(null);
-  const editorComment = editor?.kind === "reply" || editor?.kind === "edit" ? editor.comment : null;
-  const editorInThread = !!editorComment && threads.some(({ comment, replies }) =>
-    comment.id === editorComment.id || replies.some((reply) => reply.id === editorComment.id));
-  useEffect(() => { if (editor) field.current?.focus(); }, [editor, editorInThread]);
+  const editorComment =
+    editor?.kind === "reply" || editor?.kind === "edit" ? editor.comment : null;
+  const editorInThread =
+    !!editorComment &&
+    threads.some(
+      ({ comment, replies }) =>
+        comment.id === editorComment.id ||
+        replies.some((reply) => reply.id === editorComment.id),
+    );
+  useEffect(() => {
+    if (editor) field.current?.focus();
+  }, [editor, editorInThread]);
 
+  /** 編集なら保存済みの下書きで入力欄を埋め、新規・返信なら空から始める。 */
   function begin(next: CommentEditor) {
     setBody(next.kind === "edit" ? next.comment.body : "");
     setEditor(next);
   }
-  function dismiss() { setEditor(null); setBody(""); }
+  /** 編集欄を閉じ、その操作で使った本文を次の編集へ持ち越さない。 */
+  function dismiss() {
+    setEditor(null);
+    setBody("");
+  }
+  /** 操作に応じて投稿・返信・下書き更新を区別し、保存が確認できたときだけ入力欄を閉じる。 */
   function compose(): ReactNode {
     if (!editor) return null;
     const item = editor.kind === "new" ? null : editor.comment;
     const edit = editor.kind === "edit" && item;
     return (
       <div className="local-pr-comment-composer">
-        {item?.anchor && !editorInThread && <p className="local-pr-anchor-label">{formatAnchor(item.anchor)}</p>}
+        {item?.anchor && !editorInThread && (
+          <p className="local-pr-anchor-label">{formatAnchor(item.anchor)}</p>
+        )}
         <label>
-          {edit ? "Edit Draft" : item ? `Reply · v${item.version}` : `New Comment · v${version}`}
-          <textarea ref={field} value={body} disabled={busy} onChange={(event) => setBody(event.target.value)} />
+          {edit
+            ? "Edit Draft"
+            : item
+              ? `Reply · v${item.version}`
+              : `New Comment · v${version}`}
+          <textarea
+            ref={field}
+            value={body}
+            disabled={busy}
+            onChange={(event) => setBody(event.target.value)}
+          />
         </label>
         <div className="local-pr-actions">
-          <ActionButton className="local-pr-primary" disabled={busy || !body.trim()} onAction={() => {
-            const result = edit ? run("save_draft", {
-              prId: pr.id, version: edit.version, body, commentId: edit.id,
-              ...(edit.anchor ? { anchor: edit.anchor } : {}),
-              ...(edit.replyTo ? { replyTo: edit.replyTo } : {}),
-            }) : run("pr_comment", {
-              prId: pr.id, version: item?.version ?? version, body, ...(item ? { replyTo: item.id } : {}),
-            });
-            return result.then((saved) => { if (saved) dismiss(); });
-          }}>{edit ? "Save Draft" : item ? "Post Reply" : "Post Comment"}</ActionButton>
-          <button disabled={busy} onClick={dismiss}>Cancel</button>
+          <ActionButton
+            className="local-pr-primary"
+            disabled={busy || !body.trim()}
+            onAction={() => {
+              const result = edit
+                ? run("save_draft", {
+                    prId: pr.id,
+                    version: edit.version,
+                    body,
+                    commentId: edit.id,
+                    ...(edit.anchor ? { anchor: edit.anchor } : {}),
+                    ...(edit.replyTo ? { replyTo: edit.replyTo } : {}),
+                  })
+                : run("pr_comment", {
+                    prId: pr.id,
+                    version: item?.version ?? version,
+                    body,
+                    ...(item ? { replyTo: item.id } : {}),
+                  });
+              return result.then((saved) => {
+                if (saved) dismiss();
+              });
+            }}
+          >
+            {edit ? "Save Draft" : item ? "Post Reply" : "Post Comment"}
+          </ActionButton>
+          <button disabled={busy} onClick={dismiss}>
+            Cancel
+          </button>
         </div>
       </div>
     );
   }
 
+  /** 本文と作者、当時の版・位置を示し、公開済みと下書きで使える操作を分ける。 */
   function commentBody(comment: LocalPrComment, root?: LocalPrComment) {
     const author = comment.author;
     return (
-      <article className="local-pr-comment" key={comment.id} id={`local-pr-comment-${comment.id}`}>
+      <article
+        className="local-pr-comment"
+        key={comment.id}
+        id={`local-pr-comment-${comment.id}`}
+      >
         <div className="local-pr-comment-head">
           <strong title={author.kind !== "user" ? author.sessionId : undefined}>
             {author.kind === "user" ? "You" : (nameAgent?.(author) ?? "Agent")}
           </strong>
-          <span>v{comment.version}{comment.draft ? " · Draft" : ""}</span>
+          <span>
+            v{comment.version}
+            {comment.draft ? " · Draft" : ""}
+          </span>
         </div>
         {root && comment.replyTo && comment.replyTo !== root.id && (
-          <small><a href={`#local-pr-comment-${comment.replyTo}`}>View Parent Comment</a></small>
+          <small>
+            <a href={`#local-pr-comment-${comment.replyTo}`}>
+              View Parent Comment
+            </a>
+          </small>
         )}
-        {comment.anchor && (openAnchor
-          ? <button className="local-pr-anchor" title={comparisonLabels[comment.anchor.mode]} onClick={() => openAnchor(comment)}>{formatAnchor(comment.anchor)}</button>
-          : <p className="local-pr-anchor-label">{formatAnchor(comment.anchor)}</p>)}
+        {comment.anchor &&
+          (openAnchor ? (
+            <button
+              className="local-pr-anchor"
+              title={comparisonLabels[comment.anchor.mode]}
+              onClick={() => openAnchor(comment)}
+            >
+              {formatAnchor(comment.anchor)}
+            </button>
+          ) : (
+            <p className="local-pr-anchor-label">
+              {formatAnchor(comment.anchor)}
+            </p>
+          ))}
         <p>{comment.body}</p>
         <div className="local-pr-comment-actions">
-          {!comment.draft && <button disabled={busy || !!editor} onClick={() => begin({ kind: "reply", comment })}>Reply</button>}
-          <button className="local-pr-comment-send" aria-label="Send Comment to Agent" title="Send Comment to Agent"
-            disabled={busy} onClick={() => openReview([comment.id], comment.version)}><ComposerIcon name="send" /></button>
+          {!comment.draft && (
+            <button
+              disabled={busy || !!editor}
+              onClick={() => begin({ kind: "reply", comment })}
+            >
+              Reply
+            </button>
+          )}
+          <button
+            className="local-pr-comment-send"
+            aria-label="Send Comment to Agent"
+            title="Send Comment to Agent"
+            disabled={busy}
+            onClick={() => openReview([comment.id], comment.version)}
+          >
+            <ComposerIcon name="send" />
+          </button>
           {comment.draft && (
             <details className="local-pr-draft-menu">
               <summary>Draft Actions</summary>
               <div className="local-pr-actions">
-                <button disabled={busy || !!editor} onClick={() => begin({ kind: "edit", comment })}>Edit</button>
-                <ActionButton disabled={busy} onAction={() => run("publish_drafts", { prId: pr.id, commentIds: [comment.id] })}>Publish</ActionButton>
-                <ActionButton disabled={busy} onAction={() => run("discard_draft", { prId: pr.id, commentId: comment.id })}>Discard</ActionButton>
+                <button
+                  disabled={busy || !!editor}
+                  onClick={() => begin({ kind: "edit", comment })}
+                >
+                  Edit
+                </button>
+                <ActionButton
+                  disabled={busy}
+                  onAction={() =>
+                    run("publish_drafts", {
+                      prId: pr.id,
+                      commentIds: [comment.id],
+                    })
+                  }
+                >
+                  Publish
+                </ActionButton>
+                <ActionButton
+                  disabled={busy}
+                  onAction={() =>
+                    run("discard_draft", { prId: pr.id, commentId: comment.id })
+                  }
+                >
+                  Discard
+                </ActionButton>
               </div>
             </details>
           )}
         </div>
-        {editor?.kind !== "new" && editor?.comment.id === comment.id ? compose() : null}
+        {editor?.kind !== "new" && editor?.comment.id === comment.id
+          ? compose()
+          : null}
       </article>
     );
   }
 
   if (!general && threads.length === 0 && !editor) return null;
   return (
-    <section className="local-pr-conversation" aria-label={general ? "Conversation" : "File Conversation"}>
+    <section
+      className="local-pr-conversation"
+      aria-label={general ? "Conversation" : "File Conversation"}
+    >
       <div className="local-pr-section-heading">
         <h3>{general ? "Conversation" : "File Conversation"}</h3>
         {general && (
           <div className="local-pr-actions">
-            <button disabled={busy || !!editor} onClick={() => begin({ kind: "new" })}>Comment</button>
-            <button disabled={busy} onClick={() => openReview([], version)}>Send to Agent</button>
+            <button
+              disabled={busy || !!editor}
+              onClick={() => begin({ kind: "new" })}
+            >
+              Comment
+            </button>
+            <button disabled={busy} onClick={() => openReview([], version)}>
+              Send to Agent
+            </button>
           </div>
         )}
       </div>
@@ -1470,7 +1899,11 @@ function Conversation({ pr, version, threads, run, busy, openReview, openAnchor,
       {threads.map(({ comment, replies }) => (
         <div className="local-pr-thread" key={comment.id}>
           {commentBody(comment)}
-          {replies.length > 0 && <div className="local-pr-replies">{replies.map((reply) => commentBody(reply, comment))}</div>}
+          {replies.length > 0 && (
+            <div className="local-pr-replies">
+              {replies.map((reply) => commentBody(reply, comment))}
+            </div>
+          )}
         </div>
       ))}
     </section>
@@ -1478,7 +1911,18 @@ function Conversation({ pr, version, threads, run, busy, openReview, openAnchor,
 }
 
 /** 送信はコメント投稿とは別の操作であり、宛先は推測しない。 */
-function SendReview({ api, pr, selection, pending, failure, busy, nameAgent, send, onCancel, onSent }: {
+function SendReview({
+  api,
+  pr,
+  selection,
+  pending,
+  failure,
+  busy,
+  nameAgent,
+  send,
+  onCancel,
+  onSent,
+}: {
   api: LocalPrWindowApi;
   pr: LocalPrDetail;
   selection: OpenReview;
@@ -1490,22 +1934,51 @@ function SendReview({ api, pr, selection, pending, failure, busy, nameAgent, sen
   onCancel: () => void;
   onSent: (title: string) => void;
 }) {
-  const [preferences, setPreferences] = useState<{ selection: OpenReview; ids: string[] } | null>(null);
-  const selected = pending?.commentIds ?? (preferences?.selection === selection ? preferences.ids : selection.commentIds);
+  const [preferences, setPreferences] = useState<{
+    selection: OpenReview;
+    ids: string[];
+  } | null>(null);
+  const selected =
+    pending?.commentIds ??
+    (preferences?.selection === selection
+      ? preferences.ids
+      : selection.commentIds);
   const [message, setMessage] = useState(selection.message ?? "");
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
-  const [choice, setChoice] = useState<{ target: SessionTarget; title: string; character?: string; iconPath?: string } | null>(null);
+  const [choice, setChoice] = useState<{
+    target: SessionTarget;
+    title: string;
+    character?: string;
+    iconPath?: string;
+  } | null>(null);
   const [retry, setRetry] = useState(0);
-  const candidate = pr.versions.find((item) => item.version === selection.version)?.submittedBy;
+  const candidate = pr.versions.find(
+    (item) => item.version === selection.version,
+  )?.submittedBy;
   useEffect(() => {
-    const timer = window.setTimeout(() => { setOffset(0); setSearch(query); }, 250);
+    const timer = window.setTimeout(() => {
+      setOffset(0);
+      setSearch(query);
+    }, 250);
     return () => window.clearTimeout(timer);
   }, [query]);
-  const choicesLoad = useCallback(() => api.execute("session_choices", { query: search, offset, preferred: candidate }), [api, search, offset, candidate]);
+  const choicesLoad = useCallback(
+    () =>
+      api.execute("session_choices", {
+        query: search,
+        offset,
+        preferred: candidate,
+      }),
+    [api, search, offset, candidate],
+  );
   const choices = useRead(`sessions:${search}:${offset}`, choicesLoad, retry);
-  const pendingChoice = pending && choices.data?.sessions.find((item) => isSameSession(item.target, pending.target));
+  const pendingChoice =
+    pending &&
+    choices.data?.sessions.find((item) =>
+      isSameSession(item.target, pending.target),
+    );
   const recipient = pending ? pendingChoice : choice;
   const comments = [...pr.comments].sort((a, b) => b.version - a.version);
   const panel = useRef<HTMLDialogElement>(null);
@@ -1515,61 +1988,191 @@ function SendReview({ api, pr, selection, pending, failure, busy, nameAgent, sen
     return () => dialog?.close();
   }, []);
   return (
-    <dialog className="local-pr-send-review" aria-labelledby="local-pr-send-heading" ref={panel} onCancel={(event) => {
-      event.preventDefault();
-      if (!busy) onCancel();
-    }}>
+    <dialog
+      className="local-pr-send-review"
+      aria-labelledby="local-pr-send-heading"
+      ref={panel}
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!busy) onCancel();
+      }}
+    >
       <div className="local-pr-section-heading">
         <h3 id="local-pr-send-heading">Send Review · v{selection.version}</h3>
-        <button disabled={busy} onClick={onCancel}>{pending ? "Close" : "Cancel"}</button>
+        <button disabled={busy} onClick={onCancel}>
+          {pending ? "Close" : "Cancel"}
+        </button>
       </div>
-      <label>Find Session <input value={query} maxLength={300} disabled={!!pending || busy} onChange={(event) => { setQuery(event.target.value); setChoice(null); }} /></label>
-      {pending && <p>{pendingChoice?.title ?? pending.target.sessionId}</p>}
-      <div className="local-pr-session-choices" role="group" aria-label="Send to Session">
-        {choices.data?.sessions.map((item) => <button type="button" key={JSON.stringify(item.target)}
-          aria-pressed={!!recipient && isSameSession(item.target, recipient.target)} disabled={!!pending || busy || query !== search || choices.loading}
-          onClick={() => setChoice(item)}>
-          <CharacterAvatar character={{ name: item.character ?? item.title, iconPath: item.iconPath ?? "" }} size="tiny" />
-          <span><strong>{item.title}</strong><small>{item.character}{candidate && isSameSession(candidate, item.target) ? " · Submitted This Version" : ""}</small></span>
-        </button>)}
-      </div>
-      {(offset > 0 || choices.data?.hasMore) && <div className="local-pr-actions">
-        <button disabled={busy || query !== search || choices.loading || offset === 0} onClick={() => { setChoice(null); setOffset((n) => Math.max(0, n - 50)); }}>Previous</button>
-        <button disabled={busy || query !== search || choices.loading || !choices.data?.hasMore} onClick={() => { setChoice(null); setOffset((n) => n + 50); }}>Next</button>
-      </div>}
-      <ReadState state={choices} retry={() => setRetry((n) => n + 1)} />
-      {comments.length > 0 && <details className="local-pr-review-selection" open={!!selection.commentIds.length || !!pending || undefined}>
-        <summary>{selected.length} {selected.length === 1 ? "Comment" : "Comments"} Selected</summary>
-        <div className="local-pr-selected-comments">
-          {comments.map((comment) => <label key={comment.id} title={comment.body}>
-            <input type="checkbox" checked={selected.includes(comment.id)} disabled={!!pending || busy || (!selected.includes(comment.id) && selected.length >= 50)} onChange={(event) => {
-              setPreferences({
-                selection,
-                ids: event.target.checked ? [...selected, comment.id] : selected.filter((id) => id !== comment.id),
-              });
-            }} />
-            <span>
-              <small>v{comment.version}{comment.anchor ? ` · ${formatAnchor(comment.anchor)}` : ""}</small>
-              <span>{comment.body}</span>
-            </span>
-            {comment.draft && <small>Draft</small>}
-          </label>)}
-        </div>
-      </details>}
-      <label>Message
-        <textarea disabled={!!pending || busy} value={pending?.message ?? message} maxLength={20000} onChange={(event) => setMessage(event.target.value)} />
+      <label>
+        Find Session{" "}
+        <input
+          value={query}
+          maxLength={300}
+          disabled={!!pending || busy}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setChoice(null);
+          }}
+        />
       </label>
-      {(pending || failure) && <div className="app-notification error" role="alert">
-        {failure && <p>{failure.message}</p>}
-        {pending && <p>Delivery is unknown. Retry the same request before sending another message.</p>}
-      </div>}
-      <ActionButton className="local-pr-primary"
-        disabled={busy || (!pending && (!choice || !message.trim() || choices.loading || !!choices.error))}
+      {pending && <p>{pendingChoice?.title ?? pending.target.sessionId}</p>}
+      <div
+        className="local-pr-session-choices"
+        role="group"
+        aria-label="Send to Session"
+      >
+        {choices.data?.sessions.map((item) => (
+          <button
+            type="button"
+            key={JSON.stringify(item.target)}
+            aria-pressed={
+              !!recipient && isSameSession(item.target, recipient.target)
+            }
+            disabled={!!pending || busy || query !== search || choices.loading}
+            onClick={() => setChoice(item)}
+          >
+            <CharacterAvatar
+              character={{
+                name: item.character ?? item.title,
+                iconPath: item.iconPath ?? "",
+              }}
+              size="tiny"
+            />
+            <span>
+              <strong>{item.title}</strong>
+              <small>
+                {item.character}
+                {candidate && isSameSession(candidate, item.target)
+                  ? " · Submitted This Version"
+                  : ""}
+              </small>
+            </span>
+          </button>
+        ))}
+      </div>
+      {(offset > 0 || choices.data?.hasMore) && (
+        <div className="local-pr-actions">
+          <button
+            disabled={
+              busy || query !== search || choices.loading || offset === 0
+            }
+            onClick={() => {
+              setChoice(null);
+              setOffset((n) => Math.max(0, n - 50));
+            }}
+          >
+            Previous
+          </button>
+          <button
+            disabled={
+              busy ||
+              query !== search ||
+              choices.loading ||
+              !choices.data?.hasMore
+            }
+            onClick={() => {
+              setChoice(null);
+              setOffset((n) => n + 50);
+            }}
+          >
+            Next
+          </button>
+        </div>
+      )}
+      <ReadState state={choices} retry={() => setRetry((n) => n + 1)} />
+      {comments.length > 0 && (
+        <details
+          className="local-pr-review-selection"
+          open={!!selection.commentIds.length || !!pending || undefined}
+        >
+          <summary>
+            {selected.length} {selected.length === 1 ? "Comment" : "Comments"}{" "}
+            Selected
+          </summary>
+          <div className="local-pr-selected-comments">
+            {comments.map((comment) => (
+              <label key={comment.id} title={comment.body}>
+                <input
+                  type="checkbox"
+                  checked={selected.includes(comment.id)}
+                  disabled={
+                    !!pending ||
+                    busy ||
+                    (!selected.includes(comment.id) && selected.length >= 50)
+                  }
+                  onChange={(event) => {
+                    setPreferences({
+                      selection,
+                      ids: event.target.checked
+                        ? [...selected, comment.id]
+                        : selected.filter((id) => id !== comment.id),
+                    });
+                  }}
+                />
+                <span>
+                  <small>
+                    v{comment.version}
+                    {comment.anchor ? ` · ${formatAnchor(comment.anchor)}` : ""}
+                  </small>
+                  <span>{comment.body}</span>
+                </span>
+                {comment.draft && <small>Draft</small>}
+              </label>
+            ))}
+          </div>
+        </details>
+      )}
+      <label>
+        Message
+        <textarea
+          disabled={!!pending || busy}
+          value={pending?.message ?? message}
+          maxLength={20000}
+          onChange={(event) => setMessage(event.target.value)}
+        />
+      </label>
+      {(pending || failure) && (
+        <div className="app-notification error" role="alert">
+          {failure && <p>{failure.message}</p>}
+          {pending && (
+            <p>
+              Delivery is unknown. Retry the same request before sending another
+              message.
+            </p>
+          )}
+        </div>
+      )}
+      <ActionButton
+        className="local-pr-primary"
+        disabled={
+          busy ||
+          (!pending &&
+            (!choice || !message.trim() || choices.loading || !!choices.error))
+        }
         onAction={() => {
-          const input = pending ?? (choice ? { prId: pr.id, version: selection.version, target: choice.target, commentIds: selected, message, requestId: crypto.randomUUID() } : null);
-          if (input) return send(input).then((success) => { if (success) onSent(recipient?.title ?? choice?.title ?? nameAgent(input.target)); });
+          const input =
+            pending ??
+            (choice
+              ? {
+                  prId: pr.id,
+                  version: selection.version,
+                  target: choice.target,
+                  commentIds: selected,
+                  message,
+                  requestId: crypto.randomUUID(),
+                }
+              : null);
+          if (input)
+            return send(input).then((success) => {
+              if (success)
+                onSent(
+                  recipient?.title ?? choice?.title ?? nameAgent(input.target),
+                );
+            });
         }}
-      >{pending ? "Retry Same Request" : "Send Review"}</ActionButton>
+      >
+        {pending ? "Retry Same Request" : "Send Review"}
+      </ActionButton>
     </dialog>
   );
 }

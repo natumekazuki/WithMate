@@ -1,12 +1,25 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { AppLogService, type AppLogServiceOptions } from "../../src-electron/app/app-log-service.js";
+import {
+  AppLogService,
+  type AppLogServiceOptions,
+} from "../../src-electron/app/app-log-service.js";
 
-function createService(logsPath: string, options: Partial<AppLogServiceOptions> = {}): AppLogService {
+/** 固定のランタイム識別情報を使い、出力先やローテーション条件だけをケースごとに上書きできるログサービスを作る。 */
+function createService(
+  logsPath: string,
+  options: Partial<AppLogServiceOptions> = {},
+): AppLogService {
   return new AppLogService({
     logsPath,
     runtimeInfo: {
@@ -22,6 +35,7 @@ function createService(logsPath: string, options: Partial<AppLogServiceOptions> 
   });
 }
 
+/** 書き込んだイベントを JSONL の一行から読み戻し、種類・プロセス・ランタイム情報と日時を確認する。 */
 test("AppLogService は JSONL に runtime 情報付きで書き込む", () => {
   const logsPath = mkdtempSync(path.join(tmpdir(), "withmate-log-test-"));
   try {
@@ -34,7 +48,9 @@ test("AppLogService は JSONL に runtime 情報付きで書き込む", () => {
       data: { ok: true },
     });
 
-    const [line] = readFileSync(path.join(logsPath, "withmate.jsonl"), "utf8").trim().split("\n");
+    const [line] = readFileSync(path.join(logsPath, "withmate.jsonl"), "utf8")
+      .trim()
+      .split("\n");
     const entry = JSON.parse(line);
 
     assert.equal(entry.kind, "app.ready");
@@ -60,6 +76,7 @@ test("AppLogService は JSONL に runtime 情報付きで書き込む", () => {
 // impact = "背景処理の失敗原因が容量到達や再起動で失われる"
 // distinction = "型検査や通常ログのtestでは実ファイルの保持と再生成後の追記を検出できない"
 // @end-test-value
+/** 専用の障害ログはサイズ上限を超えていても、別インスタンスから元のファイルへ順に追記し、退避ファイルを作らない。 */
 test("AppLogService は非ローテーションの専用ファイルへ容量超過後も継続追記する", () => {
   const logsPath = mkdtempSync(path.join(tmpdir(), "withmate-log-test-"));
   try {
@@ -68,12 +85,23 @@ test("AppLogService は非ローテーションの専用ファイルへ容量超
     const existingLine = `${JSON.stringify({ message: "x".repeat(5 * 1024 * 1024) })}\n`;
     writeFileSync(logFilePath, existingLine, "utf8");
     const options = { fileName, rotation: false };
-    const input = { level: "error", kind: "background.failed", process: "main", message: "failed" } as const;
+    const input = {
+      level: "error",
+      kind: "background.failed",
+      process: "main",
+      message: "failed",
+    } as const;
 
     const first = createService(logsPath, options).write(input);
-    const second = createService(logsPath, options).write({ ...input, message: "failed again" });
+    const second = createService(logsPath, options).write({
+      ...input,
+      message: "failed again",
+    });
 
-    assert.equal(readFileSync(logFilePath, "utf8"), `${existingLine}${JSON.stringify(first)}\n${JSON.stringify(second)}\n`);
+    assert.equal(
+      readFileSync(logFilePath, "utf8"),
+      `${existingLine}${JSON.stringify(first)}\n${JSON.stringify(second)}\n`,
+    );
     assert.deepEqual(readdirSync(logsPath), [fileName]);
   } finally {
     rmSync(logsPath, { recursive: true, force: true });
@@ -92,35 +120,73 @@ test("AppLogService は非ローテーションの専用ファイルへ容量超
 // impact = "通常ログの容量管理が失われる、または背景失敗の診断記録が失われる"
 // distinction = "既存のJSONL書式testはローテーションと別ファイルの保持を実行しない"
 // @end-test-value
+/** 通常ログは5 MiBの境界で切り替え、現行を含む5ファイルに制限する一方、専用の障害ログは変更しない。 */
 test("AppLogService は既定5MiBと5ファイルで通常ログだけをローテーションする", () => {
   const logsPath = mkdtempSync(path.join(tmpdir(), "withmate-log-test-"));
   try {
     const backgroundFilePath = path.join(logsPath, "background-failures.jsonl");
-    const backgroundEntry = createService(logsPath, { fileName: "background-failures.jsonl", rotation: false }).write({
-      level: "error", kind: "background.failed", process: "main", message: "failed",
+    const backgroundEntry = createService(logsPath, {
+      fileName: "background-failures.jsonl",
+      rotation: false,
+    }).write({
+      level: "error",
+      kind: "background.failed",
+      process: "main",
+      message: "failed",
     });
     const logFilePath = path.join(logsPath, "withmate.jsonl");
     const existingLine = `${JSON.stringify({ message: "x".repeat(5 * 1024 * 1024 - 1000) })}\n`;
     writeFileSync(logFilePath, existingLine, "utf8");
     const service = createService(logsPath);
-    const belowLimitEntry = service.write({ level: "info", kind: "app.ready", process: "main", message: "ready" });
-    assert.equal(readFileSync(logFilePath, "utf8"), `${existingLine}${JSON.stringify(belowLimitEntry)}\n`);
+    const belowLimitEntry = service.write({
+      level: "info",
+      kind: "app.ready",
+      process: "main",
+      message: "ready",
+    });
+    assert.equal(
+      readFileSync(logFilePath, "utf8"),
+      `${existingLine}${JSON.stringify(belowLimitEntry)}\n`,
+    );
 
-    const rotatedEntry = service.write({ level: "error", kind: "app.failed", process: "main", message: "x".repeat(1000) });
-    assert.equal(readFileSync(logFilePath, "utf8"), `${JSON.stringify(rotatedEntry)}\n`);
+    const rotatedEntry = service.write({
+      level: "error",
+      kind: "app.failed",
+      process: "main",
+      message: "x".repeat(1000),
+    });
+    assert.equal(
+      readFileSync(logFilePath, "utf8"),
+      `${JSON.stringify(rotatedEntry)}\n`,
+    );
     const oversizedLine = `${JSON.stringify({ message: "x".repeat(5 * 1024 * 1024) })}\n`;
     for (let index = 0; index < 5; index += 1) {
       writeFileSync(logFilePath, oversizedLine, "utf8");
-      createService(logsPath).write({ level: "info", kind: "app.ready", process: "main", message: "ready" });
+      createService(logsPath).write({
+        level: "info",
+        kind: "app.ready",
+        process: "main",
+        message: "ready",
+      });
     }
 
-    assert.equal(readdirSync(logsPath).filter((name) => name === "withmate.jsonl" || name.startsWith("withmate.jsonl.")).length, 5);
-    assert.equal(readFileSync(backgroundFilePath, "utf8"), `${JSON.stringify(backgroundEntry)}\n`);
+    assert.equal(
+      readdirSync(logsPath).filter(
+        (name) =>
+          name === "withmate.jsonl" || name.startsWith("withmate.jsonl."),
+      ).length,
+      5,
+    );
+    assert.equal(
+      readFileSync(backgroundFilePath, "utf8"),
+      `${JSON.stringify(backgroundEntry)}\n`,
+    );
   } finally {
     rmSync(logsPath, { recursive: true, force: true });
   }
 });
 
+/** 循環する追加データは直列化不能として扱うが、例外のメッセージは同じログ行に残す。 */
 test("AppLogService は循環 data を安全に記録する", () => {
   const logsPath = mkdtempSync(path.join(tmpdir(), "withmate-log-test-"));
   try {
@@ -137,7 +203,9 @@ test("AppLogService は循環 data を安全に記録する", () => {
       error: service.errorToLogError(new Error("boom")),
     });
 
-    const [line] = readFileSync(path.join(logsPath, "withmate.jsonl"), "utf8").trim().split("\n");
+    const [line] = readFileSync(path.join(logsPath, "withmate.jsonl"), "utf8")
+      .trim()
+      .split("\n");
     const entry = JSON.parse(line);
 
     assert.equal(entry.data, "[unserializable]");
@@ -146,4 +214,3 @@ test("AppLogService は循環 data を安全に記録する", () => {
     rmSync(logsPath, { recursive: true, force: true });
   }
 });
-

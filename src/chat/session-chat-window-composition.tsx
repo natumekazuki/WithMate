@@ -6,6 +6,7 @@ import type { SessionChatRuntimeFeature } from "./runtime/session-chat-runtime-f
 import type { SessionChatShellFeature } from "./shell/session-chat-shell-feature.js";
 import type { SessionHeaderProps } from "./shell/session-header.js";
 
+/** ライブ会話を表示する共有シェルに渡す、所有機能ごとの表示データと操作。 */
 export type SessionChatWindowFeatures = {
   shell: SessionChatShellFeature;
   header: SessionHeaderProps;
@@ -29,7 +30,8 @@ export function composeAgentSessionChatWindow(
     recoveryActions: features.runtime.recoveryActions,
     composerProps: features.composer.composer,
     compactActionDockProps: features.composer.compactActionDock,
-    additionalDirectoryListProps: features.composer.additionalDirectoryListProps,
+    additionalDirectoryListProps:
+      features.composer.additionalDirectoryListProps,
     skillPickerProps: features.composer.skillPickerProps,
     rightPaneProps: features.runtime.rightPaneProps,
   });

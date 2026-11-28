@@ -7,7 +7,9 @@ import { createRoot } from "react-dom/client";
 
 import { ComposerAttachmentMenu } from "../../src/chat/composer-attachment-menu.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 // @test-value v2
 // kind = "contract"
@@ -21,6 +23,7 @@ import { ComposerAttachmentMenu } from "../../src/chat/composer-attachment-menu.
 // impact = "添付操作の候補が切り取られるかkeyboard利用者がmenuを完了できなくなる"
 // distinction = "表示markupだけでなくportal境界、interaction callback、outside dismissを一連で確認する"
 // @end-test-value
+/** 一つの添付メニューを表示境界の外に開き、キーボード移動・閉じるときのフォーカス・コピー操作を同じメニューで確認する。 */
 test("ComposerAttachmentMenu は clipping 境界外の単一popoverで添付操作を完結する", async () => {
   const previousGlobals = {
     window: globalThis.window,
@@ -32,9 +35,12 @@ test("ComposerAttachmentMenu は clipping 境界外の単一popoverで添付操�
     KeyboardEvent: globalThis.KeyboardEvent,
     PointerEvent: globalThis.PointerEvent,
   };
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div><button id=\"outside\">Outside</button></body></html>", {
-    pretendToBeVisual: true,
-  });
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div><button id="outside">Outside</button></body></html>',
+    {
+      pretendToBeVisual: true,
+    },
+  );
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const root = createRoot(container);
   let copiedToSessionFiles = 0;
@@ -47,9 +53,13 @@ test("ComposerAttachmentMenu は clipping 境界外の単一popoverで添付操�
     Event: { configurable: true, value: dom.window.Event },
     MouseEvent: { configurable: true, value: dom.window.MouseEvent },
     KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
-    PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+    PointerEvent: {
+      configurable: true,
+      value: dom.window.PointerEvent ?? dom.window.MouseEvent,
+    },
   });
 
+  /** メニューの開閉を React の状態で管理し、Session Files へのコピーだけを呼出し回数で観測する。 */
   function Harness() {
     const [isOpen, setIsOpen] = useState(false);
     return (
@@ -72,46 +82,82 @@ test("ComposerAttachmentMenu は clipping 境界外の単一popoverで添付操�
 
   try {
     await act(async () => root.render(<Harness />));
-    const attachButton = container.querySelector<HTMLButtonElement>("[aria-haspopup=\"menu\"]");
+    const attachButton = container.querySelector<HTMLButtonElement>(
+      '[aria-haspopup="menu"]',
+    );
     assert.equal(attachButton?.textContent?.trim(), "Attach");
     assert.ok(attachButton?.querySelector('svg[aria-hidden="true"]'));
-    assert.equal(container.querySelectorAll("[aria-haspopup=\"menu\"]").length, 1);
+    assert.equal(
+      container.querySelectorAll('[aria-haspopup="menu"]').length,
+      1,
+    );
 
     await act(async () => {
-      attachButton?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      attachButton?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+        }),
+      );
     });
-    const menu = dom.window.document.querySelector<HTMLElement>("[role=\"menu\"]");
+    const menu =
+      dom.window.document.querySelector<HTMLElement>('[role="menu"]');
     assert.equal(menu?.parentElement, dom.window.document.body);
     assert.deepEqual(
-      Array.from(dom.window.document.querySelectorAll(".composer-attachment-menu-section-label")).map((item) => item.textContent),
+      Array.from(
+        dom.window.document.querySelectorAll(
+          ".composer-attachment-menu-section-label",
+        ),
+      ).map((item) => item.textContent),
       ["Attach", "Session Files"],
     );
-    const menuItems = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("[role=\"menuitem\"]"));
-    assert.deepEqual(menuItems.map((item) => item.textContent), ["File", "Folder", "Image", "Copy", "File", "Folder", "Image"]);
+    const menuItems = Array.from(
+      dom.window.document.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]',
+      ),
+    );
+    assert.deepEqual(
+      menuItems.map((item) => item.textContent),
+      ["File", "Folder", "Image", "Copy", "File", "Folder", "Image"],
+    );
     assert.equal(dom.window.document.activeElement, menuItems[0]);
 
     await act(async () => {
-      menuItems[0]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      menuItems[0]?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          bubbles: true,
+        }),
+      );
     });
     assert.equal(dom.window.document.activeElement, menuItems[1]);
 
     await act(async () => {
-      menuItems[1]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      menuItems[1]?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+        }),
+      );
     });
-    assert.equal(dom.window.document.querySelector("[role=\"menu\"]"), null);
+    assert.equal(dom.window.document.querySelector('[role="menu"]'), null);
     assert.equal(dom.window.document.activeElement, attachButton);
 
     await act(async () => attachButton?.click());
-    const copyButton = dom.window.document.querySelector<HTMLButtonElement>("[aria-label=\"Copy files to Session files and attach them\"]");
+    const copyButton = dom.window.document.querySelector<HTMLButtonElement>(
+      '[aria-label="Copy files to Session files and attach them"]',
+    );
     await act(async () => copyButton?.click());
     assert.equal(copiedToSessionFiles, 1);
-    assert.equal(dom.window.document.querySelector("[role=\"menu\"]"), null);
+    assert.equal(dom.window.document.querySelector('[role="menu"]'), null);
 
     await act(async () => attachButton?.click());
     await act(async () => {
-      dom.window.document.getElementById("outside")?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+      dom.window.document
+        .getElementById("outside")
+        ?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
     });
-    assert.equal(dom.window.document.querySelector("[role=\"menu\"]"), null);
+    assert.equal(dom.window.document.querySelector('[role="menu"]'), null);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
@@ -122,7 +168,10 @@ test("ComposerAttachmentMenu は clipping 境界外の単一popoverで添付操�
       HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
       Event: { configurable: true, value: previousGlobals.Event },
       MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
-      KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
+      KeyboardEvent: {
+        configurable: true,
+        value: previousGlobals.KeyboardEvent,
+      },
       PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
     });
   }

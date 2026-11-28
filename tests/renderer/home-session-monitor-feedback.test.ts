@@ -16,14 +16,25 @@ import { runSessionMonitorContextMenu } from "../../src/home/home-session-monito
 // impact = "HomeAppがnative context menuの失敗をMonitor UIへ返す"
 // distinction = "native menu serviceの失敗発生やMonitor contentのDOM描画ではなく、API resultからHomeApp state setterまでのdeliveryを検証する"
 // @end-test-value
+/** コンテキストメニューを開くたびに以前の通知を消し、閉じた・コピー済み・キャンセルでは空のまま、失敗時だけ返された理由を表示する。 */
 test("Session Monitor context menu API resultをfeedback setterへ届ける", async () => {
-  const request = { kind: "agent" as const, sessionId: "agent-1", point: { x: 24, y: 48 } };
-  const cases: Array<{ result: SessionMonitorContextMenuResult; expectedFeedback: string }> = [
+  const request = {
+    kind: "agent" as const,
+    sessionId: "agent-1",
+    point: { x: 24, y: 48 },
+  };
+  const cases: Array<{
+    result: SessionMonitorContextMenuResult;
+    expectedFeedback: string;
+  }> = [
     { result: { status: "closed" }, expectedFeedback: "" },
     { result: { status: "copied" }, expectedFeedback: "" },
     { result: { status: "dismissed" }, expectedFeedback: "" },
     {
-      result: { status: "failed", message: "Session IDをコピーできませんでした。" },
+      result: {
+        status: "failed",
+        message: "Session IDをコピーできませんでした。",
+      },
       expectedFeedback: "Session IDをコピーできませんでした。",
     },
   ];
@@ -31,7 +42,10 @@ test("Session Monitor context menu API resultをfeedback setterへ届ける", as
   for (const { result, expectedFeedback } of cases) {
     const feedbackUpdates: string[] = [];
     runSessionMonitorContextMenu(
-      { showSessionMonitorContextMenu: async () => result },
+      {
+        /** ケースごとの結果を返し、実メニューを開かずフィードバックへの変換を確かめる。 */
+        showSessionMonitorContextMenu: async () => result,
+      },
       request,
       (feedback) => feedbackUpdates.push(feedback),
     );

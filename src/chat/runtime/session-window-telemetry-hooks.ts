@@ -11,6 +11,7 @@ import {
   startSessionContextTelemetrySubscription,
 } from "./session-telemetry-subscription.js";
 
+/** Copilot の利用枠とコンテキスト使用量を別々に購読し、現在の Provider・Session の値だけを表示へ渡す。 */
 export function useSessionTelemetry(
   api: WithMateWindowApi | null,
   providerId: string | null | undefined,
@@ -18,40 +19,70 @@ export function useSessionTelemetry(
 ): {
   providerQuotaTelemetryState: ProviderOwnedQuotaTelemetry;
   sessionContextTelemetryState: SessionOwnedContextTelemetry;
-  selectedProviderQuotaTelemetry: ReturnType<typeof resolveOwnedProviderQuotaTelemetry>;
-  selectedSessionContextTelemetry: ReturnType<typeof resolveOwnedSessionContextTelemetry>;
+  selectedProviderQuotaTelemetry: ReturnType<
+    typeof resolveOwnedProviderQuotaTelemetry
+  >;
+  selectedSessionContextTelemetry: ReturnType<
+    typeof resolveOwnedSessionContextTelemetry
+  >;
 } {
-  const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<ProviderOwnedQuotaTelemetry>({
-    ownerProviderId: null,
-    telemetry: null,
-  });
-  const [sessionContextTelemetryState, setSessionContextTelemetryState] = useState<SessionOwnedContextTelemetry>({
-    ownerSessionId: null,
-    telemetry: null,
-  });
+  const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] =
+    useState<ProviderOwnedQuotaTelemetry>({
+      ownerProviderId: null,
+      telemetry: null,
+    });
+  const [sessionContextTelemetryState, setSessionContextTelemetryState] =
+    useState<SessionOwnedContextTelemetry>({
+      ownerSessionId: null,
+      telemetry: null,
+    });
   const isCopilot = providerId === "copilot";
 
-  useEffect(() => startProviderQuotaTelemetrySubscription({
-    api,
-    providerId: providerId ?? null,
-    enabled: isCopilot,
-    applyProviderQuotaTelemetry: setProviderQuotaTelemetryState,
-  }), [api, isCopilot, providerId]);
+  useEffect(
+    () =>
+      startProviderQuotaTelemetrySubscription({
+        api,
+        providerId: providerId ?? null,
+        enabled: isCopilot,
+        applyProviderQuotaTelemetry: setProviderQuotaTelemetryState,
+      }),
+    [api, isCopilot, providerId],
+  );
 
-  useEffect(() => startSessionContextTelemetrySubscription({
-    api,
-    sessionId,
-    enabled: isCopilot,
-    applySessionContextTelemetry: setSessionContextTelemetryState,
-  }), [api, isCopilot, sessionId]);
+  useEffect(
+    () =>
+      startSessionContextTelemetrySubscription({
+        api,
+        sessionId,
+        enabled: isCopilot,
+        applySessionContextTelemetry: setSessionContextTelemetryState,
+      }),
+    [api, isCopilot, sessionId],
+  );
 
   const selectedProviderQuotaTelemetry = useMemo(
-    () => resolveOwnedProviderQuotaTelemetry(providerQuotaTelemetryState, providerId),
-    [providerId, providerQuotaTelemetryState.ownerProviderId, providerQuotaTelemetryState.telemetry],
+    () =>
+      resolveOwnedProviderQuotaTelemetry(
+        providerQuotaTelemetryState,
+        providerId,
+      ),
+    [
+      providerId,
+      providerQuotaTelemetryState.ownerProviderId,
+      providerQuotaTelemetryState.telemetry,
+    ],
   );
   const selectedSessionContextTelemetry = useMemo(
-    () => resolveOwnedSessionContextTelemetry(sessionContextTelemetryState, sessionId),
-    [sessionId, sessionContextTelemetryState.ownerSessionId, sessionContextTelemetryState.telemetry],
+    () =>
+      resolveOwnedSessionContextTelemetry(
+        sessionContextTelemetryState,
+        sessionId,
+      ),
+    [
+      sessionId,
+      sessionContextTelemetryState.ownerSessionId,
+      sessionContextTelemetryState.telemetry,
+    ],
   );
 
   return {

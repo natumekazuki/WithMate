@@ -6,7 +6,12 @@ import path from "node:path";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { assertChildSessionRole } from "../../src-shared/session/session-role.js";
-import { assertDirectChildSessionControl, assertDirectSessionSend, queryRelatedSessions, resolveRelatedSessions } from "../../src-electron/session/session-relationship-resolver.js";
+import {
+  assertDirectChildSessionControl,
+  assertDirectSessionSend,
+  queryRelatedSessions,
+  resolveRelatedSessions,
+} from "../../src-electron/session/session-relationship-resolver.js";
 import { projectSessionSummary } from "../../src-shared/session/session-state.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
 import { DatabaseSync } from "node:sqlite";
@@ -21,30 +26,100 @@ import { DatabaseSync } from "node:sqlite";
 // scope = "session-character-discovery"
 // lifecycle = "permanent"
 // @end-test-value
+/** Main と Auxiliary の関連 Session 探索へ、保存済みプロフィールの公開項目を投影し、説明を検索できても非公開の定義本文は出さない。 */
 it("保存snapshotの公開プロフィールをMainとAuxiliaryの探索へ渡す", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-peer-profile-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-peer-profile-"),
+  );
   const dbPath = path.join(directory, "app.db");
   const storage = new SessionStorageV6(dbPath);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
-  const snapshot = { characterId: "azki", name: "AZKi", description: "落ち着いて相談する同僚", iconFilePath: "", theme: { main: "#fff", sub: "#000" },
-    definitionMarkdown: "private persona instructions", definitionSha256: "hash", definitionByteSize: 28, snapshotAt: "2026-11-12T00:00:00.000Z" };
+  const snapshot = {
+    characterId: "azki",
+    name: "AZKi",
+    description: "落ち着いて相談する同僚",
+    iconFilePath: "",
+    theme: { main: "#fff", sub: "#000" },
+    definitionMarkdown: "private persona instructions",
+    definitionSha256: "hash",
+    definitionByteSize: 28,
+    snapshotAt: "2026-11-12T00:00:00.000Z",
+  };
   try {
     const db = new DatabaseSync(dbPath);
-    db.prepare("INSERT INTO characters (id, name, created_at, updated_at) VALUES ('azki', 'AZKi', ?, ?)").run(snapshot.snapshotAt, snapshot.snapshotAt);
+    db.prepare(
+      "INSERT INTO characters (id, name, created_at, updated_at) VALUES ('azki', 'AZKi', ?, ?)",
+    ).run(snapshot.snapshotAt, snapshot.snapshotAt);
     db.close();
-    const session = storage.insertSession(buildNewSession({ id: "root", taskTitle: "Task", workspaceLabel: "Workspace", workspacePath: "C:/work", branch: "main",
-      characterId: "azki", character: "AZKi", characterIconPath: "", characterThemeColors: snapshot.theme, characterRuntimeSnapshot: snapshot, approvalMode: "on-request" }));
-    auxiliary.upsertAuxiliarySession({ id: "aux", parentSessionId: session.id, title: "Aux", runState: "idle", provider: "codex", catalogRevision: 1,
-      model: session.model, reasoningEffort: session.reasoningEffort, approvalMode: session.approvalMode, codexSandboxMode: session.codexSandboxMode,
-      codexSpeed: session.codexSpeed, codexReviewer: session.codexReviewer, customAgentName: "", threadId: "", composerDraft: "", messages: [],
-      displayAfterMessageIndex: null, createdAt: snapshot.snapshotAt, updatedAt: snapshot.snapshotAt, characterId: "azki", characterRuntimeSnapshot: snapshot });
-    const expected = { id: "azki", name: "AZKi", description: snapshot.description };
-    const entries = resolveRelatedSessions(storage.listSessionSummaries(), auxiliary.listAuxiliarySessionSummaries([session.id]));
-    assert.deepEqual(entries.map((entry) => entry.character), [expected, expected]);
-    assert.deepEqual(resolveRelatedSessions([projectSessionSummary(session)], [])[0].character, expected);
-    assert.equal(queryRelatedSessions(entries, entries[0], { searchText: "相談する同僚" }).total, 2);
-    assert.equal(JSON.stringify(entries).includes(snapshot.definitionMarkdown), false);
-  } finally { auxiliary.close(); storage.close(); await rm(directory, { recursive: true, force: true }); }
+    const session = storage.insertSession(
+      buildNewSession({
+        id: "root",
+        taskTitle: "Task",
+        workspaceLabel: "Workspace",
+        workspacePath: "C:/work",
+        branch: "main",
+        characterId: "azki",
+        character: "AZKi",
+        characterIconPath: "",
+        characterThemeColors: snapshot.theme,
+        characterRuntimeSnapshot: snapshot,
+        approvalMode: "on-request",
+      }),
+    );
+    auxiliary.upsertAuxiliarySession({
+      id: "aux",
+      parentSessionId: session.id,
+      title: "Aux",
+      runState: "idle",
+      provider: "codex",
+      catalogRevision: 1,
+      model: session.model,
+      reasoningEffort: session.reasoningEffort,
+      approvalMode: session.approvalMode,
+      codexSandboxMode: session.codexSandboxMode,
+      codexSpeed: session.codexSpeed,
+      codexReviewer: session.codexReviewer,
+      customAgentName: "",
+      threadId: "",
+      composerDraft: "",
+      messages: [],
+      displayAfterMessageIndex: null,
+      createdAt: snapshot.snapshotAt,
+      updatedAt: snapshot.snapshotAt,
+      characterId: "azki",
+      characterRuntimeSnapshot: snapshot,
+    });
+    const expected = {
+      id: "azki",
+      name: "AZKi",
+      description: snapshot.description,
+    };
+    const entries = resolveRelatedSessions(
+      storage.listSessionSummaries(),
+      auxiliary.listAuxiliarySessionSummaries([session.id]),
+    );
+    assert.deepEqual(
+      entries.map((entry) => entry.character),
+      [expected, expected],
+    );
+    assert.deepEqual(
+      resolveRelatedSessions([projectSessionSummary(session)], [])[0].character,
+      expected,
+    );
+    assert.equal(
+      queryRelatedSessions(entries, entries[0], { searchText: "相談する同僚" })
+        .total,
+      2,
+    );
+    assert.equal(
+      JSON.stringify(entries).includes(snapshot.definitionMarkdown),
+      false,
+    );
+  } finally {
+    auxiliary.close();
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 // @test-value v2
@@ -57,17 +132,69 @@ it("保存snapshotの公開プロフィールをMainとAuxiliaryの探索へ渡�
 // scope = "saved-session-relationships"
 // lifecycle = "permanent"
 // @end-test-value
+/** Crew 内で発見できる範囲と、直接の親子だけが送信・操作できる範囲を分離し、発見結果から操作権限を付与しない。 */
 it("separates Crew discovery from direct-parent operations", () => {
-  const root = buildNewSession({ id: "o", taskTitle: "Root", sessionRole: "overall-coordinator", workspaceLabel: "Workspace", workspacePath: "C:/work", branch: "", characterId: "azki", character: "AZKi", characterIconPath: "", characterThemeColors: { main: "#fff", sub: "#000" }, approvalMode: "on-request" });
-  const mains = [root,
-    { ...root, id: "m1", sessionRole: "task-coordinator" as const, parentSessionId: "o", createdBySessionId: "o" },
-    { ...root, id: "m2", sessionRole: "task-coordinator" as const, parentSessionId: "o", createdBySessionId: "o" },
-    { ...root, id: "w1", sessionRole: "executor" as const, parentSessionId: "m1", createdBySessionId: "m1" },
-    { ...root, id: "w2", sessionRole: "executor" as const, parentSessionId: "m2", createdBySessionId: "m2" },
-    { ...root, id: "other", rootSessionId: "other" }];
-  const entries = resolveRelatedSessions(mains, [{ ...root, id: "aux", parentSessionId: "m2", title: "User auxiliary", createdAt: "2026-11-07T00:00:00.000Z", displayAfterMessageIndex: null, runState: "idle" }]);
+  const root = buildNewSession({
+    id: "o",
+    taskTitle: "Root",
+    sessionRole: "overall-coordinator",
+    workspaceLabel: "Workspace",
+    workspacePath: "C:/work",
+    branch: "",
+    characterId: "azki",
+    character: "AZKi",
+    characterIconPath: "",
+    characterThemeColors: { main: "#fff", sub: "#000" },
+    approvalMode: "on-request",
+  });
+  const mains = [
+    root,
+    {
+      ...root,
+      id: "m1",
+      sessionRole: "task-coordinator" as const,
+      parentSessionId: "o",
+      createdBySessionId: "o",
+    },
+    {
+      ...root,
+      id: "m2",
+      sessionRole: "task-coordinator" as const,
+      parentSessionId: "o",
+      createdBySessionId: "o",
+    },
+    {
+      ...root,
+      id: "w1",
+      sessionRole: "executor" as const,
+      parentSessionId: "m1",
+      createdBySessionId: "m1",
+    },
+    {
+      ...root,
+      id: "w2",
+      sessionRole: "executor" as const,
+      parentSessionId: "m2",
+      createdBySessionId: "m2",
+    },
+    { ...root, id: "other", rootSessionId: "other" },
+  ];
+  const entries = resolveRelatedSessions(mains, [
+    {
+      ...root,
+      id: "aux",
+      parentSessionId: "m2",
+      title: "User auxiliary",
+      createdAt: "2026-11-07T00:00:00.000Z",
+      displayAfterMessageIndex: null,
+      runState: "idle",
+    },
+  ]);
   const [o, m1, , w1, w2] = entries;
-  assert.deepEqual(queryRelatedSessions(entries, w1).entries.map((entry) => entry.id), ["o", "m1", "m2", "w1", "w2", "aux"]);
+  assert.deepEqual(
+    queryRelatedSessions(entries, w1).entries.map((entry) => entry.id),
+    ["o", "m1", "m2", "w1", "w2", "aux"],
+  );
   assert.equal(queryRelatedSessions(entries, w1, { allCrews: true }).total, 7);
   assert.equal(entries.at(-1)?.createdBySessionId, null);
   assert.equal(entries.at(-1)?.mainSessionId, "m2");
@@ -93,21 +220,62 @@ it("separates Crew discovery from direct-parent operations", () => {
 // scope = "saved-session-relationships"
 // lifecycle = "permanent"
 // @end-test-value
+/** Session の再保存で昇格を戻さず、実行担当からの孫作成を拒否し、再オープン後にルート・親・作成者の関係を維持する。 */
 it("persists relationships without granting a full-save Role mutation", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-relationships-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-relationships-"),
+  );
   const dbPath = path.join(directory, "sessions.db");
   let storage = new SessionStorageV6(dbPath);
   try {
-    const input = buildNewSession({ id: "root", taskTitle: "Root", workspaceLabel: "Workspace", workspacePath: "C:/work", branch: "", characterId: "azki", character: "AZKi", characterIconPath: "", characterThemeColors: { main: "#fff", sub: "#000" }, approvalMode: "on-request" });
+    const input = buildNewSession({
+      id: "root",
+      taskTitle: "Root",
+      workspaceLabel: "Workspace",
+      workspacePath: "C:/work",
+      branch: "",
+      characterId: "azki",
+      character: "AZKi",
+      characterIconPath: "",
+      characterThemeColors: { main: "#fff", sub: "#000" },
+      approvalMode: "on-request",
+    });
     const root = storage.insertSession(input);
     storage.promoteSessionToOverallCoordinator(root.id, root.incarnationId!);
-    storage.updateSession({ ...root, taskTitle: "Still the same conversation" });
-    assert.equal(storage.getSession(root.id)?.sessionRole, "overall-coordinator");
-    const child = storage.insertSession({ ...input, id: "child", sessionRole: "executor", rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id });
-    assert.throws(() => storage.insertSession({ ...child, id: "grandchild", parentSessionId: child.id, createdBySessionId: child.id }));
+    storage.updateSession({
+      ...root,
+      taskTitle: "Still the same conversation",
+    });
+    assert.equal(
+      storage.getSession(root.id)?.sessionRole,
+      "overall-coordinator",
+    );
+    const child = storage.insertSession({
+      ...input,
+      id: "child",
+      sessionRole: "executor",
+      rootSessionId: root.id,
+      parentSessionId: root.id,
+      createdBySessionId: root.id,
+    });
+    assert.throws(() =>
+      storage.insertSession({
+        ...child,
+        id: "grandchild",
+        parentSessionId: child.id,
+        createdBySessionId: child.id,
+      }),
+    );
     storage.close();
     storage = new SessionStorageV6(dbPath);
-    assert.deepEqual([storage.getSession(child.id)?.rootSessionId, storage.getSession(child.id)?.parentSessionId, storage.getSession(child.id)?.createdBySessionId], [root.id, root.id, root.id]);
+    assert.deepEqual(
+      [
+        storage.getSession(child.id)?.rootSessionId,
+        storage.getSession(child.id)?.parentSessionId,
+        storage.getSession(child.id)?.createdBySessionId,
+      ],
+      [root.id, root.id, root.id],
+    );
   } finally {
     storage.close();
     await rm(directory, { recursive: true, force: true });

@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { assertCapturedComposerAttachmentsAvailable, resolveComposerPreview } from "../../src-electron/files/composer-attachments.js";
+import {
+  assertCapturedComposerAttachmentsAvailable,
+  resolveComposerPreview,
+} from "../../src-electron/files/composer-attachments.js";
 import { formatMarkdownImageReference } from "../../src-shared/files/composer-image-reference.js";
 
 // @test-value v2
@@ -19,8 +22,11 @@ import { formatMarkdownImageReference } from "../../src-shared/files/composer-im
 // impact = "添付候補と実行時の作業範囲の食い違いを防ぐ"
 // distinction = "既存testの通常pathや型検査ではfilesystem linkの実体と再解決を確認できない;小さな一時directoryのみ使用する"
 // @end-test-value
+/** Workspace の別名は許容しつつ、添付はリンク先の実体が許可範囲にある場合だけ認め、取得後にリンク先を変えた場合も再検査する。 */
 test("添付はlink先の実体で作業範囲を判定しcaptured後の差替えも再検証する", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-attachment-links-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-attachment-links-"),
+  );
   const workspace = path.join(root, "workspace");
   const workspacePath = path.join(root, "workspace-alias");
   const approved = path.join(root, "approved");
@@ -34,26 +40,44 @@ test("添付はlink先の実体で作業範囲を判定しcaptured後の差替�
     }
     await symlink(workspace, workspacePath, linkType);
     await symlink(approved, link, linkType);
-    const session = { workspacePath, allowedAdditionalDirectories: [] as string[] };
-    assert.equal((await resolveComposerPreview(session, "@file.txt")).attachments.length, 1);
+    const session = {
+      workspacePath,
+      allowedAdditionalDirectories: [] as string[],
+    };
+    assert.equal(
+      (await resolveComposerPreview(session, "@file.txt")).attachments.length,
+      1,
+    );
     const outside = await resolveComposerPreview(session, "@linked/file.txt");
     assert.equal(outside.attachments.length, 0);
     assert.match(outside.errors[0]!, /outside the workspace/);
-    session.allowedAdditionalDirectories = [approved, path.join(root, "missing")];
+    session.allowedAdditionalDirectories = [
+      approved,
+      path.join(root, "missing"),
+    ];
     const accepted = await resolveComposerPreview(session, "@linked/file.txt");
     assert.deepEqual(accepted.errors, []);
     assert.equal(accepted.attachments.length, 1);
-    await assertCapturedComposerAttachmentsAvailable(session, accepted.attachments);
+    await assertCapturedComposerAttachmentsAvailable(
+      session,
+      accepted.attachments,
+    );
     await rm(link);
     await symlink(denied, link, linkType);
-    await assert.rejects(assertCapturedComposerAttachmentsAvailable(session, accepted.attachments), /outside the workspace/);
+    await assert.rejects(
+      assertCapturedComposerAttachmentsAvailable(session, accepted.attachments),
+      /outside the workspace/,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
+/** 追加ディレクトリ内のローカル Markdown 画像は、元の絶対パスを持つ画像添付としてプレビューに返す。 */
 test("resolveComposerPreview はMarkdown画像をprovider画像添付として解決する", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-markdown-image-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-markdown-image-"),
+  );
   const workspacePath = path.join(root, "workspace");
   const sessionFilesPath = path.join(root, "session-files");
   const imagePath = path.join(sessionFilesPath, "pasted image (1).png");
@@ -77,8 +101,11 @@ test("resolveComposerPreview はMarkdown画像をprovider画像添付として�
   }
 });
 
+/** Markdown とファイル参照の二経路で同じ画像を指定しても、送信に使う添付を一件にまとめる。 */
 test("resolveComposerPreview は同じ画像のMarkdownと@pathを一つの添付へ集約する", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-markdown-image-dedupe-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-markdown-image-dedupe-"),
+  );
   const workspacePath = path.join(root, "workspace");
   const imagePath = path.join(workspacePath, "image.png");
   await mkdir(workspacePath, { recursive: true });
