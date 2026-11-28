@@ -10,8 +10,10 @@ import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/storage/database-schema
 import { SessionStorageV2 } from "../../src-electron/session/session-storage-v2.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 
+/** 生成するSession数や履歴件数の規模を選ぶプリセット名。 */
 export type BenchmarkProfileName = "small" | "medium" | "large";
 
+/** 模擬データの件数設定と、出力DBの配置・既存ファイルの扱い。 */
 export type DataLoadingBenchmarkOptions = {
   outputPath?: string;
   overwrite?: boolean;
@@ -22,6 +24,7 @@ export type DataLoadingBenchmarkOptions = {
   operationCount?: number;
 };
 
+/** 生成したV2 DBの容量・件数、各操作の時間、返却されたデータの件数。 */
 export type DataLoadingBenchmarkResult = {
   dbPath: string;
   generated: {
@@ -49,11 +52,17 @@ export type DataLoadingBenchmarkResult = {
   };
 };
 
-type ResolvedBenchmarkOptions = Required<Omit<DataLoadingBenchmarkOptions, "outputPath">> & {
+/** 既定値を補い、DBの実際の出力先まで確定した測定条件。 */
+type ResolvedBenchmarkOptions = Required<
+  Omit<DataLoadingBenchmarkOptions, "outputPath">
+> & {
   outputPath: string;
 };
 
-const PROFILE_DEFAULTS: Record<BenchmarkProfileName, Omit<ResolvedBenchmarkOptions, "outputPath" | "overwrite" | "keepDatabase">> = {
+const PROFILE_DEFAULTS: Record<
+  BenchmarkProfileName,
+  Omit<ResolvedBenchmarkOptions, "outputPath" | "overwrite" | "keepDatabase">
+> = {
   small: {
     sessions: 10,
     messagesPerSession: 20,
@@ -74,32 +83,54 @@ const PROFILE_DEFAULTS: Record<BenchmarkProfileName, Omit<ResolvedBenchmarkOptio
   },
 };
 
+/** 実行日時によらず同じ並び順になるよう、固定日時から秒単位の差を付ける。 */
 function nowIso(index: number): string {
   return new Date(Date.UTC(2026, 3, 28, 0, 0, index)).toISOString();
 }
 
+/** 件数設定には正の整数だけを使い、無効または未設定の場合は既定値に戻す。 */
 function positiveInteger(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : fallback;
 }
 
+/** 明示的な出力先がない場合に新しい一時ディレクトリを作り、DBのパスを返す。 */
 async function createDefaultOutputPath(): Promise<string> {
-  const dirPath = await mkdtemp(resolve(tmpdir(), "withmate-data-loading-benchmark-"));
+  const dirPath = await mkdtemp(
+    resolve(tmpdir(), "withmate-data-loading-benchmark-"),
+  );
   return resolve(dirPath, "withmate-v2.db");
 }
 
-async function resolveOptions(options: DataLoadingBenchmarkOptions): Promise<ResolvedBenchmarkOptions> {
+/** 出力先を絶対パスに揃え、足りない件数をmediumの既定値で補う。 */
+async function resolveOptions(
+  options: DataLoadingBenchmarkOptions,
+): Promise<ResolvedBenchmarkOptions> {
   const defaults = PROFILE_DEFAULTS.medium;
   return {
-    outputPath: options.outputPath ? resolve(options.outputPath) : await createDefaultOutputPath(),
+    outputPath: options.outputPath
+      ? resolve(options.outputPath)
+      : await createDefaultOutputPath(),
     overwrite: options.overwrite ?? false,
     keepDatabase: options.keepDatabase ?? false,
     sessions: positiveInteger(options.sessions, defaults.sessions),
-    messagesPerSession: positiveInteger(options.messagesPerSession, defaults.messagesPerSession),
-    artifactEvery: positiveInteger(options.artifactEvery, defaults.artifactEvery),
-    operationCount: positiveInteger(options.operationCount, defaults.operationCount),
+    messagesPerSession: positiveInteger(
+      options.messagesPerSession,
+      defaults.messagesPerSession,
+    ),
+    artifactEvery: positiveInteger(
+      options.artifactEvery,
+      defaults.artifactEvery,
+    ),
+    operationCount: positiveInteger(
+      options.operationCount,
+      defaults.operationCount,
+    ),
   };
 }
 
+/** 既存DBは明示された上書き時だけ補助ファイルとともに除き、なければ出力先を用意する。 */
 function ensureFreshDatabase(dbPath: string, overwrite: boolean): void {
   if (!existsSync(dbPath)) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -113,6 +144,7 @@ function ensureFreshDatabase(dbPath: string, overwrite: boolean): void {
   rmSync(`${dbPath}-shm`, { force: true });
 }
 
+/** 測定用DBに製品のV2スキーマを適用し、成功・失敗にかかわらず接続を閉じる。 */
 function createSchema(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -124,46 +156,61 @@ function createSchema(dbPath: string): void {
   }
 }
 
-function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions): Session {
-  const messages = Array.from({ length: options.messagesPerSession }, (_, messageIndex) => {
-    const role: "user" | "assistant" = messageIndex % 2 === 0 ? "user" : "assistant";
-    const artifact = role === "assistant" && messageIndex % options.artifactEvery === 1
-      ? {
-          title: `artifact ${sessionIndex}-${messageIndex}`,
-          activitySummary: [
-            `session ${sessionIndex}`,
-            `message ${messageIndex}`,
-          ],
-          operationTimeline: Array.from({ length: options.operationCount }, (_, operationIndex) => ({
-            type: "tool",
-            summary: `operation ${operationIndex}`,
-            details: `operation detail ${operationIndex} ${"x".repeat(80)}`,
-          })),
-          changedFiles: [
-            {
-              kind: "edit" as const,
-              path: `src/generated/file-${sessionIndex}-${messageIndex}.ts`,
-              summary: "benchmark fixture",
-              diffRows: Array.from({ length: 12 }, (_, diffIndex) => ({
-                kind: diffIndex % 3 === 0 ? "add" as const : "context" as const,
-                leftNumber: diffIndex,
-                rightNumber: diffIndex + 1,
-                leftText: `before ${diffIndex} ${"x".repeat(80)}`,
-                rightText: `after ${diffIndex} ${"x".repeat(80)}`,
-              })),
-            },
-          ],
-          runChecks: [{ label: "test", value: "pass" }],
-        }
-      : undefined;
+/** 指定件数の模擬会話を持ち、添字で検索結果と読み出し順を確認できるSessionを作る。 */
+function createSession(
+  sessionIndex: number,
+  options: ResolvedBenchmarkOptions,
+): Session {
+  const messages = Array.from(
+    { length: options.messagesPerSession },
+    (_, messageIndex) => {
+      const role: "user" | "assistant" =
+        messageIndex % 2 === 0 ? "user" : "assistant";
+      const artifact =
+        role === "assistant" && messageIndex % options.artifactEvery === 1
+          ? {
+              title: `artifact ${sessionIndex}-${messageIndex}`,
+              activitySummary: [
+                `session ${sessionIndex}`,
+                `message ${messageIndex}`,
+              ],
+              operationTimeline: Array.from(
+                { length: options.operationCount },
+                (_, operationIndex) => ({
+                  type: "tool",
+                  summary: `operation ${operationIndex}`,
+                  details: `operation detail ${operationIndex} ${"x".repeat(80)}`,
+                }),
+              ),
+              changedFiles: [
+                {
+                  kind: "edit" as const,
+                  path: `src/generated/file-${sessionIndex}-${messageIndex}.ts`,
+                  summary: "benchmark fixture",
+                  diffRows: Array.from({ length: 12 }, (_, diffIndex) => ({
+                    kind:
+                      diffIndex % 3 === 0
+                        ? ("add" as const)
+                        : ("context" as const),
+                    leftNumber: diffIndex,
+                    rightNumber: diffIndex + 1,
+                    leftText: `before ${diffIndex} ${"x".repeat(80)}`,
+                    rightText: `after ${diffIndex} ${"x".repeat(80)}`,
+                  })),
+                },
+              ],
+              runChecks: [{ label: "test", value: "pass" }],
+            }
+          : undefined;
 
-    return {
-      role,
-      text: `${role} message ${sessionIndex}-${messageIndex} ${"body ".repeat(24)}`,
-      accent: messageIndex % 17 === 0,
-      artifact,
-    };
-  });
+      return {
+        role,
+        text: `${role} message ${sessionIndex}-${messageIndex} ${"body ".repeat(24)}`,
+        accent: messageIndex % 17 === 0,
+        artifact,
+      };
+    },
+  );
 
   return {
     id: `benchmark-session-${sessionIndex}`,
@@ -199,9 +246,14 @@ function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions):
   };
 }
 
+/** アシスタント側のうち生成間隔に当たる履歴だけを数え、DB全体の件数計算に使う。 */
 function countArtifactsPerSession(options: ResolvedBenchmarkOptions): number {
   let count = 0;
-  for (let messageIndex = 0; messageIndex < options.messagesPerSession; messageIndex += 1) {
+  for (
+    let messageIndex = 0;
+    messageIndex < options.messagesPerSession;
+    messageIndex += 1
+  ) {
     if (messageIndex % 2 === 1 && messageIndex % options.artifactEvery === 1) {
       count += 1;
     }
@@ -209,17 +261,22 @@ function countArtifactsPerSession(options: ResolvedBenchmarkOptions): number {
   return count;
 }
 
+/** 同期の読み書きを1回実行し、結果と単調時計で測った経過ミリ秒を返す。 */
 function timed<T>(runner: () => T): { value: T; durationMs: number } {
   const startedAt = performance.now();
   const value = runner();
   return { value, durationMs: performance.now() - startedAt };
 }
 
+/** 出力する経過時間をミリ秒の小数第3位に丸める。 */
 function roundDuration(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
-export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptions = {}): Promise<DataLoadingBenchmarkResult> {
+/** 模擬DBを作成して開き直し、一覧・検索・本文の読み出し時間と取得件数を測る。 */
+export async function runDataLoadingBenchmark(
+  options: DataLoadingBenchmarkOptions = {},
+): Promise<DataLoadingBenchmarkResult> {
   const resolved = await resolveOptions(options);
   ensureFreshDatabase(resolved.outputPath, resolved.overwrite);
 
@@ -228,7 +285,11 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
     const sessionStorage = new SessionStorageV2(resolved.outputPath);
 
     try {
-      for (let sessionIndex = 0; sessionIndex < resolved.sessions; sessionIndex += 1) {
+      for (
+        let sessionIndex = 0;
+        sessionIndex < resolved.sessions;
+        sessionIndex += 1
+      ) {
         const session = createSession(sessionIndex, resolved);
         sessionStorage.upsertSession(session);
       }
@@ -241,19 +302,30 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
 
   try {
     const summaries = timed(() => sessionStorage.listSessionSummaries());
-    const summaryPage = timed(() => sessionStorage.listSessionSummaryPage({ scope: "recent", limit: 50 }));
-    const searchSummaryPage = timed(() => sessionStorage.listSessionSummaryPage({
-      scope: "recent",
-      limit: 50,
-      searchText: "benchmark",
-    }));
-    const characterUsage = timed(() => sessionStorage.listSessionCharacterUsage());
+    const summaryPage = timed(() =>
+      sessionStorage.listSessionSummaryPage({ scope: "recent", limit: 50 }),
+    );
+    const searchSummaryPage = timed(() =>
+      sessionStorage.listSessionSummaryPage({
+        scope: "recent",
+        limit: 50,
+        searchText: "benchmark",
+      }),
+    );
+    const characterUsage = timed(() =>
+      sessionStorage.listSessionCharacterUsage(),
+    );
     const firstSessionId = summaries.value[0]?.id ?? "benchmark-session-0";
-    const middleSessionId = summaries.value[Math.floor(summaries.value.length / 2)]?.id ?? firstSessionId;
+    const middleSessionId =
+      summaries.value[Math.floor(summaries.value.length / 2)]?.id ??
+      firstSessionId;
     const firstSession = timed(() => sessionStorage.getSession(firstSessionId));
-    const middleSession = timed(() => sessionStorage.getSession(middleSessionId));
+    const middleSession = timed(() =>
+      sessionStorage.getSession(middleSessionId),
+    );
 
-    const messageArtifacts = resolved.sessions * countArtifactsPerSession(resolved);
+    const messageArtifacts =
+      resolved.sessions * countArtifactsPerSession(resolved);
     return {
       dbPath: resolved.outputPath,
       generated: {
@@ -285,14 +357,19 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
   }
 }
 
-export function parseBenchmarkArgs(args: string[]): DataLoadingBenchmarkOptions {
+/** 起動引数を順に読み、プリセットと個別設定の後から指定された値を採る。 */
+export function parseBenchmarkArgs(
+  args: string[],
+): DataLoadingBenchmarkOptions {
   const options: DataLoadingBenchmarkOptions = {};
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     const next = args[index + 1];
     if (arg === "--profile" && next) {
       if (next !== "small" && next !== "medium" && next !== "large") {
-        throw new Error("--profile は small / medium / large のいずれかを指定してね。");
+        throw new Error(
+          "--profile は small / medium / large のいずれかを指定してね。",
+        );
       }
       Object.assign(options, PROFILE_DEFAULTS[next]);
       index += 1;
@@ -323,10 +400,12 @@ export function parseBenchmarkArgs(args: string[]): DataLoadingBenchmarkOptions 
   return options;
 }
 
+/** 測定結果だけを、別プロセスで読み取れる整形済みJSONとして標準出力へ書く。 */
 function printResult(result: DataLoadingBenchmarkResult): void {
   console.log(JSON.stringify(result, null, 2));
 }
 
+/** 測定を実行し、利用者が保持を求めていない自動生成先だけを結果出力後に片付ける。 */
 async function main(): Promise<void> {
   const options = parseBenchmarkArgs(process.argv.slice(2));
   const result = await runDataLoadingBenchmark(options);

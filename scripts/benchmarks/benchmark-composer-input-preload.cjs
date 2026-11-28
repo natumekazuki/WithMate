@@ -1,12 +1,19 @@
 const { contextBridge, ipcRenderer } = require("electron");
-const conversationLoading = process.argv.includes("--benchmark-conversation-loading");
+const conversationLoading = process.argv.includes(
+  "--benchmark-conversation-loading",
+);
 
 const now = new Date().toISOString();
-const countArg = process.argv.find((value) => value.startsWith("--benchmark-auxiliary-count="));
-const historyArg = process.argv.find((value) => value.startsWith("--benchmark-history="));
+const countArg = process.argv.find((value) =>
+  value.startsWith("--benchmark-auxiliary-count="),
+);
+const historyArg = process.argv.find((value) =>
+  value.startsWith("--benchmark-history="),
+);
 const auxiliaryCount = Math.max(1, Number(countArg?.split("=")[1] ?? 1));
 const historyLength = historyArg?.split("=")[1] === "long" ? 120 : 4;
 
+/** 本文に所有元の識別子を入れ、ユーザーとアシスタントを交互にした履歴を作る。 */
 function messageList(prefix, count) {
   return Array.from({ length: count }, (_, index) => ({
     role: index % 2 === 0 ? "user" : "assistant",
@@ -14,6 +21,7 @@ function messageList(prefix, count) {
   }));
 }
 
+/** 実ストレージを使わずにMainの入力欄を起動するため、固定設定と指定件数の履歴を返す。 */
 function session() {
   return {
     id: "benchmark-main",
@@ -49,6 +57,7 @@ function session() {
   };
 }
 
+/** 同じMain配下に、独立した履歴と空の下書きを持つ測定用Auxiliaryを作る。 */
 function auxiliary(id) {
   return {
     id,
@@ -80,17 +89,31 @@ function auxiliary(id) {
 }
 
 const mainSession = session();
-const auxiliarySessions = Array.from({ length: auxiliaryCount }, (_, index) => auxiliary(`benchmark-aux-${index + 1}`));
-const counters = { updateAuxiliarySession: 0, getAuxiliarySession: 0, saveAuxiliaryDraft: 0, requestBytes: 0, responseBytes: 0 };
+const auxiliarySessions = Array.from({ length: auxiliaryCount }, (_, index) =>
+  auxiliary(`benchmark-aux-${index + 1}`),
+);
+const counters = {
+  updateAuxiliarySession: 0,
+  getAuxiliarySession: 0,
+  saveAuxiliaryDraft: 0,
+  requestBytes: 0,
+  responseBytes: 0,
+};
 const draftRecords = new Map();
 
+/** 測定用のAPI応答を作り、Auxiliaryの取得・保存回数とJSONの文字数を数える。 */
 function resultFor(name, args) {
   if (name === "getSession") return mainSession;
   if (name === "getSessionSummary") {
-    const { messages, stream, characterRuntimeSnapshot, ...summary } = mainSession;
+    const { messages, stream, characterRuntimeSnapshot, ...summary } =
+      mainSession;
     return summary;
   }
-  if (name === "listAuxiliarySessions") return auxiliarySessions.map(({ messages, composerDraft, characterRuntimeSnapshot, ...summary }) => summary);
+  if (name === "listAuxiliarySessions")
+    return auxiliarySessions.map(
+      ({ messages, composerDraft, characterRuntimeSnapshot, ...summary }) =>
+        summary,
+    );
   if (name === "getAuxiliarySession") {
     counters.getAuxiliarySession += 1;
     return auxiliarySessions.find((item) => item.id === args[0]) ?? null;
@@ -107,7 +130,14 @@ function resultFor(name, args) {
     if (existing) return existing;
     const session = auxiliarySessions.find((item) => item.id === args[0]);
     if (!session) return null;
-    return { auxiliarySessionId: session.id, parentSessionId: session.parentSessionId, incarnation: "benchmark-incarnation", durableRevision: 0, text: session.composerDraft, updatedAt: session.updatedAt };
+    return {
+      auxiliarySessionId: session.id,
+      parentSessionId: session.parentSessionId,
+      incarnation: "benchmark-incarnation",
+      durableRevision: 0,
+      text: session.composerDraft,
+      updatedAt: session.updatedAt,
+    };
   }
   if (name === "saveAuxiliaryDraft") {
     counters.saveAuxiliaryDraft += 1;
@@ -115,83 +145,237 @@ function resultFor(name, args) {
     counters.requestBytes += JSON.stringify(payload ?? null).length;
     const current = draftRecords.get(payload.auxiliarySessionId);
     const durableRevision = (current?.durableRevision ?? 0) + 1;
-    const ack = { auxiliarySessionId: payload.auxiliarySessionId, incarnation: payload.incarnation, durableRevision, updatedAt: payload.updatedAt };
-    draftRecords.set(payload.auxiliarySessionId, { ...payload, durableRevision });
+    const ack = {
+      auxiliarySessionId: payload.auxiliarySessionId,
+      incarnation: payload.incarnation,
+      durableRevision,
+      updatedAt: payload.updatedAt,
+    };
+    draftRecords.set(payload.auxiliarySessionId, {
+      ...payload,
+      durableRevision,
+    });
     counters.responseBytes += JSON.stringify({ outcome: "saved", ack }).length;
     return { outcome: "saved", ack };
   }
   if (name === "getAuxiliarySessionStatus") {
     const current = auxiliarySessions.find((item) => item.id === args[0]);
-    return current ? { id: current.id, parentSessionId: current.parentSessionId, status: current.status, createdAt: current.createdAt, incarnation: "benchmark-incarnation", runState: current.runState } : null;
+    return current
+      ? {
+          id: current.id,
+          parentSessionId: current.parentSessionId,
+          status: current.status,
+          createdAt: current.createdAt,
+          incarnation: "benchmark-incarnation",
+          runState: current.runState,
+        }
+      : null;
   }
   if (name === "acknowledgeSessionDraftFlush") return undefined;
-  if (name === "getAppSettings") return {
-    memoryGenerationEnabled: false, launchAtLoginEnabled: false, sessionTurnNotificationEnabled: false,
-    sessionTurnNotificationResponsePreviewEnabled: false, characterDefinitionEnabled: true,
-    characterAffectContextEnabled: false, conversationTimingEnabled: false, toolCallPresenceEnabled: false,
-    autoCollapseActionDockOnSend: false, scrollToLatestOnSend: true,
-    chatLayoutPreference: { header: "visible", sidePane: "visible", actionDock: "expanded" },
-    keyboardShortcuts: { overrides: {} }, memoryFileQuotaBytes: 0, glossaryProactiveCreateLimit: 0,
-    mateMemoryGenerationSettings: { priorityList: [], triggerIntervalMinutes: 60 },
-    codingProviderSettings: {}, memoryExtractionProviderSettings: {},
-  };
-  if (name === "getModelCatalog") return { workspacePath: args[0]?.workspacePath, providers: [] };
-  if (name === "getSessionGlossaryProjection") return { sessionId: "benchmark-main", revision: 0, state: { status: "ready", entries: [] } };
-  if (name === "previewComposerInput") return { text: args[1] ?? "", attachments: [], errors: [] };
-  if (name === "listSessionTurnQueueReceipts") return { receipts: [], nextCursor: null };
+  if (name === "getAppSettings")
+    return {
+      memoryGenerationEnabled: false,
+      launchAtLoginEnabled: false,
+      sessionTurnNotificationEnabled: false,
+      sessionTurnNotificationResponsePreviewEnabled: false,
+      characterDefinitionEnabled: true,
+      characterAffectContextEnabled: false,
+      conversationTimingEnabled: false,
+      toolCallPresenceEnabled: false,
+      autoCollapseActionDockOnSend: false,
+      scrollToLatestOnSend: true,
+      chatLayoutPreference: {
+        header: "visible",
+        sidePane: "visible",
+        actionDock: "expanded",
+      },
+      keyboardShortcuts: { overrides: {} },
+      memoryFileQuotaBytes: 0,
+      glossaryProactiveCreateLimit: 0,
+      mateMemoryGenerationSettings: {
+        priorityList: [],
+        triggerIntervalMinutes: 60,
+      },
+      codingProviderSettings: {},
+      memoryExtractionProviderSettings: {},
+    };
+  if (name === "getModelCatalog")
+    return { workspacePath: args[0]?.workspacePath, providers: [] };
+  if (name === "getSessionGlossaryProjection")
+    return {
+      sessionId: "benchmark-main",
+      revision: 0,
+      state: { status: "ready", entries: [] },
+    };
+  if (name === "previewComposerInput")
+    return { text: args[1] ?? "", attachments: [], errors: [] };
+  if (name === "listSessionTurnQueueReceipts")
+    return { receipts: [], nextCursor: null };
   if (name === "enqueueSessionTurn") {
     const request = args[1];
-    return { sessionId: args[0], incarnationId: request.incarnationId, id: request.clientRequestId, requestId: request.clientRequestId,
-      sequence: 1, state: "queued", captured: { request, attachments: [], provider: mainSession.provider, workspacePath: mainSession.workspacePath },
-      turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: now, updatedAt: now };
+    return {
+      sessionId: args[0],
+      incarnationId: request.incarnationId,
+      id: request.clientRequestId,
+      requestId: request.clientRequestId,
+      sequence: 1,
+      state: "queued",
+      captured: {
+        request,
+        attachments: [],
+        provider: mainSession.provider,
+        workspacePath: mainSession.workspacePath,
+      },
+      turnId: null,
+      userMessageSeq: null,
+      reason: null,
+      releasedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
   }
   if (name === "executeCoordination") {
-    if (args[0]?.operation === "list") return { items: [], total: 0, nextOffset: null };
-    throw new Error("The composer benchmark does not contain Coordination records.");
+    if (args[0]?.operation === "list")
+      return { items: [], total: 0, nextOffset: null };
+    throw new Error(
+      "The composer benchmark does not contain Coordination records.",
+    );
   }
   if (name.startsWith("list") || name.startsWith("search")) return [];
   if (name.startsWith("get")) return null;
-  if (name.startsWith("subscribe") || name === "onSessionTurnUpdated" || name === "onSessionTurnQueueChanged") return () => {};
+  if (
+    name.startsWith("subscribe") ||
+    name === "onSessionTurnUpdated" ||
+    name === "onSessionTurnQueueChanged"
+  )
+    return () => {};
   if (name.startsWith("validate")) return { valid: true };
-  if (name.startsWith("open") || name.startsWith("report") || name.startsWith("update") || name.startsWith("set")) return name === "updateSession" ? mainSession : undefined;
+  if (
+    name.startsWith("open") ||
+    name.startsWith("report") ||
+    name.startsWith("update") ||
+    name.startsWith("set")
+  )
+    return name === "updateSession" ? mainSession : undefined;
   return undefined;
 }
 
 const api = {};
 const names = [
-  "getSession", "getSessionSummary", "listAuxiliarySessions", "getAuxiliarySession", "updateAuxiliarySession", "getAppSettings", "getModelCatalog",
-  "getSessionGlossaryProjection", "previewComposerInput", "subscribeSessionInvalidation", "subscribeLiveSessionRun",
-  "subscribeAuxiliarySessionNavigation", "subscribeSessionGlossary", "getLiveSessionRun", "getSessionMessageArtifact",
-  "listSessionSkills", "listSessionCustomAgents", "listWorkspaceSkills", "listWorkspaceCustomAgents", "validateSessionWorkspace",
-  "updateSession", "runSessionTurn", "cancelSessionRun", "cancelAuxiliarySessionRun", "setSessionPinned", "deleteSession",
-  "enqueueSessionTurn", "getSessionTurnQueueReceipt", "listSessionTurnQueue", "listSessionTurnQueueReceipts", "cancelQueuedSessionTurn", "releaseInterruptedSessionTurn", "onSessionTurnQueueChanged",
-  "getFileRootDiff", "getFileRootGitHistoryDiff", "listFileRootChanges", "listSessionFilePins", "openSessionFilePreviewWindow", "openDiffWindow",
-  "openPath", "openSessionTerminal", "openSessionFilesDirectory", "openSessionFilesTerminal", "pickFiles", "pickSessionFiles",
-  "pickSessionFolder", "pickSessionImageFile", "copyFilesToSessionFiles", "savePastedSessionFile", "reportRendererLog",
-  "resolveLiveApproval", "resolveLiveElicitation", "searchSessionGlossary", "getAppBootStatus", "getMemoryV6Diagnostics",
-  "getLatestSessionTurn", "onSessionTurnUpdated", "getSessionCharacterUsage",
-  "createAuxiliarySession", "cancelAuxiliaryCreation", "getAuxiliaryCreationContext", "getAuxiliaryCreation",
+  "getSession",
+  "getSessionSummary",
+  "listAuxiliarySessions",
+  "getAuxiliarySession",
+  "updateAuxiliarySession",
+  "getAppSettings",
+  "getModelCatalog",
+  "getSessionGlossaryProjection",
+  "previewComposerInput",
+  "subscribeSessionInvalidation",
+  "subscribeLiveSessionRun",
+  "subscribeAuxiliarySessionNavigation",
+  "subscribeSessionGlossary",
+  "getLiveSessionRun",
+  "getSessionMessageArtifact",
+  "listSessionSkills",
+  "listSessionCustomAgents",
+  "listWorkspaceSkills",
+  "listWorkspaceCustomAgents",
+  "validateSessionWorkspace",
+  "updateSession",
+  "runSessionTurn",
+  "cancelSessionRun",
+  "cancelAuxiliarySessionRun",
+  "setSessionPinned",
+  "deleteSession",
+  "enqueueSessionTurn",
+  "getSessionTurnQueueReceipt",
+  "listSessionTurnQueue",
+  "listSessionTurnQueueReceipts",
+  "cancelQueuedSessionTurn",
+  "releaseInterruptedSessionTurn",
+  "onSessionTurnQueueChanged",
+  "getFileRootDiff",
+  "getFileRootGitHistoryDiff",
+  "listFileRootChanges",
+  "listSessionFilePins",
+  "openSessionFilePreviewWindow",
+  "openDiffWindow",
+  "openPath",
+  "openSessionTerminal",
+  "openSessionFilesDirectory",
+  "openSessionFilesTerminal",
+  "pickFiles",
+  "pickSessionFiles",
+  "pickSessionFolder",
+  "pickSessionImageFile",
+  "copyFilesToSessionFiles",
+  "savePastedSessionFile",
+  "reportRendererLog",
+  "resolveLiveApproval",
+  "resolveLiveElicitation",
+  "searchSessionGlossary",
+  "getAppBootStatus",
+  "getMemoryV6Diagnostics",
+  "getLatestSessionTurn",
+  "onSessionTurnUpdated",
+  "getSessionCharacterUsage",
+  "createAuxiliarySession",
+  "cancelAuxiliaryCreation",
+  "getAuxiliaryCreationContext",
+  "getAuxiliaryCreation",
   "updateChatLayoutPreference",
-  "subscribeOpenSessionWindowIds", "subscribeSessionWindowRestoreSet",
-  "getProviderQuotaTelemetry", "subscribeProviderQuotaTelemetry", "subscribeSessionContextTelemetry", "subscribeSessionBackgroundActivity",
-  "listOpenSessionWindowIds", "getSessionWindowRestoreSet",
+  "subscribeOpenSessionWindowIds",
+  "subscribeSessionWindowRestoreSet",
+  "getProviderQuotaTelemetry",
+  "subscribeProviderQuotaTelemetry",
+  "subscribeSessionContextTelemetry",
+  "subscribeSessionBackgroundActivity",
+  "listOpenSessionWindowIds",
+  "getSessionWindowRestoreSet",
   "subscribeSessionDraftFlushRequest",
   "subscribeSessionDraftFlushRelease",
   "subscribeAppSettings",
-  "subscribeOpenCoordination", "subscribeCoordinationChanged", "executeCoordination",
-  "getAuxiliaryDraft", "saveAuxiliaryDraft", "getAuxiliarySessionStatus",
+  "subscribeOpenCoordination",
+  "subscribeCoordinationChanged",
+  "executeCoordination",
+  "getAuxiliaryDraft",
+  "saveAuxiliaryDraft",
+  "getAuxiliarySessionStatus",
   "acknowledgeSessionDraftFlush",
-  "getConversationPage", "searchConversation", "listConversationNavigator",
-  "setSessionMessageBookmark", "setAuxiliaryMessageBookmark",
+  "getConversationPage",
+  "searchConversation",
+  "listConversationNavigator",
+  "setSessionMessageBookmark",
+  "setAuxiliaryMessageBookmark",
 ];
 for (const name of names) {
-  api[name] = (...args) => conversationLoading && ["getSession", "getSessionSummary", "listAuxiliarySessions", "getAuxiliarySession", "getConversationPage", "searchConversation", "listConversationNavigator", "setSessionMessageBookmark", "setAuxiliaryMessageBookmark"].includes(name)
-    ? ipcRenderer.invoke("benchmark:conversation", name, args, resultFor(name, args))
-    : name.startsWith("subscribe") || name === "onSessionTurnUpdated" || name === "onSessionTurnQueueChanged"
-    ? resultFor(name, args)
-    : name === "acknowledgeSessionDraftFlush"
-      ? resultFor(name, args)
-    : Promise.resolve(resultFor(name, args));
+  api[name] = (...args) =>
+    conversationLoading &&
+    [
+      "getSession",
+      "getSessionSummary",
+      "listAuxiliarySessions",
+      "getAuxiliarySession",
+      "getConversationPage",
+      "searchConversation",
+      "listConversationNavigator",
+      "setSessionMessageBookmark",
+      "setAuxiliaryMessageBookmark",
+    ].includes(name)
+      ? ipcRenderer.invoke(
+          "benchmark:conversation",
+          name,
+          args,
+          resultFor(name, args),
+        )
+      : name.startsWith("subscribe") ||
+          name === "onSessionTurnUpdated" ||
+          name === "onSessionTurnQueueChanged"
+        ? resultFor(name, args)
+        : name === "acknowledgeSessionDraftFlush"
+          ? resultFor(name, args)
+          : Promise.resolve(resultFor(name, args));
 }
 api.getBenchmarkTelemetry = () => ({
   auxiliaryCount,

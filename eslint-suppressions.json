@@ -1,34 +1,4 @@
 {
-  "scripts/benchmarks/benchmark-composer-input-preload.cjs": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
-  "scripts/benchmarks/benchmark-composer-input.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
-    }
-  },
-  "scripts/benchmarks/benchmark-conversation-loading.cjs": {
-    "jsdoc/require-jsdoc": {
-      "count": 9
-    }
-  },
-  "scripts/benchmarks/benchmark-conversation-storage-worker.mjs": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "scripts/benchmarks/benchmark-conversation-storage.mjs": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
-    }
-  },
-  "scripts/benchmarks/benchmark-data-loading.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 18
-    }
-  },
   "src-electron/app/main-broadcast-facade.ts": {
     "jsdoc/require-jsdoc": {
       "count": 17

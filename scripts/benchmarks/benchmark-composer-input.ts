@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/** 一つの入力条件で得た遅延標本、分位値、長いタスクと模擬APIの計数。 */
 type CaseResult = {
   owner: "main" | "auxiliary";
   auxiliaryCount: number;
@@ -16,23 +17,35 @@ type CaseResult = {
 };
 
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
-const preloadPath = resolve(root, "scripts", "benchmarks", "benchmark-composer-input-preload.cjs");
+const preloadPath = resolve(
+  root,
+  "scripts",
+  "benchmarks",
+  "benchmark-composer-input-preload.cjs",
+);
 
+/** 比較対象のRendererを指定でき、未指定ならこの作業ツリーのdistを使う。 */
 function resolveRendererPath(): string {
   const argumentIndex = process.argv.indexOf("--renderer-dir");
-  const rendererDir = argumentIndex >= 0 && process.argv[argumentIndex + 1]
-    ? process.argv[argumentIndex + 1]!
-    : resolve(root, "dist");
+  const rendererDir =
+    argumentIndex >= 0 && process.argv[argumentIndex + 1]
+      ? process.argv[argumentIndex + 1]!
+      : resolve(root, "dist");
   return resolve(rendererDir, "session.html");
 }
 const rendererPath = resolveRendererPath();
 
+/** 元の順序を保ったまま、昇順の標本から指定分位の順位を取り、空なら0を返す。 */
 function percentile(values: number[], ratio: number): number {
   const sorted = [...values].sort((a, b) => a - b);
   if (sorted.length === 0) return 0;
-  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * ratio) - 1)] ?? 0;
+  return (
+    sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * ratio) - 1)] ??
+    0
+  );
 }
 
+/** 入力可能なテキスト欄の描画を待ち、15秒で準備できなければ測定を中断する。 */
 async function waitForTextarea(window: BrowserWindow): Promise<void> {
   await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
     const started = performance.now();
@@ -46,7 +59,12 @@ async function waitForTextarea(window: BrowserWindow): Promise<void> {
   })`);
 }
 
-async function measureInput(window: BrowserWindow, inputEvents: KeyboardInputEvent[], pasteText?: string): Promise<number[]> {
+/** 入力欄を初期化し、各入力イベントから期待する文字数を確認した後の第2描画フレームまでを測る。 */
+async function measureInput(
+  window: BrowserWindow,
+  inputEvents: KeyboardInputEvent[],
+  pasteText?: string,
+): Promise<number[]> {
   await window.webContents.executeJavaScript(`(() => {
     const textarea = document.querySelector('textarea[data-shortcut-scope="composer"]');
     textarea.focus();
@@ -62,10 +80,15 @@ async function measureInput(window: BrowserWindow, inputEvents: KeyboardInputEve
   })()`);
   const samples: number[] = [];
   for (const event of inputEvents) {
-    const beforeLength = await window.webContents.executeJavaScript("document.querySelector('textarea[data-shortcut-scope=\"composer\"]')?.value.length ?? 0") as number;
-    const targetLength = pasteText !== undefined
-      ? beforeLength + pasteText.length
-      : event.type === "char" ? beforeLength + 1 : Math.max(0, beforeLength - 1);
+    const beforeLength = (await window.webContents.executeJavaScript(
+      "document.querySelector('textarea[data-shortcut-scope=\"composer\"]')?.value.length ?? 0",
+    )) as number;
+    const targetLength =
+      pasteText !== undefined
+        ? beforeLength + pasteText.length
+        : event.type === "char"
+          ? beforeLength + 1
+          : Math.max(0, beforeLength - 1);
     if (pasteText !== undefined) {
       await window.webContents.executeJavaScript(`(() => {
         const textarea = document.querySelector('textarea[data-shortcut-scope="composer"]');
@@ -78,7 +101,8 @@ async function measureInput(window: BrowserWindow, inputEvents: KeyboardInputEve
     } else {
       window.webContents.sendInputEvent(event);
     }
-    const rendererLatency = await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+    const rendererLatency = (await window.webContents
+      .executeJavaScript(`new Promise((resolve, reject) => {
       const started = performance.now();
       const poll = () => {
         const textarea = document.querySelector('textarea[data-shortcut-scope="composer"]');
@@ -90,20 +114,41 @@ async function measureInput(window: BrowserWindow, inputEvents: KeyboardInputEve
         if (performance.now() - started > 2000) return reject(new Error("Composer input was not observed."));
         requestAnimationFrame(poll);
       }; poll();
-    })`) as number;
+    })`)) as number;
     samples.push(rendererLatency);
   }
   return samples;
 }
 
-async function runCase(auxiliaryCount: number, history: "short" | "long", owner: CaseResult["owner"], operation: CaseResult["operation"]): Promise<CaseResult> {
-  const window = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: {
-    preload: preloadPath, contextIsolation: true, sandbox: false, backgroundThrottling: false,
-    additionalArguments: [`--benchmark-auxiliary-count=${auxiliaryCount}`, `--benchmark-history=${history}`],
-  } });
+/** 条件ごとに非表示のウィンドウを開き、最初の5標本を除いて集計し、終了時に閉じる。 */
+async function runCase(
+  auxiliaryCount: number,
+  history: "short" | "long",
+  owner: CaseResult["owner"],
+  operation: CaseResult["operation"],
+): Promise<CaseResult> {
+  const window = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 900,
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      sandbox: false,
+      backgroundThrottling: false,
+      additionalArguments: [
+        `--benchmark-auxiliary-count=${auxiliaryCount}`,
+        `--benchmark-history=${history}`,
+      ],
+    },
+  });
   try {
-    window.webContents.on("console-message", (_event, _level, message) => { if (message.includes("error")) console.error(message); });
-    await window.loadFile(rendererPath, { search: "?sessionId=benchmark-main" });
+    window.webContents.on("console-message", (_event, _level, message) => {
+      if (message.includes("error")) console.error(message);
+    });
+    await window.loadFile(rendererPath, {
+      search: "?sessionId=benchmark-main",
+    });
     await waitForTextarea(window);
     if (owner === "auxiliary") {
       await window.webContents.executeJavaScript(`(() => {
@@ -113,40 +158,80 @@ async function runCase(auxiliaryCount: number, history: "short" | "long", owner:
       })()`);
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    const events: KeyboardInputEvent[] = operation === "delete"
-      ? Array.from({ length: 29 }, () => ({ type: "keyDown", keyCode: "BACKSPACE" as string }))
-      : Array.from({ length: 29 }, () => ({ type: "char", keyCode: "x" as string }));
+    const events: KeyboardInputEvent[] =
+      operation === "delete"
+        ? Array.from({ length: 29 }, () => ({
+            type: "keyDown",
+            keyCode: "BACKSPACE" as string,
+          }))
+        : Array.from({ length: 29 }, () => ({
+            type: "char",
+            keyCode: "x" as string,
+          }));
     const pasteText = operation === "paste" ? "x".repeat(160) : undefined;
     const samples = (await measureInput(window, events, pasteText)).slice(5);
-    const telemetry = await window.webContents.executeJavaScript("window.withmate.getBenchmarkTelemetry()");
-    const longTaskCount = await window.webContents.executeJavaScript("window.__withmateBenchmark?.longTasks ?? 0") as number;
-    return { owner, auxiliaryCount, history, operation, samplesMs: samples, medianMs: percentile(samples, 0.5), p95Ms: percentile(samples, 0.95), longTaskCount, counters: telemetry.counters };
+    const telemetry = await window.webContents.executeJavaScript(
+      "window.withmate.getBenchmarkTelemetry()",
+    );
+    const longTaskCount = (await window.webContents.executeJavaScript(
+      "window.__withmateBenchmark?.longTasks ?? 0",
+    )) as number;
+    return {
+      owner,
+      auxiliaryCount,
+      history,
+      operation,
+      samplesMs: samples,
+      medianMs: percentile(samples, 0.5),
+      p95Ms: percentile(samples, 0.95),
+      longTaskCount,
+      counters: telemetry.counters,
+    };
   } finally {
     await window.close();
   }
 }
 
+/** ビルド済みRendererで入力条件の組み合わせを実行し、測定環境と結果をJSONで出力する。 */
 async function main(): Promise<void> {
-  if (!existsSync(rendererPath)) throw new Error("dist/session.html がありません。先に npm run build:renderer を実行してください。");
+  if (!existsSync(rendererPath))
+    throw new Error(
+      "dist/session.html がありません。先に npm run build:renderer を実行してください。",
+    );
   await app.whenReady();
   const results: CaseResult[] = [];
-  for (const auxiliaryCount of [1, 10, 100]) for (const history of ["short", "long"] as const) for (const owner of ["main", "auxiliary"] as const) for (const operation of ["type", "delete", "paste"] as const) {
-    results.push(await runCase(auxiliaryCount, history, owner, operation));
-  }
-  console.log(JSON.stringify({
-    benchmark: "composer-input-render-ipc",
-    commit: process.env.GIT_COMMIT ?? "unknown",
-    rendererPath,
-    electronVersion: process.versions.electron,
-    platform: process.platform,
-    architecture: process.arch,
-    viewport: { width: 1280, height: 900 },
-    measurement: "input event to second requestAnimationFrame; not actual paint latency; synthetic API without DB",
-    warmupSamplesPerCase: 5,
-    samplesPerCase: 24,
-    results,
-  }, null, 2));
+  for (const auxiliaryCount of [1, 10, 100])
+    for (const history of ["short", "long"] as const)
+      for (const owner of ["main", "auxiliary"] as const)
+        for (const operation of ["type", "delete", "paste"] as const) {
+          results.push(
+            await runCase(auxiliaryCount, history, owner, operation),
+          );
+        }
+  console.log(
+    JSON.stringify(
+      {
+        benchmark: "composer-input-render-ipc",
+        commit: process.env.GIT_COMMIT ?? "unknown",
+        rendererPath,
+        electronVersion: process.versions.electron,
+        platform: process.platform,
+        architecture: process.arch,
+        viewport: { width: 1280, height: 900 },
+        measurement:
+          "input event to second requestAnimationFrame; not actual paint latency; synthetic API without DB",
+        warmupSamplesPerCase: 5,
+        samplesPerCase: 24,
+        results,
+      },
+      null,
+      2,
+    ),
+  );
   app.quit();
 }
 
-main().catch((error) => { console.error(error); app.exit(1); });
+main().catch((error) => {
+  console.error(error);
+  app.exit(1);
+});
