@@ -300,17 +300,25 @@ export async function inspectComments(file, source) {
     } else if (node.type === "BlockStatement" || node.type === "SwitchCase") {
       // 同一ブロックの直接の文だけを数える。分岐などは各構文の規則で検査する。
       let count = 0;
+      let segment = "";
       // 子ブロック・ラムダの内部は、このループには現れない。
       for (const statement of node.body ?? node.consequent) {
         const straight = ["VariableDeclaration", "ExpressionStatement", "ReturnStatement", "ThrowStatement"].includes(statement.type);
+        if (!straight) {
+          // 制御構文・名前付き宣言を段落の比較境界にする。
+          count = 0;
+          segment = "";
+          continue;
+        }
         const lower = statement === node.body?.[0] ? start(node) + 1 : -1;
-        // 同じブロックの段落説明か、独自に検査する制御構文で区切る。
-        if (hasBody(start(statement), lower) || !straight) count = 0;
-        // 制御構文や宣言は直線処理の文数には入れない。
-        if (!straight) continue;
-        // 同じ無説明区間では、上限を最初に超えた位置だけを報告する。
-        if (++count === paragraphLimit + 1) {
-          report("段落", statement, scope, signature(statement), `同じブロックの直線処理は ${paragraphLimit} 文以内で区切り、目的を説明してください。`);
+        // 位置がずれても同じ連続処理なら、説明追加前後で同じ比較キーにする。
+        segment ||= signature(statement);
+        // このブロックで説明の付いた文は、新しい段落の先頭になる。
+        if (hasBody(start(statement), lower)) count = 0;
+        count += 1;
+        // 上限を超える区切りの数を比較し、説明を足すだけでは違反を増やさない。
+        if (count > paragraphLimit && (count - 1) % paragraphLimit === 0) {
+          report("段落", statement, scope, segment, `同じブロックの直線処理は ${paragraphLimit} 文以内で区切り、目的を説明してください。`);
         }
       }
     }

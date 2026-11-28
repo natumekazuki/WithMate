@@ -83,6 +83,20 @@ test("既存の英語JSDocを消すと欠落を新しい違反として検出す
   assert.deepEqual(addedFindings(earlier, translated), []);
 });
 
+/** 段落説明を翻訳しただけで、場所が動いた既存の無説明区間を新規違反にしない。 */
+test("段落の識別子を報告行に依存させない", async () => {
+  const steps = Array.from({ length: 32 }, (_, index) => "  steps.push(" + index + ");");
+  steps.splice(8, 0, "  // Starts the second stage.");
+  const before = "/** 手順を順に進める。 */\nfunction walk() {\n" + steps.join("\n") + "\n}";
+  const translated = before.replace("Starts the second stage.", "次の処理段落を開始する。");
+  const earlier = await inspectComments("example.ts", before);
+  const after = await inspectComments("example.ts", translated);
+  assert.equal(earlier.length, 2);
+  assert.equal(after.length, 1);
+  assert.notEqual(earlier[0].line, after[0].line);
+  assert.deepEqual(addedFindings(earlier, after), []);
+});
+
 /** 指定された一時 repository でコマンドを実行し、hook の stdout と stderr を合わせて返す。 */
 function command(cwd: string, name: string, ...args: string[]) {
   const result = spawnSync(name, args, { cwd, encoding: "utf8", timeout: 30_000 });
