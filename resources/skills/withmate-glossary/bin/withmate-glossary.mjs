@@ -21612,10 +21612,13 @@ function createAgentRuntimeOwnerChallenge(apiSecret, applicationInstanceId, runt
 	return createHmac("sha256", apiSecret).update(`${applicationInstanceId}\n${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
 }
 // src-shared/agent-runtime/agent-runtime-binding-contract.ts
+/** 環境変数で渡す、Agent runtimeのバインディング参照のキー。 */
 var WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE";
+/** 値が1なら参照を持たない呼び出しを受け付けないことを通知するキー。 */
 var WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED";
 /** Agent runtime の所有者をクライアント単位で特定する正規のセレクター。 */
 var WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV = "WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID";
+/** クライアントが接続先runtimeの世代を識別するための環境変数キー。 */
 var WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV = "WITHMATE_AGENT_RUNTIME_GENERATION_ID";
 var RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME = "runtime-discovery";
 var RUNTIME_DISCOVERY_ENTRY_FILE_NAME = "entry.json";

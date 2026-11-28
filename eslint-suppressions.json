@@ -1529,16 +1529,6 @@
       "count": 6
     }
   },
-  "src-shared/agent-runtime/agent-runtime-binding-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
-    }
-  },
-  "src-shared/agent-runtime/agent-runtime-source.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
   "src-shared/auxiliary/auxiliary-draft-contract.ts": {
     "jsdoc/require-jsdoc": {
       "count": 6
@@ -1647,16 +1637,6 @@
   "src-shared/file-explorer/unified-diff.ts": {
     "jsdoc/require-jsdoc": {
       "count": 7
-    }
-  },
-  "src-shared/files/composer-image-reference.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 15
-    }
-  },
-  "src-shared/files/path-reference.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
     }
   },
   "src-shared/glossary/glossary-contract.ts": {
@@ -1962,26 +1942,6 @@
   "src-shared/settings/withmate-auto-review.ts": {
     "jsdoc/require-jsdoc": {
       "count": 5
-    }
-  },
-  "src-shared/text/codex-file-references.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 13
-    }
-  },
-  "src-shared/text/find-text-matches.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
-  "src-shared/text/markdown-frontmatter.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
-  "src-shared/text/provider-response-markdown.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
     }
   },
   "src-shared/window/app-boot-state.ts": {
