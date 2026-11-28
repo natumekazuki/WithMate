@@ -2,6 +2,7 @@ import type { RefObject } from "react";
 
 import type { DirectoryPathValidationState } from "./directory-path-validation.js";
 
+/** ディレクトリの入力欄に検証中の表示と結果を関連付け、読み取り専用でも現在値を示す。 */
 export function DirectoryPathField({
   id,
   label,
@@ -51,11 +52,16 @@ export function DirectoryPathField({
     <div className="launch-field directory-path-field">
       {label ? (
         <div className="launch-field-heading">
-          <label className="launch-field-label" htmlFor={id}>{label}</label>
+          <label className="launch-field-label" htmlFor={id}>
+            {label}
+          </label>
           {feedback}
         </div>
       ) : null}
-      <div className="launch-field-input-shell directory-path-validation-input" aria-busy={checking}>
+      <div
+        className="launch-field-input-shell directory-path-validation-input"
+        aria-busy={checking}
+      >
         <input
           id={id}
           ref={inputRef}
@@ -71,9 +77,18 @@ export function DirectoryPathField({
           aria-describedby={errorMessage ? `${id}-error` : undefined}
           onChange={(event) => onChange(event.target.value)}
         />
-        {checking ? <span className="directory-path-validation-spinner" aria-hidden="true" /> : null}
+        {checking ? (
+          <span
+            className="directory-path-validation-spinner"
+            aria-hidden="true"
+          />
+        ) : null}
       </div>
-      {checking ? <span className="visually-hidden" role="status" aria-live="polite">{checkingLabel}</span> : null}
+      {checking ? (
+        <span className="visually-hidden" role="status" aria-live="polite">
+          {checkingLabel}
+        </span>
+      ) : null}
       {!label && errorMessage ? feedback : null}
     </div>
   );

@@ -3044,36 +3044,6 @@
       "count": 10
     }
   },
-  "src/launch/directory-path-field.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
-  "src/launch/directory-path-validation.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 10
-    }
-  },
-  "src/launch/launch-dialog-shell.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
-  "src/launch/launch-feedback.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
-  "src/launch/launch-provider-selection.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
-  "src/launch/provider-launch-picker.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
   "src/local-pr/LocalPrAttachmentEditor.tsx": {
     "jsdoc/require-jsdoc": {
       "count": 1
@@ -3094,31 +3064,6 @@
       "count": 3
     }
   },
-  "src/mate/MateProfileScreen.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
-  "src/mate/MateSetupPanel.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "src/mate/home-mate-setup-props.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
-  "src/mate/mate-status-load-operation.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "src/mate/mate-status-refreshers.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 4
-    }
-  },
   "src/pdf-reader/PdfReaderApp.tsx": {
     "jsdoc/require-jsdoc": {
       "count": 22
@@ -3137,26 +3082,6 @@
   "src/pdf-reader/pdf-reader-engine.ts": {
     "jsdoc/require-jsdoc": {
       "count": 19
-    }
-  },
-  "src/prompt-templates/PromptTemplateWorkspace.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 22
-    }
-  },
-  "src/provider-usage/provider-quota-projection.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
-  "src/provider-usage/provider-quota.tsx": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
-    }
-  },
-  "src/provider-usage/use-provider-quota.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
     }
   },
   "src/renderer-env.d.ts": {
@@ -3297,11 +3222,6 @@
   "src/settings/use-settings-feedback.ts": {
     "jsdoc/require-jsdoc": {
       "count": 4
-    }
-  },
-  "src/skills/skill-discovery-request.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
     }
   },
   "src/terminal/session-terminal.tsx": {

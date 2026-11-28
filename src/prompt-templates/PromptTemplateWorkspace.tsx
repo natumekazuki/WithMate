@@ -1,4 +1,11 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 
 import { focusRovingItemByKey } from "../ui/a11y.js";
@@ -6,9 +13,13 @@ import { BackNavigationButton } from "../ui/back-navigation-button.js";
 import { ButtonContent } from "../ui/button-content.js";
 import { CloseButton } from "../ui/close-button.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
-import { parseCreatePromptTemplateInput, type PromptTemplate } from "../../src-shared/prompt-template.js";
+import {
+  parseCreatePromptTemplateInput,
+  type PromptTemplate,
+} from "../../src-shared/prompt-template.js";
 import type { WithMateWindowPromptTemplateApi } from "../../src-shared/ipc/withmate-window-api.js";
 
+/** 一覧の取得・保存を担う API と、挿入・画面復帰・閉じる前の確認を接続する入口。 */
 type PromptTemplateWorkspaceProps = {
   api: WithMateWindowPromptTemplateApi;
   canInsert?: boolean;
@@ -17,8 +28,10 @@ type PromptTemplateWorkspaceProps = {
   onInsert: (prompt: string) => void;
 };
 
+/** 保存済みの本文を挿入する選択画面と、下書きを変更する編集画面を区別する。 */
 type PromptTemplateWorkspaceMode = "select" | "edit";
 
+/** 編集中の名前と本文。保存済みの対象がなければ ID は null。 */
 type EditorState = {
   id: string | null;
   name: string;
@@ -27,15 +40,25 @@ type EditorState = {
 
 const EMPTY_EDITOR: EditorState = { id: null, name: "", prompt: "" };
 
+/** 保存済みテンプレートの識別子と値を、フォームが扱う編集用の状態へ写す。 */
 function toEditorState(template: PromptTemplate): EditorState {
   return { id: template.id, name: template.name, prompt: template.prompt };
 }
 
+/** Error のメッセージは保持し、それ以外の失敗には更新失敗の共通表示を使う。 */
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Could not update the template.";
+  return error instanceof Error
+    ? error.message
+    : "Could not update the template.";
 }
 
-function TemplateErrorDetails({ message, notice, label, recoveryAction }: {
+/** 支援技術に失敗を通知し、診断の詳細と、渡された場合は復旧操作を提示する。 */
+function TemplateErrorDetails({
+  message,
+  notice,
+  label,
+  recoveryAction,
+}: {
   message: string;
   notice: string;
   label: string;
@@ -49,21 +72,33 @@ function TemplateErrorDetails({ message, notice, label, recoveryAction }: {
 
   useLayoutEffect(() => {
     if (!expanded) return;
+    /** 開閉ボタンを基準に上下の空きを選び、画面に収まる位置と高さ、配色を適用する。 */
     const positionPanel = () => {
       const anchor = triggerRef.current!;
       const panel = panelRef.current!;
       const rect = anchor.getBoundingClientRect();
       const margin = 12;
       const gap = 8;
-      const belowSpace = Math.max(0, window.innerHeight - rect.bottom - gap - margin);
+      const belowSpace = Math.max(
+        0,
+        window.innerHeight - rect.bottom - gap - margin,
+      );
       const aboveSpace = Math.max(0, rect.top - gap - margin);
       const useBelow = belowSpace >= 320 || belowSpace >= aboveSpace;
       const maxHeight = Math.min(320, useBelow ? belowSpace : aboveSpace);
       panel.style.maxHeight = `${maxHeight}px`;
       panel.style.setProperty("--template-error-height", `${maxHeight}px`);
       const anchorStyle = window.getComputedStyle(anchor);
-      for (const property of ["--ink", "--muted", "--character-main", "--character-sub"]) {
-        panel.style.setProperty(property, anchorStyle.getPropertyValue(property));
+      for (const property of [
+        "--ink",
+        "--muted",
+        "--character-main",
+        "--character-sub",
+      ]) {
+        panel.style.setProperty(
+          property,
+          anchorStyle.getPropertyValue(property),
+        );
       }
       const panelRect = panel.getBoundingClientRect();
       panel.style.left = `${Math.max(margin, Math.min(rect.left, window.innerWidth - panelRect.width - margin))}px`;
@@ -81,12 +116,17 @@ function TemplateErrorDetails({ message, notice, label, recoveryAction }: {
 
   useEffect(() => {
     if (!expanded) return;
+    /** 操作ボタンや詳細パネルの外を押した場合に限り、詳細を閉じる。 */
     const closeOutside = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (!actionsRef.current!.contains(target) && !panelRef.current!.contains(target)) {
+      if (
+        !actionsRef.current!.contains(target) &&
+        !panelRef.current!.contains(target)
+      ) {
         setExpanded(false);
       }
     };
+    /** Escape は詳細を閉じる操作として消費し、開いたボタンへフォーカスを戻す。 */
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -105,7 +145,9 @@ function TemplateErrorDetails({ message, notice, label, recoveryAction }: {
 
   return (
     <div className="prompt-template-error">
-      <span className="sr-only" role="alert">{notice}</span>
+      <span className="sr-only" role="alert">
+        {notice}
+      </span>
       <div ref={actionsRef} className="prompt-template-error-actions">
         {recoveryAction}
         <button
@@ -119,29 +161,47 @@ function TemplateErrorDetails({ message, notice, label, recoveryAction }: {
           aria-haspopup="dialog"
           onClick={() => setExpanded((current) => !current)}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            aria-hidden="true"
+          >
             <circle cx="12" cy="12" r="9" />
             <path d="M12 7v6m0 3v1" strokeLinecap="round" />
           </svg>
         </button>
       </div>
-      {expanded ? createPortal(
-        <div ref={panelRef} id={detailsId} className="prompt-template-error-popover" role="dialog" aria-label={label} tabIndex={-1}>
-          <p className="prompt-template-error-message" tabIndex={0}>{message}</p>
-          <CloseButton
-            ariaLabel="Close error details"
-            onClose={() => {
-              setExpanded(false);
-              triggerRef.current!.focus();
-            }}
-          />
-        </div>,
-        document.body,
-      ) : null}
+      {expanded
+        ? createPortal(
+            <div
+              ref={panelRef}
+              id={detailsId}
+              className="prompt-template-error-popover"
+              role="dialog"
+              aria-label={label}
+              tabIndex={-1}
+            >
+              <p className="prompt-template-error-message" tabIndex={0}>
+                {message}
+              </p>
+              <CloseButton
+                ariaLabel="Close error details"
+                onClose={() => {
+                  setExpanded(false);
+                  triggerRef.current!.focus();
+                }}
+              />
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
 
+/** 保存済み本文の挿入とテンプレートの編集を分離し、閉じる前に未保存変更を確認する。 */
 export function PromptTemplateWorkspace({
   api,
   canInsert = true,
@@ -155,8 +215,13 @@ export function PromptTemplateWorkspace({
   const [isLoading, setIsLoading] = useState(true);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadError, setLoadError] = useState("");
-  const [savingAction, setSavingAction] = useState<"save" | "delete" | null>(null);
-  const [error, setError] = useState<{ message: string; isInput: boolean } | null>(null);
+  const [savingAction, setSavingAction] = useState<"save" | "delete" | null>(
+    null,
+  );
+  const [error, setError] = useState<{
+    message: string;
+    isInput: boolean;
+  } | null>(null);
   const inputErrorId = useId();
   const templatesRef = useRef<PromptTemplate[]>([]);
   const pickerListRef = useRef<HTMLDivElement | null>(null);
@@ -166,17 +231,21 @@ export function PromptTemplateWorkspace({
   const shouldFocusPickerRef = useRef(true);
   const isSaving = savingAction !== null;
 
-  const selectedTemplate = templates.find((template) => template.id === editor.id) ?? null;
+  const selectedTemplate =
+    templates.find((template) => template.id === editor.id) ?? null;
   const isDirty = selectedTemplate
-    ? editor.name !== selectedTemplate.name || editor.prompt !== selectedTemplate.prompt
+    ? editor.name !== selectedTemplate.name ||
+      editor.prompt !== selectedTemplate.prompt
     : editor.name.length > 0 || editor.prompt.length > 0;
   const closeGuardRef = useRef<() => boolean>(() => true);
-  closeGuardRef.current = () => !isSaving && (!isDirty || window.confirm("Discard unsaved changes?"));
+  closeGuardRef.current = () =>
+    !isSaving && (!isDirty || window.confirm("Discard unsaved changes?"));
 
   useEffect(() => {
     if (!onRegisterCloseGuard) {
       return;
     }
+    /** 登録を張り直さず、閉じる操作のたびに現在の確認条件を参照する。 */
     const guard = () => closeGuardRef.current();
     onRegisterCloseGuard(guard);
     return () => onRegisterCloseGuard(null);
@@ -187,6 +256,7 @@ export function PromptTemplateWorkspace({
     let receivedNotification = false;
     setIsLoading(true);
     setLoadError("");
+    /** 一覧を更新し、保存済みの値と異なるローカル編集は更新通知で上書きしない。 */
     const applyTemplates = (nextTemplates: PromptTemplate[]) => {
       if (!active) {
         return;
@@ -198,10 +268,16 @@ export function PromptTemplateWorkspace({
       setLoadError("");
       setEditor((current) => {
         if (current.id) {
-          const nextSelected = nextTemplates.find((template) => template.id === current.id);
-          const previousSelected = currentTemplates.find((template) => template.id === current.id);
+          const nextSelected = nextTemplates.find(
+            (template) => template.id === current.id,
+          );
+          const previousSelected = currentTemplates.find(
+            (template) => template.id === current.id,
+          );
           if (nextSelected && previousSelected) {
-            const hasLocalEdits = current.name !== previousSelected.name || current.prompt !== previousSelected.prompt;
+            const hasLocalEdits =
+              current.name !== previousSelected.name ||
+              current.prompt !== previousSelected.prompt;
             return hasLocalEdits ? current : toEditorState(nextSelected);
           }
           if (nextSelected) {
@@ -211,21 +287,30 @@ export function PromptTemplateWorkspace({
         if (current.name || current.prompt) {
           return current;
         }
-        return nextTemplates[0] ? toEditorState(nextTemplates[0]) : EMPTY_EDITOR;
+        return nextTemplates[0]
+          ? toEditorState(nextTemplates[0])
+          : EMPTY_EDITOR;
       });
     };
     const unsubscribe = api.subscribePromptTemplates((nextTemplates) => {
       receivedNotification = true;
       applyTemplates(nextTemplates);
     });
-    void api.listPromptTemplates().then((nextTemplates) => {
-      if (!receivedNotification) applyTemplates(nextTemplates);
-    }).catch((loadError) => {
-      if (active && !receivedNotification) {
-        setIsLoading(false);
-        setLoadError(loadError instanceof Error ? loadError.message : "Could not load templates.");
-      }
-    });
+    void api
+      .listPromptTemplates()
+      .then((nextTemplates) => {
+        if (!receivedNotification) applyTemplates(nextTemplates);
+      })
+      .catch((loadError) => {
+        if (active && !receivedNotification) {
+          setIsLoading(false);
+          setLoadError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Could not load templates.",
+          );
+        }
+      });
     return () => {
       active = false;
       unsubscribe();
@@ -245,12 +330,21 @@ export function PromptTemplateWorkspace({
       pickerList?.focus();
       return;
     }
-    if (document.activeElement !== pickerList && pickerList?.contains(document.activeElement)) {
+    if (
+      document.activeElement !== pickerList &&
+      pickerList?.contains(document.activeElement)
+    ) {
       shouldFocusPickerRef.current = false;
       return;
     }
-    const firstSelectableTemplate = pickerList?.querySelector<HTMLElement>("[role=\"option\"]:not([disabled])");
-    (firstSelectableTemplate ?? pickerRetryButtonRef.current ?? pickerEditButtonRef.current)?.focus();
+    const firstSelectableTemplate = pickerList?.querySelector<HTMLElement>(
+      '[role="option"]:not([disabled])',
+    );
+    (
+      firstSelectableTemplate ??
+      pickerRetryButtonRef.current ??
+      pickerEditButtonRef.current
+    )?.focus();
     shouldFocusPickerRef.current = false;
   }, [isLoading, loadError, mode]);
 
@@ -260,10 +354,14 @@ export function PromptTemplateWorkspace({
     }
   }, [mode]);
 
+  /** 保存や削除の途中なら遷移を拒み、未保存変更があれば破棄の可否を尋ねる。 */
   const confirmDiscard = () => closeGuardRef.current();
 
-  const defaultEditor = templates[0] ? toEditorState(templates[0]) : EMPTY_EDITOR;
+  const defaultEditor = templates[0]
+    ? toEditorState(templates[0])
+    : EMPTY_EDITOR;
 
+  /** 一覧の取得に成功し、現在の編集を離れられるときだけ指定した下書きで編集画面を開く。 */
   const openEditor = (nextEditor: EditorState = defaultEditor) => {
     if (isLoading || loadError || !confirmDiscard()) {
       return;
@@ -273,17 +371,21 @@ export function PromptTemplateWorkspace({
     setError(null);
   };
 
+  /** 破棄の確認後、未保存の下書きを保存済みの値または既定の値に戻して選択画面へ移る。 */
   const returnToPicker = () => {
     if (!confirmDiscard()) {
       return;
     }
     if (isDirty) {
-      setEditor(selectedTemplate ? toEditorState(selectedTemplate) : defaultEditor);
+      setEditor(
+        selectedTemplate ? toEditorState(selectedTemplate) : defaultEditor,
+      );
     }
     setMode("select");
     setError(null);
   };
 
+  /** 現在の編集を離れられる場合に保存済みテンプレートを編集対象にし、本文は挿入しない。 */
   const selectTemplateForEditor = (template: PromptTemplate) => {
     if (!confirmDiscard()) {
       return;
@@ -292,6 +394,7 @@ export function PromptTemplateWorkspace({
     setError(null);
   };
 
+  /** 現在の編集を離れられる場合に、ID のない空の下書きへ切り替える。 */
   const createNew = () => {
     if (!confirmDiscard()) {
       return;
@@ -300,6 +403,7 @@ export function PromptTemplateWorkspace({
     setError(null);
   };
 
+  /** 入力を検証してから作成または更新し、失敗時は入力を保ったまま修正可能なエラーを区別する。 */
   const save = async (): Promise<boolean> => {
     setError(null);
     try {
@@ -311,13 +415,23 @@ export function PromptTemplateWorkspace({
     setSavingAction("save");
     try {
       const nextTemplates = editor.id
-        ? await api.updatePromptTemplate({ id: editor.id, name: editor.name, prompt: editor.prompt })
-        : await api.createPromptTemplate({ name: editor.name, prompt: editor.prompt });
+        ? await api.updatePromptTemplate({
+            id: editor.id,
+            name: editor.name,
+            prompt: editor.prompt,
+          })
+        : await api.createPromptTemplate({
+            name: editor.name,
+            prompt: editor.prompt,
+          });
       templatesRef.current = nextTemplates;
       setTemplates(nextTemplates);
       const saved = editor.id
         ? nextTemplates.find((template) => template.id === editor.id)
-        : nextTemplates.find((template) => template.name === editor.name.trim().replace(/\s+/g, " "));
+        : nextTemplates.find(
+            (template) =>
+              template.name === editor.name.trim().replace(/\s+/g, " "),
+          );
       if (saved) {
         setEditor(toEditorState(saved));
       }
@@ -326,13 +440,17 @@ export function PromptTemplateWorkspace({
       const message = errorMessage(saveError);
       const duplicateName = "A template with the same name already exists.";
       const isDuplicateName = message.endsWith(duplicateName);
-      setError({ message: isDuplicateName ? duplicateName : message, isInput: isDuplicateName });
+      setError({
+        message: isDuplicateName ? duplicateName : message,
+        isInput: isDuplicateName,
+      });
       return false;
     } finally {
       setSavingAction(null);
     }
   };
 
+  /** 保存済みの対象だけを確認後に削除し、成功したら先頭のテンプレートか空の下書きに切り替える。 */
   const remove = async () => {
     if (!editor.id || !window.confirm(`Delete "${editor.name}"?`)) {
       return;
@@ -343,7 +461,9 @@ export function PromptTemplateWorkspace({
       const nextTemplates = await api.deletePromptTemplate(editor.id);
       templatesRef.current = nextTemplates;
       setTemplates(nextTemplates);
-      setEditor(nextTemplates[0] ? toEditorState(nextTemplates[0]) : EMPTY_EDITOR);
+      setEditor(
+        nextTemplates[0] ? toEditorState(nextTemplates[0]) : EMPTY_EDITOR,
+      );
     } catch (deleteError) {
       setError({ message: errorMessage(deleteError), isInput: false });
     } finally {
@@ -351,6 +471,7 @@ export function PromptTemplateWorkspace({
     }
   };
 
+  /** 挿入が許可されているときだけ、選択した保存済みの本文を呼び出し元へ渡す。 */
   const handleSelectTemplate = (template: PromptTemplate) => {
     if (!canInsert) {
       return;
@@ -358,9 +479,14 @@ export function PromptTemplateWorkspace({
     onInsert(template.prompt);
   };
 
+  /** 保存済みの選択肢、読み込み・失敗・空の状態と、それぞれの状態で可能な操作を表示する。 */
   const renderPicker = () => {
     const hasTemplates = !isLoading && !loadError && templates.length > 0;
-    const pickerRole = hasTemplates ? "listbox" : isLoading || loadError ? "status" : "region";
+    const pickerRole = hasTemplates
+      ? "listbox"
+      : isLoading || loadError
+        ? "status"
+        : "region";
     return (
       <>
         <header className="prompt-template-workspace-header">
@@ -404,13 +530,22 @@ export function PromptTemplateWorkspace({
                 }
                 return;
               }
-              if (event.key === "Enter" && document.activeElement?.getAttribute("role") === "option") {
+              if (
+                event.key === "Enter" &&
+                document.activeElement?.getAttribute("role") === "option"
+              ) {
                 event.preventDefault();
                 (document.activeElement as HTMLElement).click();
                 return;
               }
-              if (hasTemplates && document.activeElement?.getAttribute("role") === "option") {
-                focusRovingItemByKey(event, { orientation: "vertical", selector: "[role=\"option\"]" });
+              if (
+                hasTemplates &&
+                document.activeElement?.getAttribute("role") === "option"
+              ) {
+                focusRovingItemByKey(event, {
+                  orientation: "vertical",
+                  selector: '[role="option"]',
+                });
               }
             }}
           >
@@ -425,7 +560,7 @@ export function PromptTemplateWorkspace({
                   message={loadError}
                   notice="Could not load templates."
                   label="Template load error details"
-                  recoveryAction={(
+                  recoveryAction={
                     <button
                       ref={pickerRetryButtonRef}
                       type="button"
@@ -437,11 +572,21 @@ export function PromptTemplateWorkspace({
                         setLoadAttempt((attempt) => attempt + 1);
                       }}
                     >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                        <path d="M20 7v5h-5M20 12a8 8 0 1 0-2.3 5.7" strokeLinecap="round" strokeLinejoin="round" />
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M20 7v5h-5M20 12a8 8 0 1 0-2.3 5.7"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
                       </svg>
                     </button>
-                  )}
+                  }
                 />
               </div>
             ) : templates.length > 0 ? (
@@ -454,11 +599,17 @@ export function PromptTemplateWorkspace({
                   tabIndex={canInsert && index === 0 ? 0 : -1}
                   className="prompt-template-picker-item"
                   disabled={!canInsert}
-                  title={canInsert ? undefined : "Prompts cannot be inserted in the current session."}
+                  title={
+                    canInsert
+                      ? undefined
+                      : "Prompts cannot be inserted in the current session."
+                  }
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => handleSelectTemplate(template)}
                 >
-                  <span className="prompt-template-picker-item-primary">{template.name}</span>
+                  <span className="prompt-template-picker-item-primary">
+                    {template.name}
+                  </span>
                 </button>
               ))
             ) : (
@@ -470,7 +621,12 @@ export function PromptTemplateWorkspace({
                   aria-label="New template"
                   title="New template"
                 >
-                  <span className="composer-attachment-trigger-plus" aria-hidden="true">＋</span>
+                  <span
+                    className="composer-attachment-trigger-plus"
+                    aria-hidden="true"
+                  >
+                    ＋
+                  </span>
                 </button>
               </div>
             )}
@@ -480,10 +636,15 @@ export function PromptTemplateWorkspace({
     );
   };
 
+  /** 一覧と下書きの入力欄を並べ、処理中は対象切り替えや更新操作を無効にする。 */
   const renderEditor = () => (
     <>
       <header className="prompt-template-workspace-header">
-        <BackNavigationButton label="Back to template selection" onBack={returnToPicker} disabled={isSaving} />
+        <BackNavigationButton
+          label="Back to template selection"
+          onBack={returnToPicker}
+          disabled={isSaving}
+        />
         <strong>Edit Templates</strong>
       </header>
 
@@ -497,7 +658,12 @@ export function PromptTemplateWorkspace({
             aria-label="New template"
             title="New template"
           >
-            <span className="composer-attachment-trigger-plus" aria-hidden="true">＋</span>
+            <span
+              className="composer-attachment-trigger-plus"
+              aria-hidden="true"
+            >
+              ＋
+            </span>
           </button>
           {templates.map((template) => (
             <button
@@ -537,7 +703,15 @@ export function PromptTemplateWorkspace({
               setEditor((current) => ({ ...current, prompt: value }));
             }}
           />
-          {error?.isInput ? <p id={inputErrorId} className="prompt-template-input-error" role="alert">{error.message}</p> : error ? (
+          {error?.isInput ? (
+            <p
+              id={inputErrorId}
+              className="prompt-template-input-error"
+              role="alert"
+            >
+              {error.message}
+            </p>
+          ) : error ? (
             <TemplateErrorDetails
               key={error.message}
               message={error.message}
@@ -554,17 +728,23 @@ export function PromptTemplateWorkspace({
               aria-label={savingAction === "save" ? "Saving template" : "Save"}
               onClick={() => void save()}
             >
-              <ButtonContent busy={savingAction === "save"}>Save Template</ButtonContent>
+              <ButtonContent busy={savingAction === "save"}>
+                Save Template
+              </ButtonContent>
             </button>
             <button
               type="button"
               className="drawer-toggle compact danger"
               disabled={isSaving || !editor.id}
               aria-busy={savingAction === "delete" || undefined}
-              aria-label={savingAction === "delete" ? "Deleting template" : "Delete"}
+              aria-label={
+                savingAction === "delete" ? "Deleting template" : "Delete"
+              }
               onClick={() => void remove()}
             >
-              <ButtonContent busy={savingAction === "delete"}>Delete Template</ButtonContent>
+              <ButtonContent busy={savingAction === "delete"}>
+                Delete Template
+              </ButtonContent>
             </button>
           </div>
         </div>
@@ -573,7 +753,10 @@ export function PromptTemplateWorkspace({
   );
 
   return (
-    <section className="prompt-template-workspace" aria-label="Prompt templates">
+    <section
+      className="prompt-template-workspace"
+      aria-label="Prompt templates"
+    >
       {mode === "select" ? renderPicker() : renderEditor()}
     </section>
   );

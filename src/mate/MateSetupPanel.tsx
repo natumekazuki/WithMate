@@ -1,8 +1,10 @@
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import { ButtonContent } from "../ui/button-content.js";
 
+/** 処理中のアバター操作。選択・クリアのどちらも実行中でなければ null。 */
 export type MateAvatarAction = "select" | "clear" | null;
 
+/** Mate の作成・編集・読み取り不可の表示状態と、所有元で実行する操作。 */
 export type HomeMateSetupPanelProps = {
   mode?: "create" | "edit" | "unavailable";
   displayName: string;
@@ -19,6 +21,7 @@ export type HomeMateSetupPanelProps = {
   onClearAvatar?: () => void;
 };
 
+/** 作成・編集に応じたフォームを描画し、プロフィールを取得できない場合は変更操作を提示しない。 */
 export function HomeMateSetupPanel({
   mode = "create",
   displayName,
@@ -37,7 +40,8 @@ export function HomeMateSetupPanel({
   const isEditMode = mode === "edit";
   const isUnavailableMode = mode === "unavailable";
   const canEditAvatar = isEditMode && Boolean(onSelectAvatar);
-  const canClearAvatar = canEditAvatar && Boolean(onClearAvatar) && Boolean(mateAvatarFilePath);
+  const canClearAvatar =
+    canEditAvatar && Boolean(onClearAvatar) && Boolean(mateAvatarFilePath);
   const avatarBusy = creating || avatarAction !== null;
   const selectingAvatar = avatarAction === "select";
   const clearingAvatar = avatarAction === "clear";
@@ -46,7 +50,11 @@ export function HomeMateSetupPanel({
   return (
     <section className="home-mate-setup-panel">
       <h2 className="home-mate-setup-head">
-        {isUnavailableMode ? "Mate Profile" : isEditMode ? "Mate Profile" : "Create Mate"}
+        {isUnavailableMode
+          ? "Mate Profile"
+          : isEditMode
+            ? "Mate Profile"
+            : "Create Mate"}
       </h2>
       <form
         className="home-mate-setup-form"
@@ -58,7 +66,10 @@ export function HomeMateSetupPanel({
       >
         <div className="home-mate-avatar-field">
           <CharacterAvatar
-            character={{ name: avatarDisplayName, iconPath: mateAvatarFilePath ?? "" }}
+            character={{
+              name: avatarDisplayName,
+              iconPath: mateAvatarFilePath ?? "",
+            }}
             size="large"
             className="home-mate-avatar-preview"
           />
@@ -72,9 +83,13 @@ export function HomeMateSetupPanel({
                   onClick={onSelectAvatar}
                   disabled={avatarBusy}
                   aria-busy={selectingAvatar}
-                  aria-label={selectingAvatar ? "Selecting Avatar Image" : "Select Image"}
+                  aria-label={
+                    selectingAvatar ? "Selecting Avatar Image" : "Select Image"
+                  }
                 >
-                  <ButtonContent busy={selectingAvatar}>Select Image</ButtonContent>
+                  <ButtonContent busy={selectingAvatar}>
+                    Select Image
+                  </ButtonContent>
                 </button>
                 {canClearAvatar ? (
                   <button
@@ -83,7 +98,9 @@ export function HomeMateSetupPanel({
                     onClick={onClearAvatar}
                     disabled={avatarBusy}
                     aria-busy={clearingAvatar}
-                    aria-label={clearingAvatar ? "Clearing Avatar" : "Clear Avatar"}
+                    aria-label={
+                      clearingAvatar ? "Clearing Avatar" : "Clear Avatar"
+                    }
                   >
                     <ButtonContent busy={clearingAvatar}>Clear</ButtonContent>
                   </button>
@@ -108,7 +125,9 @@ export function HomeMateSetupPanel({
           <p className="settings-feedback home-mate-feedback">
             Mate profile is unavailable.
           </p>
-        ) : feedback ? <p className="settings-feedback home-mate-feedback">{feedback}</p> : null}
+        ) : feedback ? (
+          <p className="settings-feedback home-mate-feedback">{feedback}</p>
+        ) : null}
         <div className="home-mate-setup-actions">
           {isUnavailableMode ? null : (
             <button
@@ -116,17 +135,36 @@ export function HomeMateSetupPanel({
               type="submit"
               disabled={creating}
               aria-busy={creating}
-              aria-label={creating ? (isEditMode ? "Saving" : "Creating Mate") : isEditMode ? "Save" : "Create Mate"}
+              aria-label={
+                creating
+                  ? isEditMode
+                    ? "Saving"
+                    : "Creating Mate"
+                  : isEditMode
+                    ? "Save"
+                    : "Create Mate"
+              }
             >
-              <ButtonContent busy={creating}>{isEditMode ? "Save" : "Create Mate"}</ButtonContent>
+              <ButtonContent busy={creating}>
+                {isEditMode ? "Save" : "Create Mate"}
+              </ButtonContent>
             </button>
           )}
           {onCancel ? (
-            <button className="launch-toggle" type="button" onClick={onCancel} disabled={creating}>
+            <button
+              className="launch-toggle"
+              type="button"
+              onClick={onCancel}
+              disabled={creating}
+            >
               Cancel
             </button>
           ) : null}
-          <button className="launch-toggle" type="button" onClick={onOpenSettings}>
+          <button
+            className="launch-toggle"
+            type="button"
+            onClick={onOpenSettings}
+          >
             Settings
           </button>
         </div>

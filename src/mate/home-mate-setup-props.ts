@@ -1,6 +1,13 @@
-import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
-import type { HomeMateSetupPanelProps, MateAvatarAction } from "./MateSetupPanel.js";
+import type {
+  MateProfile,
+  MateStorageState,
+} from "../../src-shared/mate/mate-state.js";
+import type {
+  HomeMateSetupPanelProps,
+  MateAvatarAction,
+} from "./MateSetupPanel.js";
 
+/** パネルの表示と操作の組み立てに使う保存状態、編集中の値、操作の通知先。 */
 export type HomeMateSetupContentInput = {
   mateState: MateStorageState | null;
   mateProfile: MateProfile | null;
@@ -16,6 +23,7 @@ export type HomeMateSetupContentInput = {
   onClearAvatar: () => void;
 };
 
+/** 保存状態でモードを選び、キャンセルとアバター操作は編集モードにだけ渡す。 */
 export function buildHomeMateSetupContentProps({
   mateState,
   mateProfile,
@@ -34,18 +42,25 @@ export function buildHomeMateSetupContentProps({
   const isMateProfileUnavailable = mateState === "profile_unavailable";
 
   return {
-    mode: isMateProfileUnavailable ? "unavailable" : isMateNotCreated ? "create" : "edit",
+    mode: isMateProfileUnavailable
+      ? "unavailable"
+      : isMateNotCreated
+        ? "create"
+        : "edit",
     displayName: mateDisplayName,
     creating: mateCreating,
     feedback: mateCreationFeedback,
     onChangeDisplayName,
     onSubmit,
     onOpenSettings,
-    onCancel: isMateNotCreated || isMateProfileUnavailable ? undefined : onCancelEdit,
+    onCancel:
+      isMateNotCreated || isMateProfileUnavailable ? undefined : onCancelEdit,
     mateDisplayName: mateProfile?.displayName ?? null,
     mateAvatarFilePath: mateProfile?.avatarFilePath ?? "",
     avatarAction: mateAvatarAction,
-    onSelectAvatar: isMateNotCreated || isMateProfileUnavailable ? undefined : onSelectAvatar,
-    onClearAvatar: isMateNotCreated || isMateProfileUnavailable ? undefined : onClearAvatar,
+    onSelectAvatar:
+      isMateNotCreated || isMateProfileUnavailable ? undefined : onSelectAvatar,
+    onClearAvatar:
+      isMateNotCreated || isMateProfileUnavailable ? undefined : onClearAvatar,
   };
 }
