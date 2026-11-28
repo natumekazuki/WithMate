@@ -5,10 +5,10 @@ import { approvalReviewDecisionSchema, type ApprovalReviewDecision, type Approva
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
 import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER } from "../providers/provider-agent-runtime-binding.js";
 
-/** A request-scoped attempt. Null means no valid verdict and cannot authorize or request manual approval. */
+/** リクエスト単位のレビュー試行。null は有効な判定がないことを表し、承認も手動承認の要求もできない。 */
 export type PendingApprovalReview = {
   decide(signal: AbortSignal, queue?: ApprovalReviewQueueContext): Promise<ApprovalReviewDecision["decision"] | null>;
-  /** Check at admission and again before accepting the verdict; the queue checks head identity. */
+  /** 受付時と判定の受入直前に確認する。キューは先頭のリクエストが同一であることを確認する。 */
   isCurrent(): boolean;
 };
 
@@ -18,7 +18,7 @@ type ApprovalReviewQueueContext = {
   onStopping(stopped: Promise<void>): void;
 };
 
-/** An in-memory fence, not a history index. An in-flight GUI input may affect an ancestor. */
+/** 履歴の索引ではなく、メモリ内で実行中の入力を追う仕組み。処理中の GUI 入力が祖先に影響することがある。 */
 export class ApprovalReviewInputFence {
   #revision = 0;
   #writes = 0;
@@ -47,7 +47,7 @@ export type StartWithMateApprovalReview = (input: {
   signal: AbortSignal;
 }) => WithMateApprovalReviewTurn | undefined;
 
-/** Reuse a lazy reviewer conversation within the source turn until it is interrupted. */
+/** 必要になってからレビュアーとの会話を開始し、中断されるまで起点の Turn 内で再利用する。 */
 export class WithMateApprovalReviewTurn {
   readonly #lifetime = new AbortController();
   #conversation?: {
@@ -66,7 +66,7 @@ export class WithMateApprovalReviewTurn {
     workspacePath: string;
     inputs: ApprovalReviewInputFence;
     policyCurrent(): boolean;
-    /** Uses the reviewer conversation's signal, not the source turn's signal. */
+    /** 起点の Turn ではなく、レビュアーとの会話のシグナルを使う。 */
     open(signal: AbortSignal): Promise<ApprovalReviewerConversation>;
     timeoutMs?: number;
   }) {
@@ -87,7 +87,7 @@ export class WithMateApprovalReviewTurn {
         const deadline = new AbortController();
         const stop = AbortSignal.any([this.#lifetime.signal, signal, deadline.signal]);
         this.#active = stop;
-        // Time out this attempt, not the source Turn. A later head still needs confirmation of stop.
+        // タイムアウトさせるのは今回のレビュー試行だけで、起点の Turn ではない。後続の先頭リクエストも停止確認を待つ。
         const timer = setTimeout(() => deadline.abort(), this.options.timeoutMs ?? 60_000);
         let onStop!: () => void;
         const stopped = new Promise<null>((resolve) => {
@@ -132,7 +132,7 @@ export class WithMateApprovalReviewTurn {
     const conversation = this.#conversation;
     if (!conversation) return;
     this.#conversation = undefined;
-    // A replacement may start only after this conversation (including an in-progress open) is stopped.
+    // この会話がまだ開始処理中でも、停止を確認するまで代わりの会話は開始できない。
     this.#closing = conversation.ready.then((reviewer) => reviewer.close(), () => undefined);
     void this.#closing.catch(() => undefined);
     conversation.onStopping?.(this.#closing);
@@ -145,7 +145,7 @@ export class WithMateApprovalReviewTurn {
     if (operation === null || typeof operation !== "object" || Object.keys(operation).length === 0) return null;
     const prompt = JSON.stringify({ source: this.options.source, turnId: this.options.turnId,
       workspacePath: this.options.workspacePath, pendingOperation: { ...request, operation } });
-    // Never delegate an incomplete or redacted operation.
+    // 不完全な操作や秘匿化された操作をレビューに委ねない。
     if (Buffer.byteLength(prompt) > 128 * 1024 || prompt.includes(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER)) return null;
     if (signal.aborted || !isCurrent()) return null;
     if (!this.#conversation) {

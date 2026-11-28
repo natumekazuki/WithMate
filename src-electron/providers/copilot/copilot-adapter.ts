@@ -141,8 +141,8 @@ export function buildCopilotClientEnv(
   baseEnv: NodeJS.ProcessEnv,
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
 ): NodeJS.ProcessEnv {
-  // Copilot SDK は child CLI の stderr を bootstrap failure 扱いするため、
-  // Node.js の ExperimentalWarning だけで false error にならないように抑止する。
+  // Copilot SDK は子プロセスの CLI が stderr に出力すると起動失敗と扱うため、
+  // Node.js の ExperimentalWarning だけで誤って失敗と判定しないよう、その警告を抑止する。
   return {
     ...mergeDefinedProviderEnv(
       baseEnv,
@@ -872,8 +872,8 @@ function hasCopilotReviewEvidence(request: PermissionRequest, prompt: Permission
       return hasCopilotPermissionTarget(request.toolName) && hasCopilotPermissionTarget(request.toolDescription)
         && (!operationPrompt || (operationPrompt.kind === "custom-tool" && operationPrompt.toolName === request.toolName));
     default:
-      // A specialized consent prompt or an unknown operation is not proof that
-      // the host has enough evidence or authority to approve on the user's behalf.
+      // 専用の同意プロンプトや未知の操作があるだけでは、
+      // ホストにユーザーの代わりに承認するだけの根拠や権限があるとはいえない。
       return false;
   }
 }
@@ -899,8 +899,8 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
       && (unassessed || (assessment?.status === "completed" && assessment.recommendation === "approve"));
     const readOnly = isReadOnlyPermissionRequest(request);
     if (approvalMode === "safety-focused") {
-      // A classified read without a pending user prompt is the routine SDK
-      // path; managed asks and MCP readOnly hints are not that evidence.
+      // 読み取りと分類され、ユーザーへの確認待ちがない場合が、SDK の通常経路に当たる。
+      // 管理ポリシーによる確認要求や MCP の readOnly ヒントは、その根拠にはならない。
       return { kind: request.kind === "read" && classified && !providerRequiresHuman
         ? "approve-once" : "reject" };
     }
@@ -945,9 +945,9 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
       });
     }
     if (source === "reviewer" && review) {
-      // Keep the legacy CLI wire decisions. `reject` is a user's rejection on
-      // this path; without a person's answer use the non-interactive denial.
-      // WithMate is the SDK host, not Copilot's own Assisted Permissions judge.
+      // 従来の CLI プロトコルの判定値を維持する。この経路で `reject` はユーザーによる拒否を表す。
+      // ユーザーの回答がない場合は、対話なしの拒否を返す。
+      // WithMate は SDK のホストであり、Copilot 自身の Assisted Permissions の判定主体ではない。
       return createAttributedPermissionResult({ kind: decision === "approve" ? "approve-once" : "user-not-available" }, {
         source: "host_policy", surface: "sdk", outcome: decision === "approve" ? "auto_approved" : "autopilot_denied",
       });
@@ -1306,8 +1306,8 @@ const COPILOT_TURN_CANCEL_GRACE_MS = 5_000;
 type CopilotProcessLifetime = { child: ChildProcess; exited: Promise<void> };
 
 function captureCopilotProcessLifetime(client: CopilotClient): CopilotProcessLifetime | null {
-  // The stdio SDK has no public exit hook. Read its owned child before stop()
-  // clears the handle; forceStop() alone does not confirm process termination.
+  // stdio SDK は終了を通知する公開フックを持たない。stop() がハンドルを消す前に、
+  // 管理下の子プロセスを取得する。forceStop() だけではプロセスの終了を確認できない。
   const child: unknown = Reflect.get(client, "cliProcess");
   if (!(child instanceof ChildProcess)) {
     return null;
@@ -1392,7 +1392,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     try {
       this.options.log?.(input);
     } catch {
-      // Logging must not affect provider execution.
+      // ログ記録はプロバイダーの実行に影響させない。
     }
   }
 
@@ -1552,12 +1552,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       try {
         cached.unsubscribeBackgroundObserver?.();
       } catch {
-        // Cache ownership is already detached; observer cleanup is best effort.
+        // キャッシュの所有関係はすでに切り離されている。監視の解除に失敗しても処理は続ける。
       }
       try {
         this.options.onBackgroundTasksChanged?.(sessionId, []);
       } catch {
-        // UI projection failure must not retain the old provider ownership.
+        // UI への反映に失敗しても、古いプロバイダーの所有関係を残さない。
       }
     }
 
@@ -1636,7 +1636,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       client,
     });
     if (resolved.reusedCached && cached) {
-      // An SDK session can outlive a Turn; its callback must use this Turn's bridge.
+      // SDK セッションは Turn 終了後も残ることがある。コールバックは今回の Turn のブリッジを使う。
       cached.permissionHandler.current = permissionHandler.current;
       this.clientKeysBySession.set(input.session.id, clientKey);
       return {
@@ -1683,7 +1683,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         cached.unsubscribeBackgroundObserver?.();
         this.options.onBackgroundTasksChanged?.(sessionId, []);
       } catch {
-        // Projection cleanup must not prevent stopping the captured owner.
+        // 表示反映の後片付けに失敗しても、取得済みの所有元の停止は妨げない。
       }
       if (this.clientKeysBySession.get(sessionId) === clientKey) {
         this.clientKeysBySession.delete(sessionId);
@@ -1730,7 +1730,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         failures.push(redactor.sanitizeText(`client stop failed: ${stopped.value.map((error) => error.message).join("; ")}`));
       }
       try {
-        // A deadline is not proof that the owned transport has stopped.
+        // 期限を過ぎても、管理下のトランスポートが停止した証拠にはならない。
         await client.forceStop();
       } catch (error) {
         const message = redactor.sanitizeText(error instanceof Error ? error.message : String(error));
@@ -1753,15 +1753,15 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     if (processLifetime) {
       await processLifetime.exited;
     } else {
-      // If SDK ownership cannot be observed, transport disposal is insufficient
-      // evidence. Only the original turn's idle can establish a safe boundary.
+      // SDK の所有関係を確認できない場合、トランスポートの破棄だけでは停止の根拠にならない。
+      // 安全に引き継げると判断できるのは、元の Turn の idle を確認したときだけ。
       const message = "Copilot CLI process handle unavailable; waiting for original turn idle";
       failures.push(message);
       this.writeLog({ level: "error", kind: "provider.cancel-stop-failed", message, data: null });
       await idle;
     }
-    // Closing the SDK connection rejects pending send/abort RPCs. Observe both
-    // settlements before allowing another turn to use the conversation.
+    // SDK 接続を閉じると、保留中の send と abort の RPC は拒否される。
+    // どちらも結果が確定してから、次の Turn に会話の利用を許可する。
     const results = await requestsSettled;
     for (const [index, result] of results.entries()) {
       if (result.status === "rejected") {
@@ -1983,7 +1983,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         interestHandles.push(handle);
       }
       if (!observingTurn || input.signal?.aborted) return;
-      // A rejected or lost acknowledgement cannot prove the SDK did not execute the input.
+      // 確認応答が拒否されたり失われたりしても、SDK が入力を実行しなかったとは断定できない。
       onSendInvoked?.();
       return session.send({
         prompt: prompt.inputBodyText,
@@ -2003,7 +2003,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       if (cancellationCleanup || !observingTurn) {
         return;
       }
-      // Detach synchronously, before runtime's canceled terminal invalidation.
+      // ランタイムがキャンセル確定に伴う無効化を行う前に、同期的に切り離す。
       const processLifetime = captureCopilotProcessLifetime(client);
       this.detachCanceledTurn(input.session.id, session, client, clientKey);
       const abort = Promise.resolve().then(() => session.abort());

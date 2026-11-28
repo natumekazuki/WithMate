@@ -17,7 +17,7 @@ type InstructionsControlProps = {
   title: string;
 };
 
-/** Hosts the editor for one target. Key by the complete identity so a switch discards the old editor. */
+/** 対象一つ分のエディターを持つ。完全な識別情報をキーにし、対象が変われば以前のエディターを破棄する。 */
 export function SessionInstructionsControl(props: InstructionsControlProps) {
   const [open, setOpen] = useState(false);
   return (
@@ -30,10 +30,10 @@ export function SessionInstructionsControl(props: InstructionsControlProps) {
   );
 }
 
-/** An absent body indicates that loading has not succeeded, not a saved empty value. */
+/** 本文なしは読み取りがまだ成功していないことを示し、空の値が保存されていることとは区別する。 */
 type InstructionRead = { status: "loading" | "failed" } | { status: "loaded"; body: string };
 
-/** Reads on opening and edits an isolated draft until Cancel or acknowledged Save. */
+/** 開いたときに読み取り、キャンセルまたは保存が確認されるまで独立した下書きを編集する。 */
 function SessionInstructionsDialog({ api, target, title, onClose }: InstructionsControlProps & { onClose: () => void }) {
   const [read, setRead] = useState<InstructionRead>({ status: "loading" });
   const [readAttempt, setReadAttempt] = useState(0);
@@ -52,14 +52,14 @@ function SessionInstructionsDialog({ api, target, title, onClose }: Instructions
   }, []);
 
   const closeUnlessSaving = () => {
-    // Cancel discards edits; it cannot undo a replacement already dispatched.
+    // キャンセルは編集を破棄するが、送信済みの置き換えは取り消せない。
     if (!pendingSave.current) onClose();
   };
   const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
     open: true, onClose: closeUnlessSaving, initialFocusRef: inputRef,
   });
 
-  // Capture the target once for this opening, not on every live Session projection update.
+  // 開いたときに対象を一度だけ確定し、表示中の Session の投影が更新されても取り直さない。
   const [openedTarget] = useState(target);
   useEffect(() => {
     let current = true;
@@ -74,9 +74,9 @@ function SessionInstructionsDialog({ api, target, title, onClose }: Instructions
   const bytes = read.status === "loaded" ? sessionInstructionsByteLength(read.body) : null;
   const overLimit = bytes !== null && bytes > SESSION_INSTRUCTIONS_MAX_BYTES;
 
-  /** Dispatches one exact replacement and only alters the editor that started it. */
+  /** 指定した置換を一度だけ送り、その処理を開始したエディターだけを更新する。 */
   const save = async () => {
-    // Check independently of the rendered button so two events cannot overlap.
+    // イベントが重複して処理されないよう、描画済みボタンの状態とは別に検査する。
     if (read.status !== "loaded" || overLimit || pendingSave.current) return;
     pendingSave.current = true;
     setSaving(true);
@@ -86,7 +86,7 @@ function SessionInstructionsDialog({ api, target, title, onClose }: Instructions
       await api.setSessionInstructions(openedTarget, read.body);
       if (mounted.current) onClose();
     } catch {
-      // Keep the full draft for correction or retry.
+      // 修正や再試行に備え、下書き全体を保持する。
       if (mounted.current) setSaveFailed(true);
     } finally {
       pendingSave.current = false;
@@ -105,7 +105,7 @@ function SessionInstructionsDialog({ api, target, title, onClose }: Instructions
       closeOnBackdropClick={false}
       onClose={closeUnlessSaving}
       onKeyDown={(event) => {
-        // Keep Session shortcuts out of the modal without intercepting text input.
+        // テキスト入力を妨げず、モーダル内の操作で Session のショートカットが発火しないようにする。
         event.stopPropagation();
         if (!event.nativeEvent.isComposing) handleDialogKeyDown(event);
       }}

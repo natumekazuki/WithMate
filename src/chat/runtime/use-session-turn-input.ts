@@ -39,8 +39,8 @@ export function useSessionTurnInput(input: {
       target.onBlocked();
       return;
     }
-    // Send and direct Steer can run before React commits their disabled states.
-    // Both submit the same composer revision, so share the synchronous owner lease.
+    // React が無効状態を反映する前に、送信と直接の Steer が実行される場合がある。
+    // どちらも同じコンポーザーのリビジョンを送るため、所有者ごとの同期的な使用権を共有する。
     const lease = input.submitCoordinator.tryAcquire(owner.id);
     if (!lease) return;
     setPendingIds((previous) => new Set(previous).add(owner.id));

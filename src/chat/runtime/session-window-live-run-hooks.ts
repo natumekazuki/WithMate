@@ -26,7 +26,7 @@ function useOwnerControls(api: WithMateWindowApi | null, id: string | null): Run
   return owned.id === id ? owned.controls : projectSessionRunControls(null);
 }
 
-/** Shell owns compact controls for Main and the active target, never full detail. */
+/** シェルが保持するのは Main と現在の対象の簡易操作情報で、詳細全体は持たない。 */
 export function useSessionRunControls(api: WithMateWindowApi | null, selectedSession: Session | null, activeRunSessionId: string | null) {
   const active = useOwnerControls(api, selectedSession ? activeRunSessionId : null);
   const main = useOwnerControls(api, selectedSession?.id ?? null);

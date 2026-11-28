@@ -106,7 +106,7 @@ function writePrefs(parentSessionId: string, prefs: WorkspacePrefs): void {
   try {
     window.localStorage.setItem(prefsKey(parentSessionId), JSON.stringify(prefs));
   } catch {
-    // Storage availability is optional; in-memory state remains authoritative.
+    // ストレージが使えなくてもよい。引き続きメモリ上の状態を正本とする。
   }
 }
 
@@ -156,7 +156,7 @@ function auxiliaryResultKey(owner: string, id: string, createdAt: string): strin
 }
 
 function useAuxiliarySwitcherUnread(api: AuxiliaryWorkspaceApi | null, owner: string | null, summaries: AuxiliarySessionSummary[]) {
-  // Membership, not list order or live/detail updates, determines which shared results are read.
+  // 読み取る共有結果は所属によって決まり、一覧の順序や実行時状態・詳細の更新には左右されない。
   const membership = JSON.stringify(summaries.filter((item) => item.parentSessionId === owner)
     .map(({ id, createdAt }) => [id, createdAt]).sort(([left], [right]) => left.localeCompare(right)));
   const [unread, setUnread] = useState<ReadonlySet<string>>(() => new Set());
@@ -183,7 +183,7 @@ function useAuxiliarySwitcherUnread(api: AuxiliaryWorkspaceApi | null, owner: st
           else next.delete(key);
           return next;
         });
-      }, () => { /* Keep the last confirmed display on a transient read failure. */ });
+      }, () => { /* 一時的に読み取りが失敗した場合は、直近の確認済み表示を維持する。 */ });
     };
     const unsubscribe = api.onSessionTurnUpdated?.(read);
     for (const id of targets.keys()) read(id);
@@ -487,8 +487,8 @@ export function useAuxiliaryWorkspace(input: {
           || (epoch !== currentEpoch && pendingDetail?.resolvedEpoch !== currentEpoch) || !status) return;
         const summary = summariesRef.current.find((item) => item.id === id);
         if (!summary || summary.parentSessionId !== status.parentSessionId || summary.createdAt !== status.createdAt) return;
-        // A newer run state must not discard the completed messages in an
-        // in-flight detail read. Merge that confirmed state when the body arrives.
+        // 新しい実行状態で、処理中の詳細読み取りに含まれる完了済みメッセージを捨ててはいけない。
+        // 本文が届いたら、その確認済み状態を合流させる。
         const detailLoad = detailLoads.get(id);
         if (detailLoad) detailLoad.status = status;
         const nextSummaries = replaceSummary(summariesRef.current, id, { ...summary, runState: status.runState }, recencyRef.current);
@@ -506,8 +506,8 @@ export function useAuxiliaryWorkspace(input: {
         }
         pruneDetails();
       }).catch((cause) => {
-        // Clear only this observation: a newer A/B/A transition can have the
-        // same semantic key while still owning a queued status refresh.
+        // この観測結果だけを消す。後続の A/B/A 遷移では、意味上のキーが同じでも
+        // 状態の更新がキューに残っている場合がある。
         if (liveStatusKeys.get(id) === liveStatusKey) liveStatusKeys.delete(id);
         if (active && mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
           && revision === detailReadRevisionRef.current.get(id)) {
@@ -745,7 +745,7 @@ export function useAuxiliaryWorkspace(input: {
         const current = binding.sessionRef.current;
         const candidate = typeof update === "function" ? update(current) : update;
         const next = candidate ? mergeExecutionSelection(candidate) : candidate;
-        // Operation appliers may stage sessionRef before publishing the state.
+        // 操作結果の適用側は、状態を公開する前に sessionRef を先に更新することがある。
         if (next === (detailsRef.current.get(id) ?? null)) return;
         binding.sessionRef.current = next;
         detailMutationEpochRef.current.set(id, (detailMutationEpochRef.current.get(id) ?? 0) + 1);

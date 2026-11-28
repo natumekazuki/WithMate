@@ -9,7 +9,7 @@ const bodyKey = (key: SentInstructionBodyKey | SentInstructionBody) => {
 };
 export type SentBodyReader = (key: SentInstructionBodyKey, signal: AbortSignal) => Promise<SentInstructionBody | undefined>;
 
-/** Batch the cards entering the viewport together. No body cache lives outside the cards. */
+/** 同じタイミングで表示範囲に入ったカードをまとめて読み取る。本文のキャッシュはカードの外には持たない。 */
 export function createSentBodyReader(owner: string, scope: SentInstructionCardRequest): SentBodyReader {
   type Pending = {
     key: SentInstructionBodyKey;
@@ -92,7 +92,7 @@ function observeSentBody(node: HTMLElement, changed: (near: boolean) => void) {
   };
 }
 
-/** The shell stays navigable without text. Only bodies near the scrollport are materialized. */
+/** 本文がなくても外枠から移動できる。本文はスクロール表示範囲に近いものだけを展開する。 */
 export function SentInstructionBodyBoundary({ source, requested = false, render }: {
   source: SentBodyRead; requested?: boolean; render: (body: SentInstructionBody) => ReactNode;
 }) {
@@ -124,7 +124,7 @@ export function SentInstructionBodyBoundary({ source, requested = false, render 
       loaded.current = undefined;
       redraw((value) => value + 1);
     };
-    // Copy/quote can still act on a selection which extends outside the viewport.
+    // 選択範囲が表示範囲の外に延びていても、コピーや引用はその範囲に対して行える。
     node.ownerDocument.addEventListener("selectionchange", release);
     release();
     return () => node.ownerDocument.removeEventListener("selectionchange", release);
@@ -136,8 +136,8 @@ export function SentInstructionBodyBoundary({ source, requested = false, render 
     setError("");
     void source.read(key, request.signal).then((result) => {
       if (request.signal.aborted || !result) return;
-      // A reply jump can move the scrollport before the observer reports the
-      // exit. An in-flight body above the new position must not expand there.
+      // 返信元への移動では、監視処理が範囲外への移動を通知する前に表示範囲が移ることがある。
+      // 新しい位置より上で読み取り中だった本文は、そこで展開してはいけない。
       const node = element.current;
       const root = node?.closest(".session-message-list")?.getBoundingClientRect();
       const bounds = node?.getBoundingClientRect();

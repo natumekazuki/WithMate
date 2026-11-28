@@ -38,7 +38,7 @@ export async function persistChatLayoutPreference(
         error: toLogError(error),
       });
     } catch {
-      // The local layout remains usable even when both persistence and logging fail.
+      // 永続化とログの両方が失敗しても、ローカルのレイアウトは引き続き使える。
     }
   }
 }

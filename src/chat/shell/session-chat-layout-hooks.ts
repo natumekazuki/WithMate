@@ -694,7 +694,7 @@ export function useSessionMessageListFollowing({
       if (timestamp !== undefined) {
         motion.startedAt ??= timestamp;
         const progress = Math.min(1, Math.max(0, (timestamp - motion.startedAt) / motion.duration));
-        // Matches --session-dock-motion-easing: cubic-bezier(1/3, 1, 2/3, 1).
+        // --session-dock-motion-easing の cubic-bezier(1/3, 1, 2/3, 1) に合わせる。
         const fraction = (1 - progress) ** 3;
         motion.remaining *= fraction / motion.fraction;
         motion.fraction = fraction;
@@ -795,7 +795,7 @@ export function useSessionMessageListFollowing({
 
     const observer = new ownerWindow.ResizeObserver((entries) => {
       if (isMessageListFollowingRef.current) {
-        // Keep ordinary dock resizing on the same paint as the viewport, too.
+        // 通常のドックのサイズ変更も、表示範囲と同じ描画タイミングで反映する。
         if (sendMotionRef.current || entries.some((entry) => entry.target === messageListElement)) {
           scrollMessageListToBottom();
         }
@@ -871,7 +871,7 @@ export function useSessionMessageListFollowing({
             remaining: Math.max(0, element.scrollHeight - element.clientHeight) - scrollTop,
           };
         }
-        // Only rows appended by this send may enter, including late virtual mounts.
+        // 仮想リストで遅れてマウントされた行も含め、この送信で末尾に追加された行だけを登場演出の対象にする。
         const pendingRows = new Set<number>();
         for (let index = messageCount; index < Number(element.dataset.messageCount); index++) pendingRows.add(index);
         if (pendingRows.size) {

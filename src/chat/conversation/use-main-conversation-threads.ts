@@ -23,7 +23,7 @@ export function threadPageIndexes(frame: MainConversationFrame): number[] {
 }
 
 const EMPTY_CHILDREN: ConversationThread[] = [];
-// Peer IDs are serialized Session targets, not reserved view IDs.
+// 相手の ID には直列化した Session の対象情報を使い、予約済みのビュー ID とは区別する。
 export const ALL_MAIN_THREADS_ID = "all-main-threads";
 
 export function useMainConversationThreads(context: TurnInputReadContext | undefined, enabled: boolean, historyRevision: string, beforeSwitch: () => void) {
@@ -59,7 +59,7 @@ export function useMainConversationThreads(context: TurnInputReadContext | undef
           if (!active) return;
           if (result.ok) {
             childSessionIds = new Set(result.children.map(({ target: child }) => child.sessionId));
-            // A child can change after the snapshot but before its ID is known here.
+            // スナップショット取得後、ここで子の ID が分かる前に、その子の状態が変わる場合がある。
             readAgain ||= result.children.some(({ target: child }) => changedIds.has(child.sessionId));
             if (!readAgain) setState({ owner, projection: result, error: "", loading: false });
           } else if (!readAgain) {
@@ -82,7 +82,7 @@ export function useMainConversationThreads(context: TurnInputReadContext | undef
     const sent = api.onSessionSentDeliveriesChanged?.(changed);
     const turns = api.onSessionTurnUpdated?.(changedPeer);
     const queue = api.onSessionTurnQueueChanged?.(changed);
-    // Publishing a new direct child invalidates its parent before the child ID is known here.
+    // 新しい直接の子を公開すると、ここでその子の ID が分かる前に親の投影が無効になる。
     const sessions = api.subscribeSessionInvalidation?.((event) => {
       if (event.scope === "all" || event.sessionIds.some(affectsProjection)) reload();
       else for (const id of event.sessionIds) changedDuringRead?.add(id);
@@ -94,7 +94,7 @@ export function useMainConversationThreads(context: TurnInputReadContext | undef
       sent?.(); turns?.(); queue?.(); sessions?.();
     };
   }, [owner, api, enabled, canRead]);
-  // A history change invalidates the current read without replacing its subscription.
+  // 履歴が変わったら現在の読み取り結果を無効にするが、購読は張り直さない。
   useEffect(() => { requestRead.current?.(); }, [owner, api, enabled, canRead, historyRevision]);
 
   const available = state?.owner === owner ? state : undefined;

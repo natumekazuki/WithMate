@@ -90,7 +90,7 @@ test("Sessionの設定とcatalogを独立して再試行し会話とdraftを保�
     for (const alert of container.querySelectorAll('[role="alert"]')) {
       assert.ok(composer.getAttribute("aria-describedby")?.split(" ").includes(alert.id));
     }
-    // Seed a draft through the real change handler while Send is blocked.
+    // 送信がブロックされている間に、実際の変更ハンドラーを通じて下書きを入力する。
     await act(async () => {
       Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(composer, "Keep this draft");
       composer.dispatchEvent(new dom.window.Event("input", { bubbles: true }));

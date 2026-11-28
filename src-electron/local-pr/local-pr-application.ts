@@ -22,11 +22,11 @@ type ApplicationDependencies<Repository> = {
   sendDiscussion(input: LocalPrInput<"discuss">, message: string, assertCurrent: CheckCurrent): Promise<LocalPrResult<"discuss">>;
 };
 
-/** Keep transport admission, PR state, CI ownership and the existing Session queue separate. */
+/** 通信経路での受付、PR の状態、CI の所有、既存の Session キューを分離する。 */
 export class LocalPrApplication<Repository> {
   constructor(private readonly deps: ApplicationDependencies<Repository>) {}
 
-  /** Dispatch only the operation set belonging to the validated caller. */
+  /** 検証済みの呼び出し元に許された操作だけを振り分ける。 */
   async execute<T extends LocalPrOperation>(repository: Repository, actor: SessionTarget, origin: LocalPrOrigin,
     operation: T, input: unknown, assertCurrent: CheckCurrent): Promise<LocalPrResult<T>> {
     const operations = origin === "agent" ? localPrAgentInput : localPrGuiInput;
@@ -35,7 +35,7 @@ export class LocalPrApplication<Repository> {
     if (!parsed.success) return failure("PR_INVALID_REQUEST", parsed.error.issues.map((issue) => issue.message).join(" "));
     await assertCurrent();
 
-    // CI version identity comes only from the PR's saved submissions in the same repository.
+    // CI の版は、同じリポジトリにある PR の保存済み提出版からのみ特定する。
     if (operation.startsWith("pr_ci_")) {
       const request = parsed.data as LocalPrInput<CiOperation>;
       const pr = await this.deps.core(repository, actor, origin, "pr_get", { prId: request.prId });
@@ -45,7 +45,7 @@ export class LocalPrApplication<Repository> {
       await assertCurrent();
       return this.deps.ci(repository, request.prId, submitted, operation as CiOperation, request) as Promise<LocalPrResult<T>>;
     }
-    // Session selection and sending are user actions, separate from writing a PR comment.
+    // Session の選択と送信はユーザーが行う操作であり、PR コメントの書き込みとは別。
     if (operation === "session_choices") {
       return this.deps.sessionChoices(repository, parsed.data as LocalPrInput<"session_choices">) as Promise<LocalPrResult<T>>;
     }
@@ -55,7 +55,7 @@ export class LocalPrApplication<Repository> {
     return this.deps.core(repository, actor, origin, operation as CoreOperation, parsed.data as LocalPrInput<CoreOperation>) as Promise<LocalPrResult<T>>;
   }
 
-  /** Publish the selected drafts only upon an explicit user send; queue acceptance is a separate effect. */
+  /** ユーザーが明示的に送信したときだけ選択した下書きを公開する。キューへの受理は別の副作用。 */
   private async discuss(repository: Repository, actor: SessionTarget, input: LocalPrInput<"discuss">, assertCurrent: CheckCurrent): Promise<LocalPrResult<"discuss">> {
     const pr = await this.deps.core(repository, actor, "gui", "pr_get", { prId: input.prId });
     if (!pr.ok) return pr;
@@ -68,7 +68,7 @@ export class LocalPrApplication<Repository> {
       return diff.data;
     });
 
-    // Validate selected context before publishing. Rebuild from persisted comments if an edit raced publication.
+    // 公開前に選択された文脈を検証する。公開と編集が競合した場合は、保存済みコメントから組み立て直す。
     let message: string;
     try { message = await makeMessage(pr.data); }
     catch (error) { return failure("PR_DISCUSSION_CONTEXT", error instanceof Error ? error.message : String(error)); }
@@ -101,7 +101,7 @@ export class LocalPrApplication<Repository> {
   }
 }
 
-/** Report a PR operation's actual failure without implying a write was rolled back. */
+/** PR 操作の実際の失敗を返す。書き込みがロールバックされたとはみなさない。 */
 export function failure(code: string, message: string, effect: LocalPrFailure["effect"] = "none"): LocalPrFailure {
   return { ok: false, code, message, effect };
 }

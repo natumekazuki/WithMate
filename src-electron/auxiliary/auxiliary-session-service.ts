@@ -663,8 +663,8 @@ export class AuxiliarySessionService {
     if (this.creationRecords.get(key) !== record) return;
     const { parentSessionId, creationContext } = record.request;
     if (this.getCreationOwnerGeneration(parentSessionId) === creationContext.generationId) {
-      // Fence delayed admissions before discarding their cancellation tombstone.
-      // Already admitted requests keep their records and may still finish.
+      // キャンセルの記録を破棄する前に、遅れて到着した要求が受理されないようにする。
+      // 受理済みの要求は記録を維持し、そのまま完了できる場合がある。
       this.creationOwnerGenerations.set(parentSessionId, randomUUID());
     }
     this.creationRecords.delete(key);
@@ -748,8 +748,8 @@ export class AuxiliarySessionService {
       );
       if (result) return result;
 
-      // A sibling took this Character before commit. Prepare again outside the
-      // broad coordinators, then revalidate all commit boundaries on the next pass.
+      // 確定前に兄弟 Session がこの Character を確保した。広い範囲を調整する coordinator の外で準備し直し、
+      // 次の試行で確定時のすべての条件を再検証する。
       if (record?.cancelRequested) throw new Error("Auxiliary Session creation was canceled.");
       if (record) {
         record.status = "preparing";
@@ -874,7 +874,7 @@ export class AuxiliarySessionService {
         generationId: record.request.creationContext.generationId,
       });
     } catch {
-      // Lifecycle diagnostics must never affect creation semantics.
+      // ライフサイクルの診断が作成処理の挙動を変えてはならない。
     }
   }
 
@@ -1007,8 +1007,8 @@ export class AuxiliarySessionService {
       try {
         const storage = this.deps.getStorage();
         const current = await storage.getAuxiliaryDraft(restore.auxiliarySessionId);
-        // A persisted recovery/edit or explicit deletion/recreation supersedes
-        // this failed restore. Never overwrite a newer draft or resurrect it.
+        // 保存済みの復旧・編集や明示的な削除・再作成を、この復元失敗より優先する。
+        // 新しい下書きを上書きしたり、削除された下書きを復活させたりしない。
         if (!current
           || current.parentSessionId !== restore.parentSessionId
           || current.incarnation !== restore.incarnation
@@ -1020,8 +1020,8 @@ export class AuxiliarySessionService {
         const result = await storage.saveAuxiliaryDraft(restore);
         if (result.outcome === "saved") this.failedDraftRestores.delete(restore);
       } catch {
-        // Keep the original text and retry on the next quit attempt. Settling
-        // the send Promise alone must not make failed restoration safe to quit.
+        // 元のテキストを保持し、次の終了試行で復元を再試行する。
+        // 復元に失敗したまま送信の Promise が決着しただけでは、安全に終了できない。
       }
     }
     return this.failedDraftRestores.size === 0;

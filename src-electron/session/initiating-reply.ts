@@ -2,7 +2,7 @@ import type { SessionReply } from "../../src-shared/session/session-reply.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
-/** A normal Agent send can reply only to the actual sender of its own saved starting input. */
+/** 通常のエージェント送信で返信できる相手は、自分の起点として保存された入力の実際の送信元に限る。 */
 export function initiatingReply(source: SessionTarget, recipient: Pick<SessionTarget, "kind" | "sessionId" | "incarnationId">,
   turnId: string, receipts: readonly SessionTurnQueueReceipt[]): SessionReply | undefined {
   const entries = receipts.filter((entry) => entry.sessionId === source.sessionId && entry.incarnationId === source.incarnationId

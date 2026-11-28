@@ -711,8 +711,8 @@ export class SessionPersistenceService {
 
     projectDeletion(() => this.deps.broadcastSessions(deletableSessionIds));
 
-    // Detach every old runtime synchronously before the ownership boundary opens.
-    // Provider adapters capture old resources before their first asynchronous wait.
+    // 新しい所有者が入れるようになる前に、古いランタイムをすべて同期的に切り離す。
+    // プロバイダーアダプターは、最初の非同期待機に入る前に古いリソースを取得する。
     const providerCleanup = runtimeIdentities.map((identity): Promise<PromiseSettledResult<void>> => {
       try {
         return Promise.resolve(this.deps.invalidateProviderSessionThread(identity.provider, identity.id)).then(

@@ -119,7 +119,7 @@ export function DiffViewer({ file }: DiffViewerProps) {
 
     const updateScrollRange = () => {
       const scrollLeft = beforeBody.scrollLeft;
-      // Measure intrinsic overflow before extending every pane by the same amount.
+      // すべてのペインを同じ量だけ拡張する前に、元のはみ出し量を測る。
       splitView.style.removeProperty("--diff-overflow-width");
       const overflowWidth = Math.max(
         beforeBody.scrollWidth - beforeBody.clientWidth,

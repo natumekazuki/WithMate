@@ -62,7 +62,7 @@ export function HomeSessionCard({
 
   const showMenu = (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
     if ("key" in event) {
-      // Chromium dispatches contextmenu for the Context Menu key. Crew handles that event once.
+      // Chromium はコンテキストメニューキーで contextmenu を発火する。Crew はそのイベントを一度だけ処理する。
       const contextMenuKey = event.key === "ContextMenu" && !windowState;
       if (!contextMenuKey && !(event.key === "F10" && event.shiftKey)) return;
     }

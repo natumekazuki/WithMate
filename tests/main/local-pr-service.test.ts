@@ -19,7 +19,7 @@ import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-
 const actor = { kind: "main", sessionId: "review-session", incarnationId: "generation" } as const;
 const gitNullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
 
-/** Runs Git only inside the supplied fixture using local, unsigned commits. */
+/** 指定された fixture の内部だけで Git を実行し、ローカルの署名なしコミットを使う。 */
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", ["-c", `core.hooksPath=${gitNullDevice}`, ...args], {
     cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
@@ -27,19 +27,19 @@ function git(root: string, ...args: string[]): string {
   }).trimEnd();
 }
 
-/** Narrows a successful response while preserving any unexpected error in the failure message. */
+/** 成功レスポンスに型を絞り込み、予期しないエラーは失敗メッセージに残す。 */
 function value<T extends LocalPrCoreOperation>(result: LocalPrResult<T>) {
   if (!result.ok) assert.fail(JSON.stringify(result));
   return result.data;
 }
 
-/** Asserts that a rejection reports its effect as well as a stable reason. */
+/** 拒否応答に安定した理由と処理の効果の両方が含まれることを確認する。 */
 function rejected(result: LocalPrResult<LocalPrCoreOperation>, code: string, effect = "none") {
   assert.equal(result.ok, false, JSON.stringify(result));
   if (!result.ok) assert.deepEqual([result.code, result.effect], [code, effect], result.message);
 }
 
-/** Provides Git, a linked source worktree, and the real storage Worker, all with disposable data. */
+/** 使い捨てのデータで Git、リンクされたソース worktree、実際のストレージ Worker を用意する。 */
 async function fixture(t: TestContext, options: { conflict?: boolean; detachedTarget?: boolean } = {}) {
   const folder = await mkdtemp(path.join(tmpdir(), "withmate-pr-"));
   const root = path.join(folder, "repo");
@@ -102,7 +102,7 @@ async function fixture(t: TestContext, options: { conflict?: boolean; detachedTa
     override: (fn: typeof storeOverride) => { storeOverride = fn; } };
 }
 
-/** Constructs a request for the exact tips shown to the approver. */
+/** 承認者に提示した正確な先端コミットを指定する要求を組み立てる。 */
 function tuple(prId: string, { version, headCommit, targetCommit }: LocalPrVersion) {
   return { prId, version, headCommit, targetCommit };
 }
@@ -208,7 +208,7 @@ test("Local PR review exposes the selected fixed range, reply, and resubmission 
   assert.equal(result.comments.find((comment) => comment.id === reply.data.id)?.replyTo, saved.data.id);
 });
 
-/** Renames, literal metacharacters, missing sides, replies and GUI drafts stay bound to the original pinned version. */
+/** 名前変更、文字どおりのメタ文字、片側の欠落、返信、GUI の下書きは、最初に固定した比較版にひも付き続ける。 */
 test("Local PR persists fixed comparisons and private drafts across storage restart and Git GC", async (t) => {
   const f = await fixture(t);
   const main = await resolveLocalPrRepository(f.root);
@@ -240,7 +240,7 @@ test("Local PR persists fixed comparisons and private drafts across storage rest
   rejected(await f.execute("pr_comment", { prId: pr.id, version: 1, body: "not shown", anchor: { ...line, startLine: 13, endLine: 14 } }), "INVALID_ANCHOR");
   rejected(await f.execute("pr_comment", { prId: pr.id, version: 1, body: "moved reply", replyTo: published.id, anchor: file }), "INVALID_ANCHOR");
 
-  // Remove the only branch pointing at the head, then prune reflogs and loose objects in the fixture.
+  // fixture 内でソース側の先端コミットを指す唯一のブランチを削除し、reflog と loose object を整理する。
   git(f.source, "switch", "--detach", f.base);
   git(f.root, "branch", "-D", "topic");
   git(f.root, "reflog", "expire", "--expire=now", "--all");
@@ -260,7 +260,7 @@ test("Local PR persists fixed comparisons and private drafts across storage rest
   assert.ok(f.changed.every((id) => id === f.repository.repositoryId));
 });
 
-/** Approval binds the exact source and target, and native Git is not launched while tracked edits exist. */
+/** 承認は正確なソースとターゲットにひも付き、追跡対象に未コミットの編集がある間はネイティブ Git を起動しない。 */
 test("Local PR rejects stale approval, dirty or locked checkout, and merges cleanly without CI", async (t) => {
   const f = await fixture(t);
   const pr = await f.create();
@@ -314,7 +314,7 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
   assert.equal(git(f.root, "rev-parse", "HEAD"), target);
   await rm(indexLock);
 
-  // Let Git reject a colliding untracked file but preserve unrelated untracked work.
+  // 衝突する未追跡ファイルは Git に拒否させ、無関係な未追跡の作業は維持する。
   const untracked = path.join(f.root, "l.txt");
   await writeFile(untracked, "untracked user content\n");
   rejected(await f.execute("pr_merge", v2), "GIT_FAILED", "unknown");
@@ -322,10 +322,10 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
   assert.equal(git(f.root, "rev-parse", "HEAD"), target);
   await rm(untracked);
   await writeFile(path.join(f.root, "scratch.txt"), "unrelated draft\n");
-  // Otherwise Git tries this strategy before the explicitly requested ort strategy.
+  // 対策がなければ、Git は明示的に要求した `ort` より先にこの戦略を試す。
   git(f.root, "config", "branch.main.mergeOptions", "-s ours");
 
-  // An updated source branch must not replace the commit the user reviewed.
+  // ソースブランチが進んでも、ユーザーがレビューしたコミットを置き換えてはならない。
   await writeFile(path.join(f.source, "not-submitted.txt"), "moving branch\n");
   git(f.source, "add", "not-submitted.txt");
   git(f.source, "commit", "-qm", "not part of this PR version");
@@ -341,7 +341,7 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).mergedCommit, merged.mergedCommit);
 });
 
-/** An exact GUI approval permits Git's selected programs, without rejecting unused configuration. */
+/** 照合済みの GUI 承認があれば、Git が選んだプログラムを実行でき、使われない設定を理由に拒否しない。 */
 test("Local PR uses the checkout's Git driver and filter only after approval", async (t) => {
   const f = await fixture(t, { conflict: true });
   const target = git(f.root, "rev-parse", "HEAD");
@@ -358,7 +358,7 @@ test("Local PR uses the checkout's Git driver and filter only after approval", a
   const pr = await f.create();
   const approved = tuple(pr.id, pr.versions[0]);
 
-  // The Agent cannot approve or cause the selected programs to run before GUI approval.
+  // エージェントは自ら承認できず、GUI 承認より前に選択されたプログラムを実行させることもできない。
   rejected(await f.execute("approve", approved, "agent"), "GUI_REQUIRED");
   rejected(await f.execute("pr_merge", approved, "agent"), "APPROVAL_REQUIRED");
   assert.equal(git(f.root, "rev-parse", "HEAD"), target);
@@ -379,7 +379,7 @@ test("Local PR uses the checkout's Git driver and filter only after approval", a
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).mergedCommit, merged.mergedCommit);
 });
 
-/** A clean filter can run during the worktree check even when Git never starts the merge. */
+/** Git がマージを開始しなくても、worktree の検査中に clean フィルターが動く場合がある。 */
 test("Local PR reports possible filter effects when the target checkout is dirty", async (t) => {
   const f = await fixture(t);
   await writeFile(path.join(f.root, ".git", "info", "attributes"), "base.txt filter=fixture\n");
@@ -399,7 +399,7 @@ test("Local PR reports possible filter effects when the target checkout is dirty
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).state, "open");
 });
 
-/** The app requests checkout when needed, then uses the selected linked worktree without touching other work. */
+/** アプリは必要に応じてチェックアウトを求め、その後は他の作業を変更せず、選ばれたリンク先 worktree を使う。 */
 test("Local PR requires a manual checkout, then merges in the linked worktree", async (t) => {
   const f = await fixture(t, { detachedTarget: true });
   const pr = await f.create();
@@ -419,7 +419,7 @@ test("Local PR requires a manual checkout, then merges in the linked worktree", 
   assert.equal(await readFile(path.join(f.root, "base.txt"), "utf8"), "unrelated work\n");
 });
 
-/** Git accepts '=' in branch names and must still use the normal strategy, not branch.mergeOptions. */
+/** Git はブランチ名の `=` を許容する。この場合も `branch.mergeOptions` ではなく通常の戦略を使う必要がある。 */
 test("Local PR applies the submitted files to a branch whose name contains equals", async (t) => {
   const f = await fixture(t);
   const branch = "release=stable";
@@ -437,7 +437,7 @@ test("Local PR applies the submitted files to a branch whose name contains equal
   assert.equal(git(f.root, "config", `branch.${branch}.mergeOptions`), "-s ours");
 });
 
-/** Git's conflict remains for the user to resolve, without marking the PR merged. */
+/** PR をマージ済みにせず、Git の競合をユーザーが解消できるよう残す。 */
 test("Local PR does not treat a Git merge conflict as a merged PR", async (t) => {
   const f = await fixture(t, { conflict: true });
   const pr = await f.create();
@@ -452,7 +452,7 @@ test("Local PR does not treat a Git merge conflict as a merged PR", async (t) =>
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).state, "open");
 });
 
-/** A native no-op does not count as creating the required merge commit. */
+/** ネイティブ Git が何もしなかった場合は、必要なマージコミットを作成したことにならない。 */
 test("Local PR reports that an already-included submission did not produce a merge commit", async (t) => {
   const f = await fixture(t);
   git(f.root, "merge", "--no-ff", "--no-edit", f.head);
@@ -466,7 +466,7 @@ test("Local PR reports that an already-included submission did not produce a mer
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).state, "open");
 });
 
-/** If a real Git failure interrupts ref commit after checkout, never report success or run an unguarded rollback. */
+/** チェックアウト後に実際の Git エラーで ref の確定が中断した場合は、成功を報告せず、無条件のロールバックも行わない。 */
 test("Local PR preserves the observed worktree and reports unknown when Git cannot commit the ref", async (t) => {
   const f = await fixture(t);
   const pr = await f.create();
@@ -485,7 +485,7 @@ test("Local PR preserves the observed worktree and reports unknown when Git cann
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).state, "open");
 });
 
-/** A disconnected save after ref commit is not retried blindly or reported as a clean rejection. */
+/** ref の確定後に保存が切断された場合、結果を確かめずに再試行したり、副作用のない拒否として報告したりしない。 */
 test("Local PR reports an uncertain overall effect when Git succeeds but review persistence does not", async (t) => {
   const f = await fixture(t);
   const pr = await f.create();

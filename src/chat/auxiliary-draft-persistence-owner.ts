@@ -13,7 +13,7 @@ export type AuxiliaryDraftPersistenceOwnerOptions = {
   debounceMs?: number;
 };
 
-/** One owner serializes persistence and retains only the newest unsaved value. */
+/** 一つの所有者が永続化を直列化し、未保存の値は最新のものだけを保持する。 */
 export class AuxiliaryDraftPersistenceOwner {
   private readonly options: AuxiliaryDraftPersistenceOwnerOptions;
   private readonly debounceMs: number;
@@ -73,8 +73,8 @@ export class AuxiliaryDraftPersistenceOwner {
 
   dispatchTurn<T>(consume: () => Promise<T>): Promise<T> {
     if (this.consumption || this.hasPending) throw new Error("Auxiliary draft is still being saved.");
-    // The turn call settles at terminal, not at input acceptance. Later edits
-    // must read the consumed durable revision without waiting for that terminal.
+    // Turn の呼び出しが完了するのは入力受付時ではなく、Turn の終了時。
+    // 後続の編集では、その終了を待たずに消費後の永続化済みリビジョンを読み取る必要がある。
     this.record = null;
     return consume();
   }
@@ -86,10 +86,10 @@ export class AuxiliaryDraftPersistenceOwner {
     try {
       return await consume();
     } finally {
-      // Consumption and failure restoration advance the durable revision.
-      // Keep edits queued until that revision is available to their normal CAS.
+      // 下書きを消費するときも失敗から復元するときも、永続化済みリビジョンが進む。
+      // 通常の CAS がそのリビジョンを使えるようになるまで、編集はキューで待機させる。
       this.record = null;
-      try { this.record = await this.options.load(); } catch { /* The queued save or next load reports persistence failure. */ }
+      try { this.record = await this.options.load(); } catch { /* キューにある保存処理か次回の読み取りが、永続化の失敗を報告する。 */ }
       this.consumption = null;
       release();
     }
@@ -124,8 +124,8 @@ export class AuxiliaryDraftPersistenceOwner {
         )) {
           throw new Error("Auxiliary draft changed after the failed send.");
         }
-        // Main may already have restored the captured draft. Otherwise only fill
-        // the exact consume revision; never overwrite a later durable edit.
+        // Main が取得済みの下書きを復元している場合がある。未復元なら
+        // 消費時のリビジョンにだけ書き戻し、それより新しい永続化済みの編集は上書きしない。
         const result = recovery && this.record.text === text
           ? { outcome: "saved" as const, record: this.record }
           : await this.options.save({ ...this.record, text, updatedAt: this.options.now() });

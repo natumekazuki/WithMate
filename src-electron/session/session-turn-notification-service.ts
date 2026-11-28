@@ -286,7 +286,7 @@ export class SessionTurnNotificationService<TIcon> {
     previewEnabled: Promise<boolean>,
   ): Promise<boolean> {
     const notificationKey = this.getNotificationKey(target);
-    // Observe both requests immediately, including when eligibility fails first.
+    // 対象可否の確認が先に失敗した場合も含め、両方のリクエストの結果をすぐに監視する。
     const safePreviewEnabled = previewEnabled.catch((error: unknown) => {
       this.deps.logWarning("preview-setting-check-failed", notificationInput.session.id, error);
       return false;

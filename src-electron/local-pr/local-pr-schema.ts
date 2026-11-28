@@ -1,4 +1,4 @@
-/** Repository-owned review records; Session identities are historical values, not cascading owners. */
+/** リポジトリが所有するレビュー記録。Session の識別情報は履歴として保持し、連鎖削除の起点にはしない。 */
 export const CREATE_LOCAL_PR_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS local_prs_v7 (
     repository_id TEXT NOT NULL,

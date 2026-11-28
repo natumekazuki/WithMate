@@ -1,5 +1,5 @@
--- Synthetic schema captured from e60cee1cc31a805be29bfa42c98bddce6a6f113e.
--- Release preview.6 and this restoration point have identical storage schema.
+-- e60cee1cc31a805be29bfa42c98bddce6a6f113e から採取した合成スキーマ。
+-- リリース版 preview.6 とこの復元地点のストレージスキーマは同一である。
 
   CREATE TABLE IF NOT EXISTS app_settings (
     setting_key TEXT PRIMARY KEY,

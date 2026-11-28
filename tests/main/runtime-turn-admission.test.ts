@@ -50,8 +50,8 @@ test("shared storage checks captured turn admission on arrival without blocking 
       () => worker.stores.settings.setWorktreeRoot(directory),
       () => worker.stores.coordination.execute({ actor: { kind: "user" }, request: { operation: "list", crewRootSessionId: saved.id, offset: 0, limit: 10 } }),
     ];
-    // Queue all calls before the ready event is handled, then revoke their shared states.
-    // This avoids racing the Worker while proving the Main-side entry check already passed.
+    // ready イベントが処理される前にすべての呼び出しをキューに入れ、その後に共有状態を失効させる。
+    // これにより Worker との競合を避けながら、Main 側の入口検査をすでに通過したことを確認できる。
     await Promise.all(operations.map((operation) => {
       const state = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
       const pending = runWithRuntimeTurnAdmission({ state }, operation);

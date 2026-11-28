@@ -17,7 +17,7 @@ export const CONVERSATION_PAGE_SIZE = 60;
 
 export type ConversationPageRequest = {
   startIndex?: number;
-  /** Sparse page of canonical message sequences; mutually exclusive with startIndex. */
+  /** 正本のメッセージのシーケンス番号を飛び飛びに指定するページ。startIndex とは併用できない。 */
   messageIndexes?: number[];
 };
 
@@ -48,7 +48,7 @@ export type ConversationQueryRequest = {
   producerId: string;
   offset?: number;
   stamp?: ConversationQueryStamp;
-  /** Restrict this producer to canonical messages in a reading projection. */
+  /** この生成処理の対象を、閲覧用の投影に含まれる正本のメッセージに限定する。 */
   messageIndexes?: number[];
 };
 
@@ -86,7 +86,7 @@ export function isConversationSearchAnchor(value: unknown): value is Conversatio
 export type ConversationSearchRequest = ConversationQueryRequest & {
   query: string;
   mode: "source" | "preview";
-  /** Initial request's raw-source selection; stamped page reads retain it when omitted. */
+  /** 初回リクエストで指定した変換前のソース範囲。スタンプ付きのページ取得では、省略しても初回の指定を引き継ぐ。 */
   anchor?: ConversationSearchAnchor;
 };
 

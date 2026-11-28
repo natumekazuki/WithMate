@@ -70,7 +70,7 @@ function childCreationRequest(input: ResolvedChildSessionCreation): CreateChildS
 export class MainSessionCommandFacade {
   constructor(private readonly deps: MainSessionCommandFacadeDeps) {}
 
-  /** Saves a child without opening a Window. New operations use the admitted Turn's permissions; retries and recovery use the accepted lifecycle input. */
+  /** ウィンドウを開かずに子 Session を保存する。新規操作には受理時の Turn の権限を、再試行と復旧には受理済みのライフサイクル入力を使う。 */
   async createChildSession(actor: { id: string; incarnationId: string }, request: CreateChildSessionRequest, assertCurrent: () => void, actorExecution?: { providerId: string; executionOptions: SessionExecutionOptions }): Promise<Session> {
     if (!request.requestId.trim()) throw new ChildSessionCreationRejectedError("A stable child creation request ID is required.");
     const prepared = await this.deps.runProviderRuntimeOperationExclusive(async () => {

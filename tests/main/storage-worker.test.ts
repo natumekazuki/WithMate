@@ -212,7 +212,7 @@ test("auxiliary conditional save reports an unknown write outcome after worker e
   workerUrl: createFixtureWorkerUrl(), workerOptions: {},
   });
   try {
-    // This transport fixture exits before interpreting storage arguments; it does not open a database.
+    // この通信 fixture はストレージ用の引数を解釈する前に終了し、データベースは開かない。
     await assert.rejects(
       bundle.stores.auxiliary.updateAuxiliarySessionIfMatches({} as never),
       (error: unknown) => error instanceof Error && error.name === "StorageWorkerUnknownOutcomeError",

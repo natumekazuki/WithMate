@@ -810,8 +810,8 @@ export function FileRootGitHistoryPane({
           listRefreshDeferredRef.current = true;
           continue;
         }
-        // Offset cursors from an older prefix cannot be appended to a refreshed one.
-        // Replace the loaded extent atomically using only cursors from this pass.
+        // 古い先頭範囲のオフセットカーソルを、更新後の範囲に継ぎ足すことはできない。
+        // 今回の取得で得たカーソルだけを使い、読み込み済みの範囲をまとめて置き換える。
         const nextCommits: FileRootGitHistoryCommit[] = [];
         let nextCursor: string | null = null;
         let nextHasMore = false;

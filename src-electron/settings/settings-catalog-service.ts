@@ -41,9 +41,9 @@ export type AuxiliaryCredentialThreadInfo = {
 };
 
 export type SettingsCatalogServiceDeps = {
-  /** Captures the storage owner/generation used by a deferred operation. */
+  /** 遅延実行する操作が使うストレージの所有者と世代を捕捉する。 */
   captureStorageIdentity?: () => unknown;
-  /** Returns false when the storage owner/generation has been replaced. */
+  /** ストレージの所有者または世代が置き換えられていれば false を返す。 */
   isStorageIdentityCurrent?: (identity: unknown) => boolean;
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
   hasInFlightSessionRuns(): boolean;
@@ -184,7 +184,7 @@ export class SettingsCatalogService {
       try {
         this.deps.onChatLayoutPreferenceSaveError?.(update, error);
       } catch {
-        // A diagnostic failure must not break later preference checkpoints.
+        // 診断の失敗によって、後続の設定チェックポイントへの処理を妨げない。
       }
     });
   }
@@ -415,8 +415,8 @@ export class SettingsCatalogService {
     if (resetTargets.length === 0) {
       throw new Error("Select at least one reset target.");
     }
-    // Invalidate deferred rollbacks only after reset validation and immediately
-    // before the first reset mutation. This also covers app-settings-only ABA.
+    // リセットを検証した後、最初のリセット変更の直前にだけ、
+    // 遅延ロールバックを無効化する。アプリ設定だけの ABA もこれで扱う。
     this.rollbackEpoch += 1;
     const previousAuxiliarySessionIds = resetTargets.includes("sessions")
       ? (await this.deps.listAuxiliarySessions()).map((session) => session.id)

@@ -1,4 +1,4 @@
-/** Canonical roots for one agent-bound file operation; absent access permits no file I/O. */
+/** Agent に紐付く一つのファイル操作の正規ルート。アクセス情報がなければファイル I/O は許可しない。 */
 export type MemoryFileAccess = Readonly<{
   readRoots: readonly string[];
   exportRoot: string | null;

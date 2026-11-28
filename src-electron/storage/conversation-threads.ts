@@ -29,7 +29,7 @@ function readMainStartFrame(db: DatabaseSync, source: MainTarget, receiptId: str
   return start ? savedMessageConversationFrame(readThreads(), start.seq) ?? null : null;
 }
 
-/** Seed the waiting receipt from the same saved affiliation as its immutable start. */
+/** 不変の開始記録と同じ保存済みの所属情報を使い、待機中の受領記録の所属を初期化する。 */
 export function readMainCoordinationFrame(db: DatabaseSync, source: MainTarget, record: CoordinationOrigin | undefined,
   readThreads?: () => ConversationThreads): MainTarget | null {
   if (record?.initiator.kind !== "main" || record.initiator.sessionId !== source.sessionId
@@ -48,7 +48,7 @@ export function readConversationCoordinationOrigin(db: DatabaseSync, id: string)
   return row && JSON.parse(row.payload_json) as CoordinationOrigin;
 }
 
-/** Project the saved Main history; creating or selecting a frame does not create a transcript. */
+/** 保存済みの Main の履歴を投影する。フレームの作成や選択で会話記録は作成されない。 */
 export function readConversationThreads(db: DatabaseSync, source: MainTarget): ConversationThreads {
   const childRows = db.prepare(`SELECT s.id, s.incarnation_id, s.title, ${MAIN_SESSION_CHARACTER_AND_RUN_COLUMNS}
     FROM sessions_v6 s JOIN sessions_v6 parent ON parent.id = s.parent_session_id
@@ -76,7 +76,7 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
 
   const savedTimestamps = new Map(savedRows.map(({ seq, created_at }) => [seq, created_at]));
   const saved = (seq: number | null) => seq !== null && savedTimestamps.has(seq) ? seq : null;
-  // Only records belonging to this frame contribute; Session metadata and run state do not.
+  // このフレームに属する記録だけを反映し、Session のメタデータや実行状態は反映しない。
   const touch = (frame: ConversationThread, timestamp: string | undefined) => {
     const time = timestamp === undefined ? NaN : Date.parse(timestamp);
     if (Number.isFinite(time) && (frame.lastActivityAt === undefined || time > frame.lastActivityAt)) frame.lastActivityAt = time;
@@ -111,7 +111,7 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
       frame.messageIndexes.push(seq);
       touch(frame, savedTimestamps.get(seq));
     }
-    // A queued additional input belongs to its own sender, not the Turn's ordinary response.
+    // キューに入った追加入力は、その送信者に属する。Turn の通常応答には含めない。
     const turn = row.turn_id && row.input_turn_id === null ? turns.get(row.turn_id) : undefined;
     if (turn && turn.user_message_seq === row.user_message_seq && (seq !== null || row.user_message_seq === null)) {
       frame.inboundTurnIds.push(String(turn.id));
@@ -123,8 +123,8 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
     }
   }
 
-  // Walk GUI inputs in sequence order: a reply or subsequent Coordination may
-  // refer to a message whose membership was itself inherited.
+  // GUI 入力をシーケンス順にたどる。返信や後続の Coordination が、
+  // 所属を別のメッセージから継承したメッセージを参照することがあるため。
   const membership = new Map<number, ConversationThread | null>();
   for (const frame of children.values()) {
     for (const seq of frame.messageIndexes) {
@@ -226,7 +226,7 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
     if (frame) addSent(frame, origin.actorTurnId, row.created_at);
   }
 
-  // A direct Steer is saved at the child, not as a source receipt or as the child's reply.
+  // 直接の Steer は子側に保存する。送信元の受領記録や子の返信としては保存しない。
   const steer = db.prepare(`SELECT session_id, created_at, json_extract(body, '$.turnInput.origin') AS origin
     FROM session_messages_v6 WHERE role='user' AND json_extract(body, '$.turnInput.queueId') IS NULL
       AND json_extract(body, '$.turnInput.origin.kind')='session'

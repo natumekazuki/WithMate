@@ -751,7 +751,7 @@
 }
 
 .concurrent-chat-session-switcher:has(.session-switcher-popover) {
-  /* Keep the open menu above the inactive conversation's dimming layer. */
+  /* 開いたメニューを、非アクティブな会話を暗くするレイヤーよりも手前に表示する。 */
   z-index: 21;
 }
 
@@ -800,7 +800,7 @@
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* The unfiltered Main view has no avatar, but switching to it must not resize the pane header. */
+/* 絞り込みのない Main ビューにはアバターがないが、切り替え時にペインのヘッダーの大きさを変えない。 */
 .main-thread-header .session-switcher-current { min-height: 50px; }
 .main-thread-header .session-switcher-option { min-height: 48px; }
 

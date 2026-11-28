@@ -9,11 +9,11 @@ import {
 } from "../providers/owned-process.js";
 import { createWindowsJobObject, type WindowsJobObject } from "../providers/windows-job-object.js";
 
-/** A stop request is independent of any Window and can arrive before or during launch. */
+/** 停止要求はウィンドウに依存せず、起動前にも起動中にも届き得る。 */
 export type LocalPrCiStop = { signal: AbortSignal; reason: () => "canceled" | "interrupted" | undefined };
 type ShellResult = { state: "succeeded" | "failed" | "canceled" | "interrupted"; exitCode: number | null; error: string | null; stopped: boolean };
 
-/** Run the definition in one owned native shell; confirm completion and owned-process drain separately. */
+/** 管理下の単一のネイティブシェルで定義を実行し、完了と管理下のプロセスの終了を別々に確認する。 */
 export async function runLocalPrCiShell(
   work: string, checkout: string, commands: string[], stop: LocalPrCiStop, log: (chunk: Buffer) => void,
 ): Promise<ShellResult> {
@@ -23,8 +23,8 @@ export async function runLocalPrCiShell(
   }
   const completion = join(work, "complete");
   const script = windows ? "ci.cmd" : "ci.sh";
-  // Parse each scalar independently while retaining cwd and exported variables in the same shell.
-  // CMD's CALL expands the work path on its second pass, so path values themselves are not re-expanded.
+  // 同じシェルで cwd とエクスポート済み変数を維持し、各スカラー値は独立して解釈する。
+  // CMD の CALL は2回目の処理で作業パスを展開するため、パスの値自体は再展開されない。
   if (windows) await Promise.all(commands.map((command, index) =>
     writeFile(join(work, `step-${index}.cmd`), `@${command}\r\n`, { flag: "wx", mode: 0o600 }),
   ));
@@ -37,7 +37,7 @@ export async function runLocalPrCiShell(
   const earlyStop = stop.reason();
   if (earlyStop) return shellResult(earlyStop, null, null, true);
 
-  // Caller credentials are not passed to jobs; inherited Git overrides must not redirect CI to the source checkout.
+  // 呼び出し元の認証情報はジョブに渡さない。継承された Git の上書き設定で CI が元のチェックアウトを参照してはならない。
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(git_|withmate_|errorlevel$|electron_run_as_node$)/iu.test(name)));
   env.WITHMATE_CI_COMPLETION = completion;
   env.WITHMATE_CI_WORK = work;
@@ -50,7 +50,7 @@ export async function runLocalPrCiShell(
       cwd: checkout, env,
     }, windows ? { createJobObject: () => (job = createWindowsJobObject()) } : {});
   } catch (error) {
-    // Partial acquisition must never launch commands or silently lose a native owner.
+    // 部分的にしか取得できなかった場合は、コマンドを起動せず、ネイティブ側の所有者も失ったままにしない。
     if (error instanceof OwnedProviderProcessAcquisitionError) {
       error.owner.child?.on("error", () => undefined);
       try { error.owner.terminate(); } finally { error.owner.release(); }
@@ -74,7 +74,7 @@ export async function runLocalPrCiShell(
   const launch = owned.ready.then(() => { ready = true; }, () => undefined);
 
   try {
-    // Exit can precede pipe close when a child outlives the shell. Drain ownership before trusting either result.
+    // 子プロセスがシェルより長く残ると、パイプを閉じる前に終了イベントが届く。どちらの結果も採用する前に、管理下のプロセスがすべて終了するのを待つ。
     await Promise.race([exited, closed, stopping, launch.then(() => ready ? closed : undefined)]);
     const alive = () => job?.hasProcesses() ?? posixGroupExists(child.pid);
     if (alive()) owned.terminate();
@@ -102,12 +102,12 @@ export async function runLocalPrCiShell(
   }
 }
 
-/** Build the terminal shell result without inferring success from a stop request. */
+/** 停止要求から成功を推定せず、シェルの最終結果を組み立てる。 */
 function shellResult(state: ShellResult["state"], exitCode: number | null, error: string | null, stopped: boolean): ShellResult {
   return { state, exitCode, error, stopped };
 }
 
-/** The shared POSIX launcher gives the shell a dedicated process group. */
+/** 共通の POSIX 起動処理は、シェルに専用のプロセスグループを割り当てる。 */
 function posixGroupExists(pid: number | undefined): boolean {
   if (pid === undefined) return false;
   try {

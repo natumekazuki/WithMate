@@ -41,7 +41,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: inherit;
-  /* Keep preview controls on the leading side, away from floating message actions. */
+  /* プレビューの操作要素は行頭側に置き、浮動表示されるメッセージ操作から離す。 */
   max-inline-size: 50%;
   flex: none;
 }

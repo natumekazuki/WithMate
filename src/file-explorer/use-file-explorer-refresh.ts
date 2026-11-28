@@ -5,7 +5,7 @@ import { subscribeSessionLiveEvents, type SessionLiveIngressApi } from "../chat/
 type ExplorerTab = "files" | "changes" | "history";
 const REFRESH_COALESCE_MS = 150;
 
-/** Event invalidation only. Each pane owns its initial/activation read and in-flight queue. */
+/** イベントによる無効化だけを担う。初回・アクティブ化時の読み取りと処理中のキューは各ペインが管理する。 */
 export function useFileExplorerRefresh(input: {
   api: SessionLiveIngressApi | null;
   ownerKey: string;
@@ -55,7 +55,7 @@ export function useFileExplorerRefresh(input: {
       setDocumentVisible(document.visibilityState !== "hidden");
     };
     const onFocus = () => {
-      // A visibility/tab activation already starts a read; focus in the same burst adds none.
+      // 表示やタブのアクティブ化で既に読み取りが始まるため、同じ一連の操作内でのフォーカスでは追加しない。
       if (Date.now() - activatedAtRef.current >= REFRESH_COALESCE_MS) schedule();
     };
     document.addEventListener("visibilitychange", onVisibilityChange);

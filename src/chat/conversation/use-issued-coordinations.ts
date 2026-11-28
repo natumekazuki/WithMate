@@ -9,7 +9,7 @@ type Page = Extract<SessionExecutionReadResult<"list_issued_coordinations">, { o
 export type IssuedCoordination = Page["items"][number];
 type Snapshot = { owner: string; key: string; page: Page; retained: IssuedCoordination[] };
 
-/** Keep the viewed prefix across refreshes; the persisted record remains the source of truth. */
+/** 再取得しても閲覧済みの先頭範囲を保つ。正本は引き続き永続化済みのレコード。 */
 export function useIssuedCoordinations(context: TurnInputReadContext | undefined, messages: readonly Message[], liveTurnId: string | undefined, enabled: boolean,
   savedSeqs?: readonly (number | undefined)[], responseTurnIds?: readonly (string | undefined)[]) {
   const messageSeqs = [...new Set((savedSeqs ?? messages.map((message) => message.historyIndex)).filter((seq) => seq !== undefined))].slice(0, 180);
@@ -21,8 +21,8 @@ export function useIssuedCoordinations(context: TurnInputReadContext | undefined
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const commands = useRef<{ key: string; load(cursor?: string): Promise<void> } | null>(null);
-  // Reading authority comes from canonical sequences or the active Turn. A
-  // previously read record can still have a visible row on a retained response.
+  // 読み取り権限は、正本のシーケンス番号か実行中の Turn に基づく。
+  // 読み取り済みのレコードの行は、保持している応答上に引き続き表示される場合がある。
   const visibleTurns = new Set([...(responseTurnIds ?? []), ...liveTurnIds]);
   const hasPlacement = (item: IssuedCoordination) => visibleTurns.has(item.sourceTurnId)
     || item.sourceMessageSeq !== null && messageSeqs.includes(item.sourceMessageSeq);
@@ -59,8 +59,8 @@ export function useIssuedCoordinations(context: TurnInputReadContext | undefined
       } while (nextCursor !== undefined && items.length < requestedCount);
       const observed = new Map((cursor && previous ? previous.items : []).map((item) => [item.id, item]));
       for (const item of items) observed.set(item.id, item);
-      // The keyset is ordered by record ID. A missing item after the last
-      // fetched ID is not a deletion, even when its source seq is now saved.
+      // キーセットはレコード ID 順。最後に取得した ID より後の項目が見つからなくても、
+      // その送信元 seq が保存済みになっていることだけで、削除とはみなさない。
       const known = saved.current?.owner === owner ? saved.current : null;
       const retained = known ? [...known.page.items, ...known.retained].filter((item) =>
         !observed.has(item.id) && placement.current(item)
@@ -86,7 +86,7 @@ export function useIssuedCoordinations(context: TurnInputReadContext | undefined
         } catch (reason) {
           if (active) setError(reason instanceof Error ? reason.message : "Could not read Coordination.");
         }
-        // Catch up from the beginning, including a prefix just expanded by Load More.
+        // 「さらに読み込む」で直前に広げた先頭範囲も含め、先頭から再取得して追いつく。
         cursor = undefined;
       } while (active && refreshPending);
       reading = false;

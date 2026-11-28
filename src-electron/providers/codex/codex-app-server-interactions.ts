@@ -88,7 +88,7 @@ function questions(params: Record<string, unknown>, requestId: string): LiveElic
   return { requestId, provider: "codex", kind: "question", mode: "form", message: "Codex has a question", fields, blocking: params.isBlocking };
 }
 
-// Projection is deliberately limited to constraints represented by the existing form UI.
+// 表示に反映する制約は、既存のフォーム UI で表現できるものに限る。
 function mcpField(name: string, schema: unknown, required: boolean): LiveElicitationField | null {
   if (!record(schema)) return null;
   const keys = ["type", "title", "description", "default"];

@@ -73,7 +73,7 @@ export async function preflightOpenCodeInbox(client: OpenCodeClient, root: Sessi
   if ((await client.session.inbox.list({ sessionID: root.id }, { signal })).length) throw new Error("OpenCode inbox cancellation was not confirmed");
 }
 
-/** Read only the current request's suffix; prior-turn outcomes are never terminal evidence. */
+/** 今回のリクエストに対応する末尾部分だけを読む。以前の Turn の結果は、今回の終了を示す根拠にしない。 */
 async function readCurrentMessages(client: OpenCodeClient, sessionID: string, requestID: string, signal: AbortSignal): Promise<SessionMessageInfo[]> {
   const suffix: SessionMessageInfo[] = [];
   let cursor: string | undefined;
@@ -321,7 +321,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
         });
       };
       dispatched = true;
-      // Prompt admission is intentionally not used as the completion result.
+      // プロンプトの受付結果は、意図的に完了結果として扱わない。
       const admission = native.session.prompt({ sessionID: rootID, id: requestID, text: prompt.logicalPrompt.composedText,
         metadata, files: input.attachments.map((attachment) => ({ uri: pathToFileURL(attachment.absolutePath).href, name: path.basename(attachment.absolutePath) })), resume: true }, { signal });
       void admission.catch(() => undefined);
@@ -348,8 +348,8 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
             throw new Error("OpenCode permission request ownership is unknown");
           }
           enqueue(key, async (pendingSignal) => {
-            // The interaction tail orders native replies, but only this request's
-            // reply or the interaction lifetime can invalidate its review.
+            // 対話キューでネイティブ側への応答順を揃える。ただし、このレビューを無効にできるのは、
+            // このリクエストへの応答か、対話の有効期間の終了だけ。
             const isPending = () => interactionControllers.get(key)?.signal === pendingSignal
               && !pendingSignal.aborted && !interactionsClosed;
             const decision = deniedSessionActions.has(request.action) || input.executionOptions.approvalMode === "safety-focused" ? "deny"
@@ -393,7 +393,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
         if (delivered) { projection.apply(event); await publish(); }
         if (event.data.sessionID !== rootID || !delivered) continue;
         if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed" || event.type === "session.execution.interrupted") {
-          // The root turn has ended; late answers must not reach native while the final snapshot is read.
+          // ルート Turn は終了している。最終スナップショットの読み取り中に、遅れて届いた回答をネイティブ側へ送らない。
           closeInteractions();
           const messages = await readCurrentMessages(native, rootID, requestID, signal);
           projection.replaceMessages(messages);
@@ -420,7 +420,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
             await client.session.inbox.cancel({ sessionID: rootID, inboxID: requestID }, { signal: cleanupController.signal });
           }
           await client.session.interrupt({ sessionID: rootID, resume: false }, { signal: cleanupController.signal });
-        } catch { /* Next-run preflight must verify any remaining inbox item. */ }
+        } catch { /* 次回の実行前チェックで、受信箱に残っている項目がないか確認する必要がある。 */ }
         finally { clearTimeout(timer); }
       }
       const failure = interactionFailure ?? error;

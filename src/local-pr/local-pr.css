@@ -1,4 +1,4 @@
-/* Use the Session shell and File Preview controls; the review layout owns only its panels. */
+/* Session シェルと File Preview の操作要素を使い、レビュー用レイアウトでは自身のパネルだけを管理する。 */
 .page-shell.local-pr-app {
   --local-pr-inset: clamp(12px, 2vw, 22px);
   --local-pr-strong-line: color-mix(in srgb, var(--muted) 36%, transparent);

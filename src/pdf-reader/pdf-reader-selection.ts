@@ -1,4 +1,4 @@
-/** Only the visible PDF document's range is eligible for host text actions. */
+/** ホスト側のテキスト操作の対象にできるのは、表示中の PDF 文書内の選択範囲だけ。 */
 export function readPdfSelection(document: Document): string {
   const selection = document.defaultView?.getSelection();
   if (!selection || selection.isCollapsed || !selection.anchorNode || !selection.focusNode) return "";

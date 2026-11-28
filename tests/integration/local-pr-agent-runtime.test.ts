@@ -27,7 +27,7 @@ const prId = "11111111-1111-4111-8111-111111111111";
 const runId = "22222222-2222-4222-8222-222222222222";
 const headCommit = "a".repeat(40), targetCommit = "b".repeat(40);
 
-/** Real public transports preserve comment targets and must not bypass exact workspace/Turn authentication or the common merge gate. */
+/** 実際の公開通信経路は、コメントの対象を維持し、Workspace と Turn を厳密に照合する認証や共通のマージ判定を迂回しない。 */
 test("bundled Local PR CLI and managed HTTP MCP share the bound application and reject forged authority", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-pr-transport-"));
   const workspacePath = join(directory, "session-workspace");
@@ -60,11 +60,11 @@ test("bundled Local PR CLI and managed HTTP MCP share the bound application and 
       await beforeEffect?.();
       context.assertCurrent();
       operations.push(operation);
-      // Only the common application owns the Approval and CI effects. This fixture supplies its contract, not shell or Git execution.
+      // 承認と CI の効果は共通アプリケーションだけが担う。この fixture はその契約を再現し、シェルや Git は実行しない。
       if (operation === "pr_merge") return { ok: false, code: "LOCAL_PR_APPROVAL_REQUIRED", message: "GUI approval is required.", effect: "none" };
       if (operation === "pr_ci_start" || operation === "pr_ci_rerun") assert.equal((input as { prId: string }).prId, prId);
       let value: unknown = expectedRun;
-      // Project the submitted anchor as the application would, so both clients must preserve the round trip.
+      // アプリケーションと同様に送信されたアンカーを応答へ反映し、両クライアントが往復でアンカーを保持することを確認する。
       if (operation === "pr_comment") {
         const { anchor, version, body, replyTo } = localPrAgentInput.pr_comment.parse(input);
         value = { id: runId, version, anchor: anchor ?? null, body, replyTo: replyTo ?? null, author: actor, draft: false,
@@ -95,7 +95,7 @@ test("bundled Local PR CLI and managed HTTP MCP share the bound application and 
       WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability, WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID: runtimeOwner.applicationInstanceId,
       WITHMATE_AGENT_RUNTIME_GENERATION_ID: runtimeOwner.runtimeGenerationId, WITHMATE_AGENT_RUNTIME_API_URL: connection.connection.api.baseUrl,
       WITHMATE_AGENT_RUNTIME_API_SECRET: connection.connection.api.apiSecret, WITHMATE_AGENT_RUNTIME_MCP_API_SECRET: connection.connection.credential.adapterSecret };
-    /** Execute the actual bundled entry in a different cwd, without a test-side transport adapter. */
+    /** テスト側の通信アダプターを介さず、実際に同梱されるエントリーを別の作業ディレクトリから実行する。 */
     const cli = async (command: string, body: Record<string, unknown>, override: NodeJS.ProcessEnv = {}) => {
       try {
         const result = await promisify(execFile)(process.execPath, [bundledCli, command, "--json", JSON.stringify(body)],
@@ -176,7 +176,7 @@ test("bundled Local PR CLI and managed HTTP MCP share the bound application and 
       saved = original;
     }
 
-    // A call admitted before revocation must still reject at the application effect boundary.
+    // 失効前に受け付けた呼び出しも、アプリケーションが効果を適用する境界では拒否する必要がある。
     const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
     beforeEffect = () => { started.resolve(); return release.promise; };
     const pending = cli("pr-ci-start", start);
@@ -195,7 +195,7 @@ test("bundled Local PR CLI and managed HTTP MCP share the bound application and 
     await client.close();
     turns.end(turn);
     await runtime.stop();
-    // Only the isolated directory created by this test is removed.
+    // このテストが作成した隔離ディレクトリだけを削除する。
     await rm(directory, { recursive: true, force: true });
   }
 });

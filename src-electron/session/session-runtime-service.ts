@@ -58,7 +58,7 @@ export type SessionRuntimeServiceDeps = {
     signal: AbortSignal,
   ): Promise<T>;
   getSession(sessionId: string): Awaitable<Session | null>;
-  /** Reads the exact owner once per new Turn; never used for Steer. */
+  /** 新しい Turn ごとに、特定した所有者の指示を一度だけ読み込む。Steer では使わない。 */
   readSessionInstructions?(session: Session): Awaitable<string>;
   persistRunningTurnStart(session: Session, expectedMessageCount: number): Awaitable<Session>;
   persistQueuedTurnStart?(session: Session, expectedMessageCount: number, queueId: string, turn: SessionTurnInput): Awaitable<{ session: Session; turn: SessionTurnRecord }>;
@@ -76,7 +76,7 @@ export type SessionRuntimeServiceDeps = {
     terminalCommit: SessionTurnTerminalCommit,
     options?: { confirmedFinalAssistantText?: string | null },
   ): Awaitable<Session>;
-  /** Opens the in-memory source-display scope. Its synchronous disposer releases only this Turn, without writing storage. */
+  /** 入力元を表示するためのインメモリスコープを開く。返す同期の解放処理は、ストレージに書き込まず、この Turn のスコープだけを解放する。 */
   beginSourceDisplayTurn?(session: Session, turnId: string): () => void;
   clearCharacterAuthoringRuntimeState?(session: Session): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
@@ -112,7 +112,7 @@ export type SessionRuntimeServiceDeps = {
   setSessionContextTelemetry(telemetry: SessionContextTelemetry): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
   resetProviderSessionThread?(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
-  /** Persisted Auxiliary threads must not be replaced silently after resume failure. */
+  /** 再開に失敗しても、保存済み Auxiliary のスレッドを黙って置き換えない。 */
   isAuxiliarySession?(sessionId: string): Awaitable<boolean>;
   getProviderAgentRuntimeBinding?(input: {
     session: Session;
@@ -579,7 +579,7 @@ export class SessionRuntimeService {
       this.deps.setLiveSessionRun(sessionId, rest.backgroundTasks.length > 0 || (rest.reasoningText ?? "").trim().length > 0 ? rest : null);
       this.deps.broadcastLiveSessionRun(sessionId);
     }
-    try { this.deps.onSessionRunReleased?.(sessionId); } catch { /* Release observers do not own execution or persistence. */ }
+    try { this.deps.onSessionRunReleased?.(sessionId); } catch { /* 解放の監視側は、実行や永続化を制御しない。 */ }
   }
 
   private trackTerminatingSessionRun(sessionId: string, promise: Promise<unknown>): void {
@@ -689,7 +689,7 @@ export class SessionRuntimeService {
     source: SessionTurnQueueOwner & { turnId: string }, assertCurrent: () => void): Promise<SessionSteerResult> {
     let parent: ParentSessionInput | undefined;
     try {
-      // Capture one native target. Never resolve a later Turn after asynchronous preparation.
+      // ネイティブの対象をここで一度だけ取得する。非同期の準備後に、後続の Turn を取り直さない。
       const live = this.deps.getLiveSessionRun(target.sessionId);
       if (live?.sessionTurnId !== turnId || !live.turnId) throw new Error("The selected WithMate Turn is not running.");
       const nativeTurnId = live.turnId;
@@ -708,10 +708,10 @@ export class SessionRuntimeService {
       return { outcome: parent?.dispatched ? "unknown" : "not-applied", turnId, messageSeq: parent?.messageSeq ?? null,
         reason: error instanceof Error ? error.message : "The Steer result could not be confirmed." };
     } finally {
-      // A lost storage reply may still have committed pending/not-sent input.
-      // Invalidate its exact source without treating the operation as accepted.
+      // ストレージの応答が失われても、pending または not-sent の入力がコミットされていることがある。
+      // 操作を受付済みとして扱わず、該当する送信元の表示を無効化する。
       if (parent) {
-        try { this.deps.onSentInputChanged?.(parent.origin); } catch { /* Publication cannot change the input outcome. */ }
+        try { this.deps.onSentInputChanged?.(parent.origin); } catch { /* 通知によって入力の結果は変わらない。 */ }
       }
     }
   }
@@ -756,7 +756,7 @@ export class SessionRuntimeService {
       }
     };
     let dispatched = false;
-    // Register the input before preparation starts, including synchronous deps.
+    // 同期的に動く依存処理も含め、準備を始める前に入力を登録する。
     const operation = Promise.resolve().then(async () => {
       const reference = queued ? queued.dispatched?.request.replyTo : request.replyTo;
       const replyTo = reference === undefined ? undefined : sessionReplySchema.parse(reference);
@@ -797,7 +797,7 @@ export class SessionRuntimeService {
         if (direct) inputSeq = await direct.begin(request.userMessage.trim(), request.expectedTurnId, preview.attachments, parent?.origin, questionRequestId, replyTo);
         if (parent) parent.messageSeq = inputSeq ?? null;
         if (parent) {
-          try { this.deps.onSentInputChanged?.(parent.origin); } catch { /* Publication cannot interrupt Provider dispatch. */ }
+          try { this.deps.onSentInputChanged?.(parent.origin); } catch { /* 通知がプロバイダーへの送出を妨げてはならない。 */ }
         }
         assertActiveTurn();
         dispatched = true;
@@ -806,8 +806,8 @@ export class SessionRuntimeService {
         const provenance = queued ? queuedInputProvenance(queued, queued.dispatched!) : parent ? { origin: parent.origin, originalChanged: false } : undefined;
         const messageIdentity = replyTo && inputSeq !== undefined && !isAuxiliary
           ? { sessionId, incarnationId: getSessionIncarnationId(session), seq: inputSeq } : undefined;
-        // Coordination is delivered into the same live Turn. Its queue acceptance
-        // records that Turn's thread; there is no new saved message identity yet.
+        // Coordination は実行中の同じ Turn に配信する。キューの受付時にはその Turn のスレッドを記録するが、
+        // 新しい保存済みメッセージの識別情報はまだない。
         const mainConversationFrame = queued?.dispatched?.coordination?.operation === "answer"
           ? queued.dispatched.request.mainConversationFrame : undefined;
         const result = await adapter.steerSessionTurn({ sessionId, expectedTurnId: request.expectedTurnId,
@@ -1006,7 +1006,7 @@ export class SessionRuntimeService {
       }
     };
     assertCapturedOwner(storedSession);
-    // Snapshot once, before asynchronous provider preparation and before any in-turn edits.
+    // 非同期のプロバイダー準備や Turn 中の編集より前に、指示を一度だけ取得する。
     const sessionInstructions = await this.deps.readSessionInstructions?.(storedSession) ?? "";
     const resolvedSession = await Promise.resolve(
       this.deps.resolveRuntimeSessionForTurn?.(storedSession) ?? storedSession,
@@ -1148,8 +1148,8 @@ export class SessionRuntimeService {
         elapsedMs: Date.now() - investigationStartedAt,
         messageCount: runningSession.messageCount ?? runningSession.messages.length,
       });
-      // A confirmed queued start owns a saved Turn and must save its terminal
-      // cancellation, even if Stop arrived while the start write was in flight.
+      // キュー経由の開始が確定すると、保存済み Turn に対してキャンセルによる終了を記録する必要がある。
+      // 開始の書き込み中に Stop が届いた場合も同じ。
       if (!queued) throwIfRunCanceled(runAbortController.signal);
       this.inFlightSessionRuns.add(sessionId);
       initialLiveState = {
@@ -1211,7 +1211,7 @@ export class SessionRuntimeService {
           try {
             activeRunningSession = await this.deps.beginRunningInput!({ ...activeRunningSession, updatedAt: currentTimestampLabel() }, text, runningTurn.id, nativeTurnId, attachments, origin, questionRequestId, replyTo);
           } catch (error) {
-            // A lost append reply must not lead to Provider dispatch or a second append.
+            // 追記の応答が失われても、プロバイダーに送出したり、追記をやり直したりしない。
             const canonical = await this.deps.getSession(sessionId);
             if (canonical && getSessionIncarnationId(canonical) === getSessionIncarnationId(activeRunningSession)
               && canonical.messageCount === messageSeq + 1) {
@@ -1279,8 +1279,8 @@ export class SessionRuntimeService {
       if (mainIdentity) {
         mainConversationFrame = queued?.input.request.mainConversationFrame;
         if (mainConversationFrame === undefined) {
-          // An older GUI receipt can have a saved reply, and an agent's ordinary
-          // input keeps its existing origin-based display membership.
+          // 従来の GUI 受付レコードにも保存済みの返信があり得る。エージェントからの通常入力では、
+          // 従来どおり送信元に基づく表示上の所属を維持する。
           const needsSavedMembership = queued && (queued.input.origin?.kind === "session" || replyTo);
           mainConversationFrame = needsSavedMembership && this.deps.readMainMessageThread
             ? await this.deps.readMainMessageThread({ kind: "main", sessionId, incarnationId: mainIdentity.incarnationId }, mainIdentity.seq)
@@ -1335,7 +1335,7 @@ export class SessionRuntimeService {
                 binding: agentRuntimeBinding, signal: runAbortController.signal });
               review = approvalReview?.pending(request, nativeReview) ?? null;
             } catch {
-              // A review route that cannot be constructed is not a manual route.
+              // レビュー経路を構築できなくても、手動経路としては扱わない。
             }
           }
           return this.deps.waitForApprovalDecision(sessionId, request, signal, review, onDecisionSource);
@@ -1421,8 +1421,8 @@ export class SessionRuntimeService {
       if (providerAgentRuntimeTurn) {
         agentRuntimeBinding = providerAgentRuntimeTurn.binding;
       }
-      // Calling the adapter is the runtime's dispatch boundary. Only the adapter
-      // can prove an error occurred during preparation, before sending input.
+      // アダプターの呼び出しがランタイムにおける送出の境界。入力の送信前、準備中に失敗したと
+      // 証明できるのはアダプターだけ。
       const result = await runProviderTurn(activeRunningSession);
       if (!result) {
         throw new Error("The provider did not return a completed turn.");

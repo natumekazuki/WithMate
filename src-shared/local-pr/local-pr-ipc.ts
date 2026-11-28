@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { mainSessionTargetSchema } from "../session/session-target.js";
 
-/** Only the owning Session main frame can open its repository's Pull Requests window. */
+/** 所有元 Session のメインフレームだけが、そのリポジトリの Pull Requests ウィンドウを開ける。 */
 export const openLocalPrWindowInput = mainSessionTargetSchema;
 
 export const LOCAL_PR_OPEN_WINDOW = "withmate:local-pr:open-window";

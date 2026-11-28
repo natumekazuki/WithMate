@@ -947,7 +947,7 @@ export function validateMemoryListTagsRequest(value: unknown): MemoryValidationR
   };
 }
 
-/** Content normalization shared by append and app-managed generation, after outer shape validation. */
+/** 外側の構造を検証した後に行う、append とアプリ管理の生成で共通の内容の正規化。 */
 export function validateMemoryEntryContent(value: Record<string, unknown>): MemoryValidationResult<MemoryEntryContent> {
   const kind = validateMemoryKind(value.kind, "kind");
   if (!kind.ok) return kind;

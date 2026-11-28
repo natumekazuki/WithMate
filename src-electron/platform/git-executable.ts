@@ -3,7 +3,7 @@ import path from "node:path";
 
 let gitExecutablePath: Promise<string> | undefined;
 
-/** Resolve from the application's PATH, never from the repository working directory. */
+/** リポジトリの作業ディレクトリではなく、アプリケーションの PATH から解決する。 */
 export function getDefaultGitExecutablePath(): Promise<string> {
   return gitExecutablePath ??= resolveGitExecutablePath();
 }
@@ -18,7 +18,7 @@ async function resolveGitExecutablePath(): Promise<string> {
       const candidate = await realpath(path.join(directory, executableName));
       if ((await stat(candidate)).isFile()) return candidate;
     } catch {
-      // Continue searching the application PATH.
+      // アプリケーションの PATH の探索を続ける。
     }
   }
   throw new Error("Git executable could not be resolved from an absolute PATH entry.");

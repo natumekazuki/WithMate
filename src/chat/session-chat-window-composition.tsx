@@ -15,8 +15,8 @@ export type SessionChatWindowFeatures = {
 };
 
 /**
- * Thin wiring entry for the shared chat shell. Each feature has already
- * projected its own state and operations before reaching this function.
+ * 共有チャットシェルへの薄い接続口。各機能はこの関数へ渡す前に、
+ * それぞれの状態と操作を表示用に変換している。
  */
 export function composeAgentSessionChatWindow(
   features: SessionChatWindowFeatures,

@@ -120,8 +120,8 @@ export class WindowsFileDropClipboardWriter {
       }
     };
     const writePending = runHelper({ mode: "write", payload });
-    // Prepare the separate reader while the writer starts, but withhold its input
-    // until the writer has exited so read-back cannot race the clipboard write.
+    // 書き込み側の起動中に別プロセスの読み取り側を準備するが、入力は書き込み側の終了まで渡さない。
+    // これにより、読み戻しとクリップボードへの書き込みが競合しない。
     const waitForWrite = writePending.then((result) => (
       result.started && result.stdout.includes(WRITE_READY_MARKER)
     ));
@@ -225,7 +225,7 @@ export function runPowerShellClipboardHelper(
       }
     });
     child.stdin.on("error", () => {
-      // Process settlement determines whether the native write could have started.
+      // ネイティブの書き込みが開始され得たかどうかは、プロセスの終了結果で判断する。
     });
     if (waitForWrite) {
       void waitForWrite.then((writeStarted) => {
@@ -273,7 +273,7 @@ function copyFileInWorker(
     worker.once("error", () => {
       failed = true;
     });
-    // Settle only after the one-shot worker and its helper handles are gone.
+    // 使い切りの Worker とそのヘルパーのハンドルがなくなってから処理を確定する。
     worker.once("exit", (code) => {
       resolve(failed || code !== 0 ? { status: "effect-unknown" } : result);
     });

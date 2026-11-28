@@ -541,7 +541,7 @@ function LiveElicitationCard({
 
 export function ElicitationRecords({ records, sourceText, responseProvider, highlightedChoices }: { records?: readonly ElicitationRecord[]; sourceText?: string; responseProvider?: string; highlightedChoices?: ReadonlySet<string> }) {
   const source = sourceText === undefined ? undefined : projectMessageRenderedSearchText(sourceText, responseProvider);
-  // A complete block/list item represents an existing choice; a substring does not.
+  // ブロックまたはリスト項目全体が一致するときだけ既存の選択肢とみなす。部分文字列の一致は含めない。
   const sourceChoices = new Set(sourceText === undefined ? [] : fromMarkdown(sourceText).children.flatMap((node) =>
     (node.type === "list" ? node.children : [node]).map((block) =>
       projectMessageRenderedSearchText(sourceText.slice(block.position?.start.offset, block.position?.end.offset), responseProvider).trim(),
@@ -621,7 +621,7 @@ export function InlineResponseContent({ text, records = [], requests = [], rende
   for (const { record, request } of entries.sort((a, b) => (a.record.textRange?.start ?? text.length) - (b.record.textRange?.start ?? text.length))) {
     const range = record.textRange;
     const valid = range && range.start >= offset && range.end >= range.start && range.end <= text.length;
-    // Keep the source body and supplement only question content absent from it.
+    // 元の本文を残し、そこにない質問内容だけを補う。
     const sourceText = !request && valid && range.end > range.start ? text.slice(range.start, range.end) : undefined;
     const selected = sourceText !== undefined ? selectedSourceRanges(sourceText, record, responseProvider) : undefined;
     const start = valid ? (sourceText !== undefined ? range.end : range.start) : text.length;

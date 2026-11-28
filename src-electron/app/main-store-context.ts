@@ -6,7 +6,7 @@ import type { PromptTemplateStorage } from "../prompt-templates/prompt-template-
 import type { V6StorageWorkerBundle } from "../storage/storage-worker-bundle.js";
 import type { SessionTurnStorageAccess, AuxiliarySessionStorageAccess, CharacterStorageAccess, PersistentStoreBundle, PersistentStoreBundleLike, SessionStorageRead } from "../storage/persistent-store-lifecycle-service.js";
 
-/** Owns the live persistent-store generation and its lifecycle state. */
+/** 稼働中の永続ストアの世代と、そのライフサイクル状態を管理する。 */
 export class MainStoreContext {
   readonly executionSelections = new CurrentExecutionSelections();
   private state: {

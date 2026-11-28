@@ -104,12 +104,12 @@ test("Monitor分類のclickは件数と優先度に従いDOMを保持して開�
       assert.equal(content.hasAttribute("inert"), false);
     }
     await act(async () => render([1, 1, 3, 4], "both-closed"));
-    await click(0); // The shared top row has fewer Main groups than Running.
-    await click(1); // Running has fewer Main groups than Stopped.
+    await click(0); // 共用の最上段は Running より Main のグループ数が少ない。
+    await click(1); // Running は Stopped より Main のグループ数が少ない。
     assert.deepEqual(closed(), [true, true, true, false]);
-    await click(0); // Both rows closed: restore the shared top row first.
+    await click(0); // 両方の行が閉じていれば、共用の最上段を先に戻す。
     assert.deepEqual(closed(), [false, false, true, false]);
-    await click(0); // One closed: restore Running irrespective of count.
+    await click(0); // 片方だけが閉じていれば、グループ数にかかわらず Running を戻す。
     assert.deepEqual(closed(), [false, false, false, false]);
   });
 });

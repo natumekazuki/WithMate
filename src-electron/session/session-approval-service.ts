@@ -8,7 +8,7 @@ type PendingApprovalRequest = {
   signals: Set<AbortSignal>;
   handleAbort: () => void;
   lifetime: AbortController;
-  /** Undefined is the existing manual path; null is a selected but unavailable review route. */
+  /** undefined は従来の手動承認経路を表し、null はレビュー経路が選ばれたが利用できないことを表す。 */
   review?: PendingApprovalReview | null;
   manual?: "published" | "legacy-unpublished";
   observers: Set<ApprovalDecisionSourceObserver>;
@@ -91,7 +91,7 @@ export class SessionApprovalService {
         pending.signals.clear();
         pending.lifetime.abort();
         if (pending.observers.size) {
-          // Publish provenance after the queue transition, before decision consumers resume.
+          // キューの状態遷移後、判定結果を使う処理が再開する前に、判定元を通知する。
           queueMicrotask(() => {
             for (const observer of pending.observers) reportApprovalDecisionSource(observer, source);
             pending.observers.clear();
@@ -113,7 +113,7 @@ export class SessionApprovalService {
     const signal = pending.lifetime.signal;
     const isCurrentHead = () => this.isCurrentHead(sessionId, pending);
     const isCurrent = () => isCurrentHead() && review.isCurrent();
-    // Defer the reviewer, while keeping the head unavailable for manual resolution.
+    // 先頭の要求を手動で解決できない状態のまま、レビュアーの起動を遅らせる。
     await Promise.resolve();
     let verdict: Awaited<ReturnType<PendingApprovalReview["decide"]>> = null;
     try {
@@ -122,17 +122,17 @@ export class SessionApprovalService {
           isCurrentHead,
           previousStop: this.stoppingReviews.get(sessionId),
           onStopping: (stopped) => {
-            // Keep the stop fence even if the source turn and its approval queue are gone.
+            // 起点の Turn とその承認キューがなくなっても、停止確認まで次のレビューを始めない制約を維持する。
             this.stoppingReviews.set(sessionId, stopped);
             void stopped.then(() => {
               if (this.stoppingReviews.get(sessionId) === stopped) this.stoppingReviews.delete(sessionId);
-            }, () => { /* A failed close is not confirmation of stop. */ });
+            }, () => { /* close に失敗しても、停止を確認したことにはならない。 */ });
           },
         });
         if (isCurrent()) verdict = value;
       }
     } catch {
-      // An unavailable or failed review has no authority to decide.
+      // レビューが利用できないか失敗した場合、そのレビューに判定する権限はない。
     }
     if (!isCurrentHead()) return;
     if (verdict === "allow_once" || verdict === "deny") {
@@ -154,7 +154,7 @@ export class SessionApprovalService {
   }
 
   private advanceHead(sessionId: string, queue: PendingApprovalRequest[], previousRequestId?: string): void {
-    // A shared turn signal is already aborted before its individual listeners run.
+    // Turn の共有シグナルは、個々のリスナーが動く前にすでに中断されている。
     while (queue[0] && (queue[0].review === null || [...queue[0].signals].some((signal) => signal.aborted))) {
       queue.shift()!.finish("deny", "blocked");
     }
@@ -200,7 +200,7 @@ export class SessionApprovalService {
     try {
       this.options.notifyApproval?.(sessionId, pending.request.requestId, pending.lifetime.signal);
     } catch {
-      // Attention delivery must not interrupt the pending approval decision.
+      // ユーザーへの通知が、保留中の承認判定を中断してはならない。
     }
   }
 

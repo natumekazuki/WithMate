@@ -41,9 +41,9 @@ export type SessionTurnQueueOrigin = {
   targetSnapshot?: SessionTurnQueueDisplaySnapshot;
 };
 export type SessionTurnQueueCapturedInput = {
-  /** Transient observation; excluded from the idempotent acceptance payload. */
+  /** 一時的な観測値。冪等な受付のペイロードには含めない。 */
   sourceDisplayPosition?: number;
-  /** Kept in memory only until the source Turn is finalized. */
+  /** 送信元の Turn が確定するまで、メモリ上にのみ保持する。 */
   sourceDisplayText?: string;
   coordination?: { id: string; operation: string; actor: import("../coordination/coordination-contract.js").CoordinationActor; targetKind?: "main" | "auxiliary"; answerId?: string; answerRevision?: number; notification?: import("../coordination/coordination-delivery.js").CoordinationNotification };
   request: RunSessionTurnRequest & { clientRequestId: string };
@@ -51,7 +51,7 @@ export type SessionTurnQueueCapturedInput = {
   provider: string;
   workspacePath: string;
   origin?: SessionTurnQueueOrigin;
-  /** Original delivery provenance for a new GUI-requested execution, not its actor. */
+  /** GUI から要求された新しい実行の元の配送来歴。実行主体を示すものではない。 */
   retrySource?: {
     receiptId: string;
     turnId: string;
@@ -69,7 +69,7 @@ export type SessionSteerOrigin = Pick<SessionTurnQueueOrigin, "actorSnapshot" | 
   operation: "steer";
 };
 
-/** The displayed author of a confirmed exact replay is distinct from the GUI receipt actor. */
+/** 入力が完全に同じと確認できた再実行では、表示上の作成者と GUI での受付主体を区別する。 */
 export function projectRetryInputAuthor(origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined,
   source: SessionTurnQueueCapturedInput["retrySource"] | null, unchanged: boolean | null | undefined) {
   return origin?.kind === "gui" && source?.changedSinceAcceptance === false && unchanged === true
@@ -84,7 +84,7 @@ export type SessionSteerResult = {
   reason?: string;
 };
 
-/** Attribution is supplied by the application, not by claims inside the message body. */
+/** 送信者の帰属はアプリケーションが付与し、メッセージ本文中の自己申告は使わない。 */
 export function projectSessionInputSender(origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined): {
   kind: "user" | "agent" | "unknown";
   participant: ConversationParticipant | null;
@@ -111,9 +111,9 @@ export type SessionTurnQueueReceipt = SessionTurnQueueOwner & {
   sourceTurnPhase?: SessionMessageSourceTurnPhase;
   sourceTurnPendingRelease?: boolean;
   captured: SessionTurnQueueCapturedInput;
-  /** Immutable acceptance input; absent/null means the original was not recorded. */
+  /** 変更できない受付時の入力。省略または null は元の入力が記録されていないことを示す。 */
   accepted?: SessionTurnQueueCapturedInput | null;
-  /** Input frozen by the dispatch claim, not proof of Provider delivery. */
+  /** 配送の取得時に固定した入力であり、Provider に届いた証拠ではない。 */
   dispatched?: SessionTurnQueueCapturedInput | null;
   turnId: string | null;
   inputTurnId?: string | null;
@@ -122,7 +122,7 @@ export type SessionTurnQueueReceipt = SessionTurnQueueOwner & {
   releasedAt: string | null;
   createdAt: string;
   updatedAt: string;
-  /** Internal enqueue result; not part of the accepted request. */
+  /** キュー投入の内部結果。受付済みリクエストには含まれない。 */
   sourceDisplayInserted?: boolean;
 };
 export type SessionTurnQueueReceiptPage = { receipts: SessionTurnQueueReceipt[]; nextCursor: number | null };
@@ -136,7 +136,7 @@ export type SessionTurnQueueAcceptanceResult = SessionTurnQueueReceipt | {
 };
 export type SessionTurnQueueAdmission = {
   receipt: SessionTurnQueueReceipt;
-  /** The single new claim to hand off, not a previously accepted receipt. */
+  /** 引き渡し対象として今回新たに取得した 1 件。以前受け付けた受付情報ではない。 */
   claimed: SessionTurnQueueReceipt | null;
 };
 export type SessionTurnQueueStore = {

@@ -53,7 +53,7 @@ export const executionWindowRequestSchemas = {
   ...executionOperationRequestSchemas,
   ...sentWindowRequestSchemas,
   read_conversation_threads: conversationThreadsRequestSchema,
-  /** GUI-only display of one exact saved input, without reading execution details. */
+  /** GUI 専用。実行の詳細を読まず、指定された保存済み入力 1 件を表示する。 */
   read_turn_input_display: executionOperationRequestSchemas.get_execution,
 };
 export type ExecutionWindowReadOperation = keyof typeof executionWindowRequestSchemas;

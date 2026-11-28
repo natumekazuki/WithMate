@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-/** Git fields retained for removal of a retired Companion session. */
+/** 廃止した Companion Session の削除に備えて保持する Git の項目。 */
 export type CompanionRemovalGitInput = {
   sessionId: string;
   userDataPath: string;
@@ -119,8 +119,8 @@ async function inspectRepo(input: CompanionRemovalGitInput, branchRef: string) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
-  // A retired workspace may remain as an ordinary directory after its Git
-  // metadata has been removed. Do not discover or modify an ancestor repo.
+  // Git メタデータを削除した後も、廃止済みのワークスペースが通常のディレクトリとして残り得る。
+  // 祖先のリポジトリを探したり変更したりしない。
   const hasGitEntry = await exists(path.join(repoRoot, ".git"));
   const hasBareMetadata = await exists(path.join(repoRoot, "HEAD")) && await exists(path.join(repoRoot, "objects"));
   if (!hasGitEntry && !hasBareMetadata) return null;
@@ -146,7 +146,7 @@ async function readRef(repoRoot: string, name: string) {
   return row ? { name, oid: row[1], symbolicTarget: row[2] ?? "" } : null;
 }
 
-/** Capture current removal targets, not the retired session's historical commit. */
+/** 廃止した Session の過去のコミットではなく、現在の削除対象を捕捉する。 */
 export async function captureCompanionGitRemovalProgress(input: CompanionRemovalGitInput): Promise<CompanionRemovalGitProgress> {
   const { branchRef, baseRef, worktree } = await expectedPaths(input);
   await assertExistingWorktreeBoundary(input, worktree);

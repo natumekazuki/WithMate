@@ -644,7 +644,7 @@ export type MainIpcPromptTemplateDeps = {
   deletePromptTemplate(id: string): Awaitable<PromptTemplate[]>;
 };
 
-/** Feature-owned IPC dependencies assembled before registration. */
+/** 機能ごとの IPC 依存関係を、登録前に組み立てたもの。 */
 export type MainIpcRegistrationDeps = {
   common: MainIpcCommonDeps;
   window: MainIpcWindowDeps;

@@ -29,8 +29,8 @@ export function createWithMateSessionMcpServer(
     const read = SESSION_READ_OPERATIONS.includes(operation);
     const runsCi = operation === "pr_ci_start" || operation === "pr_ci_rerun";
     const requestSchema = sessionOperationRequestSchemas[operation];
-    // Advertise strict schemas but let the shared client validate these arguments, so the SDK
-    // does not replace the common SESSION_INVALID_REQUEST/effect envelope with a text-only error.
+    // 厳密なスキーマを公開しつつ、実際の引数は共通クライアントで検証する。
+    // これにより SDK が共通の SESSION_INVALID_REQUEST/effect エンベロープをテキストだけのエラーに置き換えない。
     const inputSchema = isLocalPrAgentOperation(operation) ||
       operation === "get_instructions" || operation === "set_instructions"
       ? z.looseObject({}).meta(z.toJSONSchema(requestSchema, { unrepresentable: "any" }))

@@ -15,7 +15,7 @@ type SentMessageContext = Pick<ComponentProps<typeof MessageRichText>,
   "onOpenPath" | "markdownLinkFileContext" | "markdownImageContext" | "resolveImageSource" | "displayMode"
   | "responseProvider" | "onFind" | "onCopyText" | "onQuoteText">;
 
-/** A source Turn summary; receipts do not record an exact position inside its output. */
+/** 送信元 Turn の概要。受付情報には、その出力内での正確な位置は記録されない。 */
 export function SentDeliveryRow({ item, context, inline = false, replyJumpHighlighted = false, ...messageContext }: {
   item: SentInstruction; context: TurnInputReadContext; inline?: boolean; replyJumpHighlighted?: boolean;
 } & SentMessageContext) {

@@ -28,7 +28,7 @@ export type RuntimeDiscoveryAdapterReference = {
   credentialFileName: string;
 };
 
-/** Credential material is deliberately opaque to the safe registry projection. */
+/** 公開しても安全なレジストリの表示用データからは、認証情報の中身が分からないようにする。 */
 export type RuntimeDiscoveryCredentialEnvelope<T = unknown> = {
   schemaVersion: "withmate-runtime-credential-v1";
   applicationInstanceId: string;
@@ -237,7 +237,7 @@ export function isRuntimeDiscoverySelector(value: unknown): value is RuntimeDisc
   return value.runtimeGenerationId === undefined || value.applicationInstanceId !== undefined;
 }
 
-/** Slot and credential names are hashes; identity values never appear in file names. */
+/** スロット名と認証情報の名前にはハッシュを使い、識別情報の値をファイル名に出さない。 */
 export function buildRuntimeDiscoveryEntryFileName(identity: RuntimeDiscoveryIdentity): string {
   return `entry-${hashRuntimeDiscoveryIdentity(identity)}.json`;
 }

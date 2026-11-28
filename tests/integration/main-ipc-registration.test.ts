@@ -6,7 +6,7 @@ import { createWithMateWindowApi } from "../../src-electron/preload/preload-api.
 import { selectAdditionalDirectoryPath } from "../../src/chat/composer/session-composer-paths.js";
 import { SessionTurnQueuePreflightRejectedError } from "../../src-electron/app/main-session-turn-queue-facade.js";
 
-/** Exercises the private Instructions channels through preload, rejecting invalid identities and callers before delegation. */
+/** preload を通じて Instructions 専用チャネルを実行し、不正な識別情報や呼び出し元を処理の委譲前に拒否することを確認する。 */
 test("Instructions IPC accepts only the owning incarnation and main frame", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const frame = {};
@@ -41,7 +41,7 @@ test("Instructions IPC accepts only the owning incarnation and main frame", asyn
   assert.deepEqual(await api.setSessionInstructions(main, ""), { byteLength: 0 });
   assert.deepEqual(calls, [["get", main], ["set", auxiliary, " 本文😀\n"], ["set", main, ""]]);
 
-  // Both channels reject extra fields, missing identities, and a replaced Main incarnation.
+  // 両チャネルとも、余分なフィールド、識別情報の欠落、置き換わった Main の incarnation を拒否する。
   for (const target of [
     { ...main, body: "extra" }, { ...main, sessionId: " " }, { ...main, incarnationId: "main-v2" },
     { ...auxiliary, mainIncarnationId: undefined }, { ...auxiliary, mainSessionId: "other" },
@@ -49,7 +49,7 @@ test("Instructions IPC accepts only the owning incarnation and main frame", asyn
     await assert.rejects(async () => handlers.get("withmate:get-session-instructions")!(event, target));
     await assert.rejects(async () => handlers.get("withmate:set-session-instructions")!(event, target, ""));
   }
-  // A subframe, absent frame, and unrelated Window cannot reach storage.
+  // サブフレーム、フレームの欠落、無関係な Window からの呼び出しはストレージまで到達しない。
   for (const senderFrame of [{}, null]) {
     event = { sender, senderFrame };
     await assert.rejects(() => api.getSessionInstructions(auxiliary), /owning Session Window/);
@@ -61,7 +61,7 @@ test("Instructions IPC accepts only the owning incarnation and main frame", asyn
   await assert.rejects(() => api.setSessionInstructions(main, ""), /owning Session Window/);
   assert.equal(calls.length, 3);
 
-  // The late read must not disclose text after the owning Window was replaced.
+  // 所有 Window が置き換わった後に遅れて読み取りが完了しても、本文を開示してはならない。
   eventWindow = owner;
   deferRead = true;
   const pending = api.getSessionInstructions(auxiliary);

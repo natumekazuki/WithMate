@@ -22,7 +22,7 @@ export function useStreamedResponseText(owner: string, key: string | null, text:
       clear(); publish({ owner, key, text: "" });
     }
     if (snapshot.current.text !== text && timer.current === null) {
-      // Keep the deadline while deltas arrive; this is a bounded cadence, not a debounce.
+      // 差分が届いても予定時刻を維持する。更新間隔を上限内に保つ処理であり、デバウンスではない。
       timer.current = setTimeout(() => { timer.current = null; publish(latest.current); }, STREAM_PRESENTATION_INTERVAL_MS);
     }
   }, [owner, key, text, streaming, enabled]);

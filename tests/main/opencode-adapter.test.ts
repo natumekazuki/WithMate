@@ -272,7 +272,7 @@ async function migrationFixture(turn: RunSessionTurnInput) {
 // impact = "回答の欠落・二重表示と実行中の後続turn開始を防ぐ"
 // distinction = "型検査はlive-only購読の順序やnative終端の意味を検査しない"
 // @end-test-value
-/** The native root request receives fixed instructions alongside the normal prompt. */
+/** ネイティブのルート要求は、通常のプロンプトとともに固定指示を受け取る。 */
 it("OpenCode completes only the current root request and replaces provisional text", async () => {
   const turn = { ...input(), sessionInstructions: "OpenCode 固定指示 🧭" };
   const run = fixture(turn);

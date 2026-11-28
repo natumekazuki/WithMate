@@ -159,7 +159,7 @@ async function hasGitMarkerInAncestors(workspacePath: string): Promise<boolean> 
       return true;
     } catch (error) {
       if (!isNodeError(error) || (error.code !== "ENOENT" && error.code !== "ENOTDIR")) {
-        // A marker we cannot inspect must not turn a real Git failure into a blank state.
+        // マーカーを確認できないことを理由に、実際の Git エラーを未設定状態として扱わない。
         return true;
       }
     }
@@ -175,8 +175,8 @@ async function isGitCheckoutResolutionMiss(error: unknown, workspacePath: string
   if (!isGitNotRepositoryDiagnostic(error)) {
     return false;
   }
-  // Git emits this diagnostic for malformed/unreadable markers too. A marker in the
-  // workspace ancestry therefore makes the same diagnostic a real checkout failure.
+  // Git は不正なマーカーや読み取れないマーカーでも同じ診断を出す。
+  // ワークスペースの祖先にマーカーがあれば、この診断は実際のチェックアウト失敗として扱う。
   return !(await hasGitMarkerInAncestors(workspacePath));
 }
 
@@ -621,7 +621,7 @@ async function safeOperation<T>(operation: () => Promise<T>): Promise<GlossaryOp
       return error.error;
     }
     if (isGlossaryNotApplicableError(error)) {
-      // Keep the operation-level contract used before the projection-only state was added.
+      // 表示専用の状態が追加される前からの、操作結果に関する契約を維持する。
       return operationError("GLOSSARY_TARGET_INVALID", error.message);
     }
     return operationError(
@@ -649,7 +649,7 @@ export class GlossaryApplicationService {
         encoding: "utf8",
         env: {
           ...process.env,
-          // Keep the diagnostic used for checkout classification stable across locales.
+          // チェックアウトの分類に使う診断がロケールによって変わらないようにする。
           LC_ALL: "C",
           LANG: "C",
         },

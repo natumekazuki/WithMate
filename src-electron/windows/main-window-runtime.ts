@@ -35,7 +35,7 @@ export type MainWindowRuntimeDeps = {
   onWindowBroadcastFailed?(): void;
 };
 
-/** Owns the BrowserWindow-backed runtime and keeps window state out of the app registry. */
+/** BrowserWindow を使うランタイムを所有し、ウィンドウの状態をアプリレジストリに持たせない。 */
 export class MainWindowRuntime {
   private readonly windowEntryLoader: WindowEntryLoader;
   private readonly windowBroadcastService: WindowBroadcastService<BrowserWindow>;

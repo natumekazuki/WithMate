@@ -24,7 +24,7 @@ function escapeRegExp(value: string): string {
 }
 
 function run(root: string, args: string[] = []) {
-  // Child runners must not inherit a parent node:test context or CI shard selection.
+  // 子ランナーには、親の `node:test` コンテキストも CI のシャード選択も継承させない。
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   delete env.TEST_SHARD_INDEX;

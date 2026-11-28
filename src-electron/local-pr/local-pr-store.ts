@@ -3,10 +3,10 @@ import type { LocalPrComment, LocalPrDetail, LocalPrVersion } from "../../src-sh
 import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 
-/** Persisted fields that do not depend on a live Git ref. */
+/** 現在の Git ref に依存しない保存項目。 */
 export type LocalPrSummary = Omit<LocalPrDetail, "versions" | "comments" | "approval" | "currentTargetCommit">;
 
-/** A read snapshot used for SQLite compare-and-swap, never exposed to public callers. */
+/** SQLite の比較・交換に使う読み取りスナップショット。公開の呼び出し元には開示しない。 */
 export type LocalPrRecord = {
   revision: number;
   summary: LocalPrSummary;
@@ -15,7 +15,7 @@ export type LocalPrRecord = {
   comments: LocalPrComment[];
 };
 
-/** One atomic change to a review and its dependent rows. */
+/** レビューとその従属行に対する、一つのアトミックな変更。 */
 export type LocalPrChange = {
   summary: LocalPrSummary;
   approval: LocalPrDetail["approval"];
@@ -24,7 +24,7 @@ export type LocalPrChange = {
   deleteDraft?: string;
 };
 
-/** Async interface exposed by the existing SQLite Worker. */
+/** 既存の SQLite Worker が公開する非同期インターフェース。 */
 export type LocalPrStore = {
   listLocalPrs(repositoryId: string, offset: number, limit: number): Promise<LocalPrSummary[]>;
   readLocalPr(repositoryId: string, prId: string, includeDrafts: boolean): Promise<LocalPrRecord | null>;
@@ -35,21 +35,21 @@ export type LocalPrStore = {
 type JsonRow = { value: string };
 type PrRow = { revision: number; summary_json: string; approval_json: string | null };
 
-/** Owns SQL for the Local PR feature inside the persistent store Worker. */
+/** 永続ストア Worker 内で Local PR 機能の SQL を担う。 */
 export class LocalPrStorage {
   private readonly db: DatabaseSync;
 
-  /** The Worker has already installed the schema before making this connection. */
+  /** この接続を開く時点で、Worker はスキーマを適用済み。 */
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
   }
 
-  /** Releases the connection with the storage generation. */
+  /** ストレージ世代の終了に合わせて接続を解放する。 */
   close(): void {
     this.db.close();
   }
 
-  /** Projects a page without loading review conversations or Git objects. */
+  /** レビューの会話や Git オブジェクトを読み込まずに、表示用の一ページを組み立てる。 */
   listLocalPrs(repositoryId: string, offset: number, limit: number): LocalPrSummary[] {
     assertRuntimeTurnAdmission();
     const rows = this.db.prepare(`
@@ -59,13 +59,13 @@ export class LocalPrStorage {
     return rows.map((row) => JSON.parse(row.value) as LocalPrSummary);
   }
 
-  /** Reads a consistent version/comment snapshot, excluding drafts at the SQL boundary for Agents. */
+  /** 版とコメントを一貫したスナップショットから読み取る。Agent 向けでは SQL の段階で下書きを除外する。 */
   readLocalPr(repositoryId: string, prId: string, includeDrafts: boolean): LocalPrRecord | null {
     return this.transaction(() => {
       const row = this.db.prepare(`
         SELECT revision, summary_json, approval_json FROM local_prs_v7 WHERE repository_id=? AND id=?
       `).get(repositoryId, prId) as PrRow | undefined;
-      // A PR ID from another repository is indistinguishable from an unknown ID.
+      // 別リポジトリの PR ID は、未知の ID と区別しない。
       if (!row) return null;
       const versions = this.db.prepare(`
         SELECT version_json AS value FROM local_pr_versions_v7 WHERE repository_id=? AND pr_id=? ORDER BY version
@@ -84,7 +84,7 @@ export class LocalPrStorage {
     });
   }
 
-  /** Inserts the PR and initial pinned version together. */
+  /** PR と、コミットを固定した初版をまとめて挿入する。 */
   createLocalPr(repositoryId: string, summary: LocalPrSummary, version: LocalPrVersion): void {
     this.transaction(() => {
       this.db.prepare(`
@@ -94,7 +94,7 @@ export class LocalPrStorage {
     });
   }
 
-  /** Applies a change only to the exact snapshot reviewed by the service. */
+  /** サービスが確認したスナップショットと完全に一致する場合だけ変更を適用する。 */
   saveLocalPr(repositoryId: string, expectedRevision: number, change: LocalPrChange): boolean {
     return this.transaction(() => {
       const id = change.summary.id;
@@ -103,18 +103,18 @@ export class LocalPrStorage {
         WHERE repository_id=? AND id=? AND revision=?
       `).run(change.summary.updatedAt, JSON.stringify(change.summary),
         change.approval ? JSON.stringify(change.approval) : null, repositoryId, id, expectedRevision);
-      // No dependent rows can be modified if the PR changed after the service read it.
+      // サービスが読み取った後に PR が変わっていれば、従属行は変更できない。
       if (!update.changes) return false;
-      // Submitted versions are insert-only, unlike the presentation state.
+      // 表示用の状態と異なり、提出版は追加のみで更新しない。
       if (change.version) this.insertVersion(repositoryId, id, change.version);
-      // Publish, add, or edit all requested comment rows in the same transaction.
+      // 要求されたすべてのコメント行の公開・追加・編集を同じトランザクションで行う。
       for (const comment of change.comments ?? []) {
         this.db.prepare(`
           INSERT INTO local_pr_comments_v7(repository_id,pr_id,id,version,draft,created_at,comment_json) VALUES(?,?,?,?,?,?,?)
           ON CONFLICT(repository_id,pr_id,id) DO UPDATE SET draft=excluded.draft, comment_json=excluded.comment_json
         `).run(repositoryId, id, comment.id, comment.version, Number(comment.draft), comment.createdAt, JSON.stringify(comment));
       }
-      // Published comments are not deletable through the draft operation.
+      // 公開済みコメントは下書き操作では削除できない。
       if (change.deleteDraft) {
         this.db.prepare("DELETE FROM local_pr_comments_v7 WHERE repository_id=? AND pr_id=? AND id=? AND draft=1")
           .run(repositoryId, id, change.deleteDraft);
@@ -123,13 +123,13 @@ export class LocalPrStorage {
     });
   }
 
-  /** Records immutable Git endpoints for a new version. */
+  /** 新版の不変の Git 比較端点を記録する。 */
   private insertVersion(repositoryId: string, prId: string, version: LocalPrVersion): void {
     this.db.prepare("INSERT INTO local_pr_versions_v7(repository_id,pr_id,version,version_json) VALUES(?,?,?,?)")
       .run(repositoryId, prId, version.version, JSON.stringify(version));
   }
 
-  /** Uses SQLite to keep PR state and its dependent rows consistent across connections. */
+  /** SQLite を使い、接続をまたいで PR の状態と従属行の整合性を保つ。 */
   private transaction<T>(operation: () => T): T {
     assertRuntimeTurnAdmission();
     this.db.exec("BEGIN");
@@ -138,7 +138,7 @@ export class LocalPrStorage {
       this.db.exec("COMMIT");
       return result;
     } catch (error) {
-      // No dependent writes should survive a failed statement.
+      // SQL 文の実行が失敗した場合、従属する書き込みは残さない。
       this.db.exec("ROLLBACK");
       throw error;
     }

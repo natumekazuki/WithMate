@@ -140,7 +140,7 @@ function readTurnInputDisplay(db: DatabaseSync, target: SessionTarget, reference
     turn = readTurn(reference.turnId);
     if (!turn) return failure("EXECUTION_NOT_FOUND", "The Turn does not belong to this target.");
   }
-  // The Resend control follows the same response-to-start lookup as Details.
+  // 再送操作は詳細表示と同じく、応答から開始記録をたどる。
   if (findStart && !receipt && turn?.user_message_seq != null) {
     if (readMessage(turn.user_message_seq)?.role !== "user") return failure("EXECUTION_LINK_UNAVAILABLE", "The saved Turn has no exact start input.");
     const matching = readReceipts("user_message_seq", turn.user_message_seq);
@@ -156,8 +156,8 @@ function readTurnInputDisplay(db: DatabaseSync, target: SessionTarget, reference
   const themeOrigin = directOrigin ?? (receipt?.theme_origin_json ? JSON.parse(receipt.theme_origin_json) as SessionTurnQueueOrigin : null);
   const coordinationInput = captured(receipt?.coordination_input_json ?? null);
   const retrySource = receipt?.retry_source_json ? JSON.parse(receipt.retry_source_json) as SessionTurnQueueCapturedInput["retrySource"] : null;
-  // Only this already-resolved Retry receipt needs complete snapshots for comparison.
-  // The receipt and snapshots are read in the same transaction.
+  // 比較用の完全なスナップショットが必要なのは、この解決済みの再試行の受領記録だけ。
+  // 受領記録とスナップショットは同じトランザクションで読む。
   const retryInput = receipt && retrySource ? db.prepare(`
     SELECT accepted_json, COALESCE(dispatched_json, captured_json) AS comparison_json
     FROM session_turn_queue_v6 WHERE id = ?`).get(receipt.id) as
@@ -171,7 +171,7 @@ function readTurnInputDisplay(db: DatabaseSync, target: SessionTarget, reference
   };
 }
 
-/** Synchronous snapshot on the existing DB. No execution state or output copies are owned here. */
+/** 既存 DB 上の同期スナップショット。実行状態や出力のコピーはここでは保持しない。 */
 export class SessionExecutionReadStorage {
   private readonly db: DatabaseSync;
   constructor(dbPath: string) {
@@ -257,8 +257,8 @@ export class SessionExecutionReadStorage {
         turn.assistant_message_seq !== null && messageSeqs.includes(turn.assistant_message_seq) ? turn.assistant_message_seq
           : turn.user_message_seq !== null && messageSeqs.includes(turn.user_message_seq) ? turn.user_message_seq : null;
       if (operation === "list_sent_steers") {
-        // Direct parent Steer is Main -> Main. Its recipient message is the
-        // existing durable input record, not a second receipt or sender copy.
+        // 親からの直接の Steer は Main から Main への送信。
+        // 受信メッセージは既存の永続入力レコードであり、別の受領記録や送信側のコピーではない。
         const rows = this.db.prepare(`SELECT m.id, m.seq, m.body, m.session_id, recipient.incarnation_id
           FROM session_messages_v6 m JOIN sessions_v6 recipient ON recipient.id=m.session_id
           WHERE json_extract(m.body, '$.turnInput.origin.actorKind')=?

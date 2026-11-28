@@ -30,8 +30,8 @@ function isPackage(specifier: string, name: string): boolean {
 function checkImport(file: string, node: AstNode, source: AstNode | undefined): void {
   const label = `${file}:${node.loc?.start.line ?? 1}`;
   if (typeof source?.value !== "string") {
-    // The Worker loads its typed handler entry from validated startup data.
-    // Its actual entry resolution is exercised by the storage-worker tests.
+    // Worker は検証済みの起動データから型付きハンドラーのエントリーを読み込む。
+    // エントリーが実際に解決されることは `storage-worker` のテストで確認する。
     if (file === "src-electron/storage/storage-worker-entry.ts"
       && source?.type === "MemberExpression"
       && source.object?.name === "entryData" && source.property?.name === "handlerModule") return;

@@ -597,7 +597,7 @@ const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationServ
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let appTrayService: AppTrayService | null = null;
-// App shutdown state outlives persistent-store generations (including quit cleanup).
+// 終了時の後処理も含め、アプリの終了状態は永続ストアの世代をまたいで維持する。
 let appLifecycleService: AppLifecycleService | null = null;
 let mainInfrastructureRegistry:
   | MainInfrastructureRegistry<
@@ -719,7 +719,7 @@ function beginSourceDisplayTurn(session: Session, turnId: string): () => void {
 function rememberSourceDisplay(receipt: SessionTurnQueueReceipt, text: string): void {
   const origin = receipt.accepted?.origin;
   if (!receipt.sourceDisplayInserted || !origin?.actorSessionId || !origin.actorIncarnationId || !origin.actorTurnId) return;
-  // A receipt can arrive after the source runtime has ended.
+  // 送信元のランタイムが終了した後に受領記録が届くことがある。
   pendingSourceDisplays.get(sourceDisplayTurnKey(origin.actorSessionId, origin.actorIncarnationId, origin.actorTurnId))?.set(receipt.id, text);
 }
 async function verifySourceDisplays(session: Session, turnId: string): Promise<void> {
@@ -776,7 +776,7 @@ const localPrCore = new LocalPrService({
 });
 let localPrCiInitialization: Promise<LocalPrCiService> | null = null;
 
-/** Initialize the app-owned CI runner independently of a renderer's lifetime. */
+/** renderer の存続期間に依存せず、アプリが所有する CI ランナーを初期化する。 */
 function getLocalPrCi(): Promise<LocalPrCiService> {
   if (localPrCiInitialization) return localPrCiInitialization;
   const instance = new LocalPrCiService({ userDataPath: app.getPath("userData"), onChanged: (id) => localPrWindowService.notify(id) });
@@ -788,7 +788,7 @@ function getLocalPrCi(): Promise<LocalPrCiService> {
   return initialization;
 }
 
-/** Match the saved incarnation and, for Auxiliary, the exact parent included in the target. */
+/** 保存された incarnation と、Auxiliary の場合は対象に含まれる正確な親が一致することを確認する。 */
 async function readLocalPrSession(target: SessionTarget): Promise<Session | null> {
   if (target.kind === "main") {
     const session = await getRuntimeSession(target.sessionId);
@@ -803,7 +803,7 @@ async function readLocalPrSession(target: SessionTarget): Promise<Session | null
   return session && getSessionIncarnationId(session) === target.incarnationId ? session : null;
 }
 
-/** Only offer active saved Sessions that can address the same repository using normal PR tools. */
+/** 通常の PR ツールで同じリポジトリを扱える、有効な保存済み Session だけを候補にする。 */
 async function chooseLocalPrSessions(repository: LocalPrRepository, input: LocalPrInput<"session_choices">): Promise<LocalPrResult<"session_choices">> {
   const owner = requireActivePersistentStoreOwnerForFactory("PR Session choices");
   const mains = await owner.sessionStorage.listSessionSummaries();
@@ -814,7 +814,7 @@ async function chooseLocalPrSessions(repository: LocalPrRepository, input: Local
   for (const main of active) {
     if (`${main.taskTitle} ${main.character}`.toLowerCase().includes(query)) candidates.push({ workspacePath: main.workspacePath, title: main.taskTitle, character: main.character, iconPath: main.characterIconPath, target: { kind: "main", sessionId: main.id, incarnationId: getSessionIncarnationId(main) } });
   }
-  // Bound SQLite parameters even when the user has thousands of saved Sessions.
+  // 保存済み Session が数千件ある場合でも、SQLite に渡すパラメーター数を制限する。
   const auxiliaries = [];
   for (let start = 0; start < active.length; start += 500) {
     auxiliaries.push(...await requireAuxiliarySessionService().listAuxiliarySessionSummaries(active.slice(start, start + 500).map((session) => session.id)));
@@ -833,7 +833,7 @@ async function chooseLocalPrSessions(repository: LocalPrRepository, input: Local
   const offset = input.offset ?? 0;
   const matches = new Map<string, Promise<boolean>>();
   const sessions: Array<{ target: SessionTarget; title: string; character: string; iconPath: string }> = [];
-  // Resolve only enough candidates for the requested page, with bounded Git concurrency.
+  // 要求されたページに必要な候補までを解決し、Git の同時実行数も制限する。
   for (let start = 0; start < candidates.length && sessions.length <= offset + 50; start += 16) {
     const batch = candidates.slice(start, start + 16);
     const results = await Promise.all(batch.map((candidate) => {
@@ -1080,7 +1080,7 @@ const startWithMateApprovalReview: StartWithMateApprovalReview = ({ selection, b
 };
 
 
-/** Issues tool authority only for the saved identity of the running Main or Auxiliary. */
+/** 実行中の Main または Auxiliary の保存済み識別情報に限り、ツールの権限を発行する。 */
 async function issueProviderAgentRuntimeBinding(
   session: Pick<Session, "id" | "incarnationId" | "characterId" | "sessionKind" | "workspacePath">,
   providerId: string,
@@ -1093,9 +1093,9 @@ async function issueProviderAgentRuntimeBinding(
       await glossaryApplicationService.resolvePrimaryCheckout(session.workspacePath),
     );
   } catch {
-    // Non-Git workspaces do not receive glossary authority.
+    // Git で管理されていないワークスペースには用語集の権限を付与しない。
   }
-  // Resolve the saved source after checkout inspection and reject replaced Sessions.
+  // チェックアウトの検査後に保存された送信元を解決し、置き換えられた Session は拒否する。
   assertPersistentStoreOwnerIsActive(owner, "Provider runtime binding");
   const auxiliary = actorSource.kind === "auxiliary" ? await requireAuxiliarySessionService().getAuxiliarySessionMetadata(session.id) : null;
   if (actorSource.kind === "auxiliary" && (!auxiliary || auxiliary.createdAt !== actorSource.incarnationId || auxiliary.parentSessionId !== actorSource.parent.sessionId)) {
@@ -1373,30 +1373,30 @@ function assertPersistentStoreOwnerIsActive(
   assertPersistentStoreOwnerActive(() => mainStoreContext.activePersistentStoreOwner, owner, operation);
 }
 
-/** Reads instructions for a trusted GUI, authenticated agent or Turn target. */
+/** 信頼された GUI、認証済み Agent、または Turn の対象について指示本文を読み取る。 */
 async function getSessionInstructions(
   target: SessionInstructionsTarget,
   owner = requireActivePersistentStoreOwnerForFactory("Session instructions"),
 ): Promise<string> {
   assertPersistentStoreOwnerIsActive(owner, "Session instructions");
   const worker = owner.storageWorker;
-  // Do not reinterpret unavailable storage as a saved empty body.
+  // ストレージを利用できない状態を、保存済みの空の本文として扱わない。
   if (!worker || databaseMaintenanceRequested) throw new Error("Session instructions storage is unavailable.");
   const body = await worker.stores.instructions.get(target);
   assertPersistentStoreOwnerIsActive(owner, "Session instructions");
-  // Null means that the exact saved identity no longer exists.
+  // null は保存済みの識別情報に完全一致する対象が存在しなくなったことを示す。
   if (body === null) throw new SessionManagementError("SESSION_REPLACED", "The Session was replaced or deleted.");
   return body;
 }
 
-/** Replaces instructions without writing execution options, activity or history. */
+/** 実行オプション、活動、履歴を書き換えず、指示本文だけを置き換える。 */
 async function setSessionInstructions(target: SessionInstructionsTarget, body: string): Promise<{ byteLength: number }> {
   const owner = requireActivePersistentStoreOwnerForFactory("Session instructions");
   const worker = owner.storageWorker;
-  // Only the active Worker may commit a replacement.
+  // 置き換えを確定できるのは有効な Worker だけ。
   if (!worker || databaseMaintenanceRequested) throw new Error("Session instructions storage is unavailable.");
   const result = await worker.stores.instructions.set(target, body);
-  // No row was updated when the exact identity did not match.
+  // 識別情報が完全一致しなかったため、更新された行はない。
   if (!result) throw new SessionManagementError("SESSION_REPLACED", "The Session was replaced or deleted.");
   return result;
 }
@@ -1624,7 +1624,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveOwningSessionWindow: (sessionId, incarnationId) => {
                   const bridge = requireSessionWindowBridge();
                   const window = bridge.getWindow(sessionId);
-                  // A retained Window from a replaced database generation is not an owner.
+                  // 置き換えられたデータベース世代のウィンドウが残っていても、所有者ではない。
                   return window && bridge.getWindowIncarnation(window) === incarnationId
                     && bridge.getWindowStorageGeneration(window) === mainStoreContext.storageWorker ? window : null;
                 },
@@ -2716,7 +2716,7 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
       },
       onTurnRecovered: (receipt) => {
         void (async () => {
-          // The Worker reconciled the durable receipt after the runtime guard ended.
+          // ランタイムのガードが終了した後で、Worker が永続化された受領記録を照合した。
           assertPersistentStoreOwnerIsActive(owner, "Recovered Turn publication");
           if (receipt.state !== "interrupted") await sessionTurnQueueService?.wakeSourceTurnDependents(receipt.sessionId);
           const summary = await owner.sessionStorage.getSessionSummary?.(receipt.sessionId);
@@ -3487,7 +3487,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   const runtimeToStop = agentRuntimeApi;
   agentRuntimeApi = null;
   if (runtimeToStop) {
-    // Do not proceed with a database reset while tool requests remain active.
+    // 有効なツール要求が残っている間はデータベースのリセットを進めない。
     await runtimeToStop.stop();
   }
 

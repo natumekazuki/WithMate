@@ -98,7 +98,7 @@ export function useSessionFilePins(input: {
       return true;
     } catch (error) {
       if (ownerRef.current === ownerKey && sequenceRef.current === sequence) {
-        // A storage failure can leave the commit outcome unknown. Reload before another mutation.
+        // ストレージの失敗で書き込み結果が不明になる場合がある。次の変更前に読み直す。
         setState((current) => ({ ...current, pending: false, status: "error", error: error instanceof Error ? error.message : "The pin could not be saved." }));
       }
       return false;

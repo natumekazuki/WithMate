@@ -17,7 +17,7 @@ function assertIdentity(info: SessionInfo, id: string, parentID: string | undefi
   }
 }
 
-/** The caller preflights the root inbox before transferring its settled history. */
+/** 呼び出し元は、確定済みの履歴を転送する前にルートの受信箱を確認する。 */
 export async function migrateOpenCodeThread(input: {
   source: OpenCodeClient;
   target: OpenCodeClient;
@@ -44,7 +44,7 @@ export async function migrateOpenCodeThread(input: {
     const cursors = new Set<string>();
     do {
       checkCanceled();
-      // Omitting archived includes both archived and active child Sessions.
+      // archived を省略すると、アーカイブ済みとアクティブの両方の子 Session が含まれる。
       const page = await source.session.list({ parentID: parent.id, limit: 100, cursor }, options);
       for (const child of page.data) {
         assertIdentity(child, child.id, parent.id, workspacePath, runtimeOwner);

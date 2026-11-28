@@ -29,9 +29,9 @@ export type SessionChatRuntimeFeature = {
 };
 
 /**
- * Runtime feedback, recovery, and the context rail share the live-session
- * shell but remain owned by the runtime feature. The app root only supplies
- * the owner callbacks and the current runtime view.
+ * 実行時の通知、復旧操作、コンテキスト欄は実行中の Session 用シェルを共有するが、
+ * 引き続き実行時機能が管理する。アプリのルートが渡すのは
+ * 所有元のコールバックと現在の実行時ビューだけ。
  */
 export function buildSessionChatRuntimeFeature(
   input: SessionChatRuntimeFeatureInput,

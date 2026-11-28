@@ -310,7 +310,7 @@ export class TerminalService<TWindow extends TerminalOwner> {
 }
 
 function isFullyQualifiedWindowsPath(directory: string): boolean {
-  // isAbsolute also accepts current-drive paths whose root is only a separator.
+  // isAbsolute は、区切り文字だけをルートとする現在のドライブ上のパスも受け付ける。
   return path.win32.isAbsolute(directory) && path.win32.parse(directory).root.length > 1;
 }
 

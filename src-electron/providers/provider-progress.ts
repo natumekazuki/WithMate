@@ -2,7 +2,7 @@ import type { ProviderAgentRuntimeBindingRedactor } from "./provider-agent-runti
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { RunSessionTurnProgressChanges, RunSessionTurnProgressHandler } from "./provider-runtime.js";
 
-/** Updates the existing Main snapshot without retaining another collection owner. */
+/** 別のコレクション所有者を持たずに、Main の既存スナップショットを更新する。 */
 export function applyProviderProgressChanges<T extends { id: string }>(
   current: T[], changes: { upserts: T[]; removes: string[] },
 ): T[] {
@@ -13,7 +13,7 @@ export function applyProviderProgressChanges<T extends { id: string }>(
   return [...items.values()];
 }
 
-/** Tracks mutations at the provider owner; unchanged detail is not projected again. */
+/** プロバイダーの所有元で変更を追跡し、変わっていない詳細は再度反映しない。 */
 export class ProviderProgressMap<T extends { id: string }> extends Map<string, T> {
   private readonly changed = new Set<string>();
   private readonly removed = new Set<string>();
@@ -64,7 +64,7 @@ export class ProviderProgressMap<T extends { id: string }> extends Map<string, T
   }
 }
 
-/** Forward required progress without retaining snapshots or sizing a duplicate payload. */
+/** スナップショットを保持したり、重複するペイロードのサイズを計算したりせず、必要な進捗を転送する。 */
 export class ProviderProgressDelivery {
   private readonly pending = new Set<Promise<void>>();
 

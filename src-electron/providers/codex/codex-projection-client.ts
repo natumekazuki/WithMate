@@ -4,7 +4,7 @@ import type { CodexProjectionCommand, CodexProjectionRequest, CodexProjectionRes
 
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 
-/** One Worker per adapter, shared by concurrent turns; raw items never cross back per delta. */
+/** アダプターごとに 1 つの Worker を並行する Turn で共有し、差分ごとに生の項目を Worker から返さない。 */
 export class CodexProjectionClient {
   private worker: Worker | null = null;
   private readonly runs = new Map<string, Worker>();
@@ -62,7 +62,7 @@ export class CodexProjectionClient {
     try {
       const worker = this.worker;
       if (worker && this.runs.get(runId) === worker) {
-        // Keep the run registered until the Worker acknowledges deletion or is failed closed.
+        // Worker が削除を確認するか、失敗時に安全側へ閉じるまで、実行の登録を維持する。
         await this.call(runId, { type: "release" });
       }
     }

@@ -11,7 +11,7 @@ export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
 
 export const V6_SCHEMA_STATUS = "foundation";
 
-// Remove the retired tables from child to parent while foreign keys remain enabled.
+// 外部キーを有効にしたまま、廃止したテーブルを子から親の順に削除する。
 export const RETIRED_SESSION_GRAPH_TABLES = [
   "session_graph_relations_v6",
   "session_graph_records_v6",
@@ -648,7 +648,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_LIFECYCLE_OPERATIONS_TABLE_SQL,
   CREATE_V7_COORDINATION_RECORDS_SQL,
-  // Additive feature tables must not make an older V6 file eligible for replacement by a legacy import.
+  // 機能テーブルの追加を理由に、既存の古い V6 ファイルを旧版からのインポートで置き換えてはならない。
   CREATE_LOCAL_PR_SCHEMA_SQL,
   CREATE_V6_SESSION_FILE_PINS_TABLE_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
@@ -769,7 +769,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   }
 
   const sessionColumns = tableColumnNames(db, "sessions_v6");
-  // Existing sessions start with no instructions; no conversation or settings fields are rewritten.
+  // 既存 Session は指示なしで始まり、会話や設定の項目は書き換えない。
   if (!sessionColumns.has("instructions_json")) {
     db.exec(`ALTER TABLE sessions_v6 ADD COLUMN instructions_json TEXT NOT NULL DEFAULT '""'`);
   }
@@ -812,7 +812,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
 
   db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
   const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
-  // Add the column after the legacy Auxiliary table shape has been resolved.
+  // 旧 Auxiliary テーブルの構成が確定してから列を追加する。
   if (!auxiliaryColumns.has("instructions_json")) {
     db.exec(`ALTER TABLE auxiliary_sessions ADD COLUMN instructions_json TEXT NOT NULL DEFAULT '""'`);
   }
@@ -872,7 +872,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     json_extract(body, '$.turnInput.origin.actorTurnId'), id)
     WHERE role='user' AND json_extract(body, '$.turnInput.origin.operation')='steer'`);
   cleanupForbiddenV6Tables(db);
-  // Discard the old Graph initialization marker in the same savepoint as its tables.
+  // 古い Graph の初期化マーカーを、対応するテーブルと同じセーブポイント内で削除する。
   db.exec("DELETE FROM app_settings WHERE setting_key = 'session_graph_agent_origin_contract_initialized_at';");
   if (tableColumnNames(db, "session_turns_v6").has("summary")) {
     db.exec("ALTER TABLE session_turns_v6 DROP COLUMN summary");

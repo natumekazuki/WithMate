@@ -91,8 +91,8 @@ function cloneStringWithinRawItemBudget(value: string, state: RawItemBudgetState
   let boundedValue = previewLimit > 0 ? toTruncatedText(value, previewLimit, state.sanitizeText) : RAW_ITEM_TRUNCATION_MARKER;
   let length = measureBoundedJson(boundedValue);
   if (state.textPreviewLimit !== undefined && length > state.remaining) {
-    // Escapes can expand a code unit to six JSON characters. Retry with a
-    // shorter source preview rather than dropping an otherwise useful field.
+    // エスケープにより 1 コードユニットが JSON 上で最大 6 文字になることがある。
+    // 有用なフィールドを落とす代わりに、元の文字列のプレビューを短くして試し直す。
     const escapedLimit = Math.floor((state.remaining - 256) / 6);
     if (escapedLimit > 0 && escapedLimit < previewLimit) {
       boundedValue = toTruncatedText(value, escapedLimit, state.sanitizeText);
@@ -203,8 +203,8 @@ function cloneObjectWithinRawItemBudget(
 }
 
 function cloneValueWithinRawItemBudget(value: unknown, state: RawItemBudgetState): unknown {
-  // Compact log previews also charge per node so empty containers and nested
-  // punctuation cannot dominate the budget for the excerpt.
+  // 短縮したログプレビューではノードごとにも容量を消費させ、
+  // 空のコンテナや入れ子の区切り記号が抜粋の容量を占有しないようにする。
   if (state.textPreviewLimit !== undefined && !consumeRawItemBudget(state, 8)) {
     return RAW_ITEM_TRUNCATION_MARKER;
   }

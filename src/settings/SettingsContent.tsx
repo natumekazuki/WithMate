@@ -101,10 +101,10 @@ type SettingsActionKey =
   | "save-settings";
 
 function settingsActionsConflict(action: SettingsActionKey, pending: SettingsActionKey): boolean {
-  // Save can update Session runtime settings; cleanup deletes those Sessions.
+  // 設定の保存は Session の実行設定を更新する場合があり、クリーンアップはそれらの Session を削除する。
   const updatesSettingsOrSessions = (key: SettingsActionKey) =>
     key === "save-settings" || key === "delete-sessions";
-  // Keep native file dialogs single-flight, including provider draft pickers.
+  // Provider の下書き用の選択画面も含め、ネイティブのファイルダイアログは一度に一つだけ開く。
   const opensFileDialog = (key: SettingsActionKey) =>
     key.startsWith("browse-");
   return action === pending

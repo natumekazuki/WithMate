@@ -990,7 +990,7 @@ it("Claude 長文でも全文と正常・cancel partialを保持する", async (
 // impact = "Characterの現行投影が失われ、Sessionに重複した応答が出る"
 // distinction = "型検査ではSDK option値とstream/final連結の実行結果を確認できない"
 // @end-test-value
-/** Claude appends the current fixed instructions, including on resume, without adding them to user input. */
+/** Claude は再開時も現在の固定指示を追記し、ユーザー入力には混ぜない。 */
 it("resumes by explicit id with the current system prompt and deduplicates streamed text", async () => {
   const seen: Array<{ options: Options; prompt: unknown }> = [];
   const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
@@ -1016,7 +1016,7 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
       theme: { main: "#112233", sub: "#445566" }, definitionMarkdown: `Definition ${marker}`,
       definitionSha256: marker, definitionByteSize: marker.length, snapshotAt: "2026-10-03T00:00:00Z",
     };
-    // Recreate the adapter for explicit resume: freshness must not rely on an in-memory query cache.
+    // 明示的な再開ではアダプターを作り直し、最新の指示を取得できることがメモリ上のクエリキャッシュに依存しないようにする。
     const currentAdapter = index === 2 ? new ClaudeAdapter({ query: fakeQuery(async function* () { yield result("thread-1"); },
       (options, prompt) => seen.push({ options, prompt })) }) : adapter;
     completed = await currentAdapter.runSessionTurn({ ...request, sessionInstructions: `Instructions ${marker} 🧭` }, (state) => { progress.push(state.assistantText); });

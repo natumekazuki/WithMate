@@ -10,8 +10,8 @@ const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 const revoked: string[] = [];
 const previousRevoke = URL.revokeObjectURL;
 
-// Only the browser's resource loading and geometry are simulated. Mermaid's
-// parser, native image renderer and strict sanitizer remain the installed ones.
+// ブラウザーでのリソース読み込みと位置・寸法だけを模擬する。Mermaid の
+// パーサー、組み込みの画像レンダラー、厳格なサニタイザーはインストール済みの実装をそのまま使う。
 class LoadedImage {
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
@@ -50,8 +50,8 @@ before(async () => {
     value: () => ({ x: 0, y: 0, width: 80, height: 20 }),
   });
   Object.defineProperty(dom.window.SVGElement.prototype, "getComputedTextLength", { value: () => 80 });
-  // JSDOM does not load HTML label images; their browser lifecycle is checked
-  // by the visual fixture. Keep Mermaid's own label/layout code running here.
+  // JSDOM は HTML ラベルの画像を読み込まない。ブラウザーでの画像のライフサイクルは
+  // 描画確認用の fixture で確認する。ここでは Mermaid 本来のラベルとレイアウトの処理を動かす。
   Object.defineProperty(dom.window.HTMLImageElement.prototype, "complete", { get: () => true });
   URL.revokeObjectURL = (url) => { revoked.push(url); };
   mermaid = (await import("mermaid")).default;
@@ -68,7 +68,7 @@ after(() => {
 });
 
 function svgDocument(svg: string) {
-  // The preview consumes Mermaid's SVG with HTML foreignObject labels as HTML.
+  // プレビューは、HTML の `foreignObject` ラベルを含む Mermaid の SVG を HTML として扱う。
   const document = new dom.window.DOMParser().parseFromString(svg, "text/html");
   assert.equal(document.body.firstElementChild?.localName, "svg");
   return document;

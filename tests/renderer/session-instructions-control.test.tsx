@@ -6,7 +6,7 @@ import type { Root } from "react-dom/client";
 import type { SessionInstructionsTarget } from "../../src-shared/session/session-instructions.js";
 import { SessionInstructionsControl } from "../../src/chat/composer/session-instructions-control.js";
 
-/** Keeps late reads and save acknowledgements from crossing editor lifetimes when the ActionDock switches targets. */
+/** `ActionDock` が対象を切り替えたとき、遅れて届く読み取り結果や保存の応答が、別のエディターに反映されないことを確認する。 */
 test("切替前の読込・保存完了は新しい Instructions エディターを変更しない", async () => {
   const dom = new JSDOM("<div id='root'></div>");
   const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true };

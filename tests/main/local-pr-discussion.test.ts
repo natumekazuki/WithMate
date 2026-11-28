@@ -23,14 +23,14 @@ const pr: LocalPrDetail = {
   ],
 };
 
-/** Read the quoted scalar fields in the human-readable prompt. */
+/** 人が読むプロンプト内で引用符に囲まれたスカラー項目を読み取る。 */
 function field(text: string, key: string): unknown {
   const line = text.split("\n").find((item) => item.startsWith(`${key}: `));
   assert.ok(line, key);
   return JSON.parse(line.slice(key.length + 2));
 }
 
-/** A later review sends the referenced older comparison and never treats diff/body text as @file input. */
+/** 後から行うレビューには参照先の古い比較を渡し、差分や本文の文字列を `@file` 入力として扱わない。 */
 test("PR相談は返信元の固定したbefore側を既存Sessionへの本文に含める", async () => {
   const input: LocalPrInput<"discuss"> = { prId: pr.id, version: 2, target: actor, commentIds: [pr.comments[1].id], message: "Compare these versions", requestId: "79eabed9-701a-41d4-a8f2-7ef4bd745dc0" };
   const requests: Array<LocalPrInput<"pr_diff">> = [];
@@ -66,7 +66,7 @@ test("PR相談は返信元の固定したbefore側を既存Sessionへの本文�
   assert.equal(field(provider.split("\n\n## Comment\n\n")[1], "note"), pr.comments[1].body);
 });
 
-/** PR-wide requests still ask the agent to return the response to that PR. */
+/** PR 全体に対する依頼でも、エージェントにその PR への回答を求める。 */
 test("PR-wide discussion requests do not require a selected comment", async () => {
   const input: LocalPrInput<"discuss"> = { prId: pr.id, version: 2, target: actor, commentIds: [], message: "Review the PR", requestId: "79eabed9-701a-41d4-a8f2-7ef4bd745dc0" };
   const message = await buildLocalPrDiscussionMessage(pr, input, async () => { throw new Error("No anchored patch expected"); });

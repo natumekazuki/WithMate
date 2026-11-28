@@ -1,28 +1,28 @@
 import { z } from "zod";
 import { localPrAgentData, localPrAgentInput, type LocalPrAgentOperation } from "./local-pr-contract.js";
 
-/** Recognizes only the Agent operations, never inherited keys or GUI actions. */
+/** Agent 操作だけを認識する。継承されたキーや GUI 操作は対象外。 */
 export function isLocalPrAgentOperation(operation: string): operation is LocalPrAgentOperation {
   return Object.hasOwn(localPrAgentInput, operation);
 }
 
-/** Session MCP and CLI share the PR success envelope and data shape. */
+/** Session MCP と CLI で、PR 操作の成功レスポンスの外枠とデータ構造を共有する。 */
 export const localPrAgentSuccessSchemas = Object.fromEntries(
   Object.entries(localPrAgentData).map(([operation, data]) => [operation, z.strictObject({ ok: z.literal(true), data })]),
 ) as { [K in LocalPrAgentOperation]: z.ZodObject<{ ok: z.ZodLiteral<true>; data: (typeof localPrAgentData)[K] }> };
 
-/** Read classification drives transport effect reporting and MCP tool annotations. */
+/** 読み取り操作の分類は、通信上の操作効果の報告と MCP ツールのアノテーションに使う。 */
 export const LOCAL_PR_AGENT_READS = [
   "pr_list", "pr_branches", "pr_get", "pr_diff", "pr_ci_validate", "pr_ci_list", "pr_ci_log",
 ] as const satisfies readonly LocalPrAgentOperation[];
 
-/** CI runs in WithMate, outside the Provider's command execution boundary. */
+/** CI は Provider のコマンド実行境界の外側にある WithMate 側で実行する。 */
 export const LOCAL_PR_CI_EXECUTION_NOTICE = "Local PR CI commands run with the WithMate application's OS permissions, not in the Provider sandbox.";
 
-/** Common Agent workflow; applies to the bound repository and only to merges. */
+/** Agent 共通の手順。紐付け先のリポジトリでのマージにだけ適用する。 */
 export const LOCAL_PR_AGENT_WORKFLOW = "To merge work from a WithMate Session, submit a WithMate local PR, wait for user approval in the WithMate GUI, and merge through that PR. Do not use direct Git merge as a substitute. WithMate does not block external Git commands. Local PR tools act on the repository of the bound Session workspace.";
 
-/** The CLI help/schema and MCP tool list describe the same public operations. */
+/** CLI のヘルプ・スキーマと MCP のツール一覧は、同じ公開操作を記述する。 */
 export const LOCAL_PR_AGENT_DESCRIPTIONS = {
   pr_list: "List local PRs in the bound Session repository.",
   pr_branches: "List local branches and the bound checkout's HEAD for preparing a submission.",

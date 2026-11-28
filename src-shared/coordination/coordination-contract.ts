@@ -33,6 +33,6 @@ export type CoordinationRecord = {
 export type CoordinationSummary = Omit<CoordinationRecord, "body" | "choices" | "answers"> & { initiatorMainSessionId: string; bodyPreview: string };
 export type CoordinationResult = { record: CoordinationRecord; receipt?: SessionTurnQueueReceipt; initiatorTarget?: SessionTarget } | { items: CoordinationSummary[]; total: number; nextOffset: number | null };
 export type CoordinationStorageResult = CoordinationResult & { queueUpdates?: SessionTurnQueueReceipt[] };
-/** Trusted application input; never accept this wrapper from MCP/CLI/renderer. */
+/** アプリケーション内部の信頼済み入力。このラッパーを MCP・CLI・renderer から受け取らない。 */
 export type CoordinationStorageInput = { actor: CoordinationActor; request: CoordinationRequest; defaultCrewRootSessionId?: string; delivery?: { target: CoordinationIdentity; captured: SessionTurnQueueCapturedInput } };
 export type CoordinationStore = { execute(input: CoordinationStorageInput): Promise<CoordinationStorageResult>; deliveryTarget(input: Omit<CoordinationStorageInput, "delivery">): Promise<CoordinationIdentity | null> };

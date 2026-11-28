@@ -47,7 +47,7 @@ function rangeFor(request: Request, size: number): { start: number; end: number;
   return { start, end, partial: true };
 }
 
-/** The caller authorizes this source and rechecks its owner before every read. */
+/** 呼び出し元がこの参照元を認可し、読み取るたびにその所有者を再確認する。 */
 export async function createHtmlPreviewResources(
   explorer: Pick<SessionFileExplorerService, "createHtmlPreviewResourceRoot">,
   git: Pick<FileRootGitChangesService, "readHtmlPreviewHistoryFile" | "resolveHistoryFilePreview">,

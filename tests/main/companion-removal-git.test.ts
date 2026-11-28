@@ -188,8 +188,8 @@ test("rejects symlinks and tolerates a missing repo", async (t) => {
   });
   assert.equal(result.branchRemoved, true);
   assert.equal(result.baseSnapshotRefRemoved, true);
-  // `outside` is an ordinary directory inside another Git repository. Cleanup
-  // must not discover that ancestor's refs when the old repo itself is gone.
+  // `outside` は別の Git リポジトリ内の通常のディレクトリである。
+  // 旧リポジトリ自体が存在しない場合、後処理で祖先リポジトリの ref を探索してはならない。
   const unrelatedRef = "refs/heads/keep-retired-workspace";
   await git(root, "update-ref", unrelatedRef, base);
   for (const retiredRepo of [path.join(root, "missing"), outside]) {

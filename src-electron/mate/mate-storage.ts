@@ -1110,20 +1110,20 @@ export class MateStorage {
           try {
             await rm(avatarAbsolutePath, { force: true });
           } catch {
-            // Best-effort rollback.
+            // 可能な範囲でロールバックする。
           }
         } else {
           try {
             await writeFile(avatarAbsolutePath, previousAvatar);
           } catch {
-            // Best-effort rollback.
+            // 可能な範囲でロールバックする。
           }
         }
       } else if (previousAvatar !== null) {
         try {
           await writeFile(avatarAbsolutePath, previousAvatar);
         } catch {
-          // Best-effort rollback.
+          // 可能な範囲でロールバックする。
         }
       }
 
@@ -1477,7 +1477,7 @@ export class MateStorage {
             await writeFile(absolutePath, previousContent, "utf8");
           }
         } catch {
-          // Best-effort rollback. The caller records the failed revision.
+          // 可能な範囲でロールバックする。失敗したリビジョンは呼び出し元で記録する。
         }
       }
       throw error;
@@ -1532,14 +1532,14 @@ export class MateStorage {
         try {
           await rm(absolutePath, { force: true });
         } catch {
-          // Best-effort rollback.
+          // 可能な範囲でロールバックする。
         }
       }
 
       try {
         await rm(snapshotDirectoryPath, { recursive: true, force: true });
       } catch {
-        // Best-effort rollback.
+        // 可能な範囲でロールバックする。
       }
 
       throw error;

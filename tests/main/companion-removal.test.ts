@@ -192,7 +192,7 @@ test("bootstrap clears obsolete Companion paths without requiring the retired re
   await rename(f.worktree, retainedWorktree);
   const db = new DatabaseSync(f.dbPath);
   try {
-    // A copied database may still refer to its former userData directory.
+    // コピーしたデータベースは、元の `userData` ディレクトリを参照している場合がある。
     db.prepare("UPDATE companion_sessions SET worktree_path = ?")
       .run(path.join(f.root, "old-userdata", "cw", "cs-729"));
   } finally { db.close(); }
@@ -447,7 +447,7 @@ test("cleans an actual V3 schema but refuses a worktree shared with a live works
   CREATE INDEX IF NOT EXISTS idx_v3_audit_log_operations_details_blob
     ON audit_log_operations(details_blob_id);
 `);
-  // Legacy V3 definitions from d987cf565f8e0f905ccf1e2d7ec78f5b5467ddcc.
+  // `d987cf565f8e0f905ccf1e2d7ec78f5b5467ddcc` 時点の旧 V3 定義。
   legacy.exec(`
     CREATE TABLE companion_groups (
       id TEXT PRIMARY KEY,

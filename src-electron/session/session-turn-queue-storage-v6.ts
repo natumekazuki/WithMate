@@ -20,7 +20,7 @@ type QueueRow = {
   accepted_json: string | null; dispatched_json: string | null;
 };
 
-// The exact source Turn and current incarnation, never the sender's latest Turn.
+// 現在の incarnation に属する、起点となった特定の Turn を参照する。送信元の最新 Turn ではない。
 const sourceTurnPhaseSql = `(SELECT CASE WHEN t.phase = 'running' THEN
     CASE WHEN json_extract(s.runtime_policy_json, '$.runState') = 'running' THEN 'running' ELSE 'unknown' END
   WHEN t.completed_at IS NOT NULL THEN t.phase ELSE 'unknown' END
@@ -68,7 +68,7 @@ export class SessionTurnQueueStorageV6 {
   close(): void { this.db.close(); }
 
   enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput): SessionTurnQueueReceipt {
-    // Coordination must commit its record with the queued receipt before trying related-Turn input.
+    // Coordination は、関連 Turn への入力を試みる前に、自身の記録とキューの受付レコードを一緒にコミットする。
     return this.admit(owner, captured).receipt;
   }
 
@@ -86,8 +86,8 @@ export class SessionTurnQueueStorageV6 {
       if (existing) {
         if (existing.accepted_json === null) throw new Error("The original queue acceptance input is unavailable; query its receipt instead.");
         let original = existing.accepted_json;
-        // A retry frame is derived here, not supplied by the caller. An exact
-        // replay compares the original input with that derived field removed.
+        // 再試行で使うフレームは呼び出し元から受け取らず、ここで導出する。
+        // 同一の再送かを判定するときは、その導出フィールドを除いた元の入力と比較する。
         if (acceptance.retrySource && acceptance.request.mainConversationFrame === undefined) {
           const accepted = JSON.parse(original) as SessionTurnQueueCapturedInput;
           if (accepted.retrySource) {
@@ -303,7 +303,7 @@ export class SessionTurnQueueStorageV6 {
   cancelQueued(owner: SessionTurnQueueOwner, id: string): SessionTurnQueueReceipt {
     return this.withOwner(owner, () => {
       const receipt = this.required(owner, id);
-      // A cancellation names this receipt only; a dispatch race never becomes a Turn stop.
+      // キャンセルの対象はこの受付レコードだけ。送出と競合しても、Turn の停止には切り替えない。
       if (receipt.state !== "queued") return receipt;
       this.db.prepare("UPDATE session_turn_queue_v6 SET state = 'canceled', updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
       return this.required(owner, id);

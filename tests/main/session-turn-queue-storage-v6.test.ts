@@ -328,7 +328,7 @@ test("起動回収は遺失・旧保留・確定成功を照合し、保存結�
           metadata: { status: "idle", runState: "idle", threadId: "thread", updatedAt: time },
           terminalCommit: { turnId, sessionId: session.id, phase: "completed", assistantMessageSeq: 3,
             threadId: "thread", completedAt: time, errorMessage: "" } });
-        markLegacy(null); // Stale receipt alongside a real saved terminal.
+        markLegacy(null); // 実際に保存された終端記録と、古い受付記録が併存する。
       }
       queue.close();
       queue = new SessionTurnQueueStorageV6(dbPath);

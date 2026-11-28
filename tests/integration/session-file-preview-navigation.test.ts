@@ -96,7 +96,7 @@ async function createNavigation() {
         statTarget: stat,
         realpathTarget: realpath,
         assertSender,
-        // Keep the OS boundary inert, including on macOS; exercise the production authorization helper.
+        // macOS を含めて OS 側の処理は実行せず、本番の認可ヘルパーを通す。
         platform: "win32",
         openWithDefaultApp: async (target) => { directoryOpened.push(target); return state.directoryError; },
       });

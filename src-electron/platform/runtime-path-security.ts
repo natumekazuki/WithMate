@@ -5,9 +5,9 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 /**
- * PowerShell payload used to apply and read back the runtime ACL.  The target
- * path and kind are supplied through the environment so they never become
- * command-line arguments (and therefore cannot be confused with switches).
+ * ランタイムの ACL を適用し、読み戻して確認するための PowerShell コード。
+ * 対象のパスと種別は環境変数で渡し、コマンドライン引数にしない。
+ * これにより、それらの値がコマンドラインのスイッチと混同されることはない。
  */
 const WINDOWS_RUNTIME_ACL_SCRIPT = String.raw`
 $ErrorActionPreference = "Stop"
@@ -107,11 +107,11 @@ const WINDOWS_RUNTIME_ACL_ENCODED_SCRIPT = Buffer.from(WINDOWS_RUNTIME_ACL_SCRIP
 export type RuntimeAclTargetKind = "directory" | "file";
 
 /**
- * Restrict a runtime path to the current user, SYSTEM, and Administrators.
+ * ランタイムのパスへのアクセスを、現在のユーザー、SYSTEM、Administrators に制限する。
  *
- * The operation is intentionally fail-closed: invalid paths, missing
- * SystemRoot, PowerShell failures, and ACL read-back mismatches all reject
- * without exposing the target path in the returned error.
+ * この操作では安全側に倒し、不正なパス、SystemRoot の欠落、
+ * PowerShell の失敗、読み戻した ACL の不一致はいずれも拒否する。
+ * 返すエラーには対象パスを含めない。
  */
 export async function secureWindowsRuntimePath(
   targetPath: string,
@@ -154,8 +154,8 @@ export async function secureWindowsRuntimePath(
       windowsHide: true,
     });
   } catch {
-    // Do not attach execFile's error as a cause: stderr can contain the
-    // target path (or inherited environment data) and must not be surfaced.
+    // execFile のエラーを原因として付けない。標準エラーには対象パスや、
+    // 継承した環境データが含まれ得るため、外部に出さない。
     throw new Error(`Unable to secure runtime ${targetKind} Windows ACL.`);
   }
 }

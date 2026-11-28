@@ -86,7 +86,7 @@ test("子の作成・復旧と実行にはWindowを作らずMonitorから明示o
   const live = new SessionObservabilityService({ onProviderQuotaTelemetryChanged() {}, onSessionContextTelemetryChanged() {},
     onLiveSessionRunChanged: (id, state) => {
       const status = projectLiveSessionRunStatus(state);
-      // Same Main assembly callback for an ordinary (non-Auxiliary) run.
+      // 通常の実行（Auxiliary ではない）でも同じ Main の組み立て用コールバックを使う。
       if (status?.runState === "running" || status?.cancellationState || status?.approvalPending) bridge.retainSessionForMonitor(id);
       broadcast.broadcastLiveSessionRun(id, state);
       if (state?.approvalRequest) attention.resolve();
@@ -270,7 +270,7 @@ test("子の作成・復旧と実行にはWindowを作らずMonitorから明示o
 // impact = "受付した指示が異なる設定/pathで実行される、同じ会話が重複実行される、receiptと履歴が乖離することを防ぐ"
 // distinction = "個別fake port testではMain owner guard・async Worker proxy・partial persistenceの実結合を検証できない"
 // @end-test-value
-/** Queue acceptance captures input and settings, but instructions are read from the Worker only at dispatch. */
+/** キューへの受付時に入力と設定を取得するが、指示は実行を送出する時点で初めて Worker から読み取る。 */
 test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合する", async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-queue-runtime-"));
   const bundle = createV6StorageWorkerBundle({ dbPath: path.join(temporary, "withmate-v6.db"), userDataPath: temporary });

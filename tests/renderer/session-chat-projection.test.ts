@@ -96,7 +96,7 @@ test("session runtime feature は blocked feedback と workspace/path notice を
     onRecheckWorkspaceAvailability,
     inlinePathFeedback: "The local path was not found.",
     onDismissInlinePathFeedback,
-    // The context-pane feature owns this projection; this test isolates runtime notices.
+    // この投影はコンテキストペイン機能が担う。このテストではランタイム通知を切り分けて確認する。
     contextPane: {} as SessionContextPaneProps,
   });
 

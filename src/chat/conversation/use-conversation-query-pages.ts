@@ -11,7 +11,7 @@ type Attempt<T> = {
   active: boolean;
 };
 
-/** A displayed query owns only the current result page and its two neighbours. */
+/** 表示中のクエリが保持するのは、現在の結果ページとその前後のページだけ。 */
 export function useConversationQueryPages<T>({ identity, enabled, ordinal, read, cancel }: {
   identity: string;
   enabled: boolean;

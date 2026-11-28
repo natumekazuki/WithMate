@@ -5,7 +5,7 @@ export type RunCharacterWorkspaceOperationExclusive = <T>(
   operation: CharacterWorkspaceOperation<T>,
 ) => Promise<T>;
 
-/** Serializes operations that may read or write one Character workspace. */
+/** 同じ Character のワークスペースを読み書きし得る処理を直列化する。 */
 export class CharacterWorkspaceOperationCoordinator {
   private readonly tails = new Map<string, Promise<void>>();
   private operationCount = 0;

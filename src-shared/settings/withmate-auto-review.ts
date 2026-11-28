@@ -17,7 +17,7 @@ export function supportsWithMateAutoReview(providerId: unknown): boolean {
   return providerId === "copilot" || providerId === "opencode";
 }
 
-/** An incomplete or unrecognized setting never enables automatic decisions. */
+/** 不完全または未認識の設定で自動判断が有効になることはない。 */
 export function normalizeWithMateAutoReview(value: unknown): WithMateAutoReviewSettings | null {
   if (!value || typeof value !== "object") return null;
   const { providerId, model, reasoningEffort } = value as Partial<WithMateAutoReviewSettings>;

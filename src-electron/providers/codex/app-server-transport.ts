@@ -191,7 +191,7 @@ export class CodexAppServerTransport {
     child.stdout.on("error", error => this.#fail(error));
     child.stdin.on("error", error => this.#fail(error));
     child.stderr.on("error", error => this.#fail(error));
-    // Drain diagnostics without retaining arbitrary CLI output or credentials.
+    // 診断出力は読み捨て、任意の CLI 出力や認証情報は保持しない。
     child.stderr.resume();
     child.on("error", error => this.#fail(error));
     child.on("exit", (code, signal) => {
@@ -233,7 +233,7 @@ export class CodexAppServerTransport {
     if (Object.hasOwn(value, "error") && (!isObject(value.error) || !Number.isSafeInteger(value.error.code) || typeof value.error.message !== "string")) {
       throw new Error("Invalid Codex RPC error.");
     }
-    // Late responses to locally aborted/timed-out requests are not new requests.
+    // ローカルで中断またはタイムアウトしたリクエストへの遅延応答を、新しいリクエストとして扱わない。
     const pending = typeof value.id === "number" ? this.#pending.get(value.id) : undefined;
     if (!pending) return;
     this.#pending.delete(value.id as number); pending.cleanup();
@@ -258,7 +258,7 @@ export class CodexAppServerTransport {
     if (this.#terminalError || this.#state === "closing" || this.#state === "closed") return;
     this.#state = "failed"; this.#terminalError = error;
     this.#settlePending(error);
-    // Cleanup failures are returned by close(), never turned into successful protocol events.
+    // 後片付けの失敗は close() から返し、成功を示すプロトコルイベントには変換しない。
     void this.close().catch(() => {});
   }
 
@@ -269,7 +269,7 @@ export class CodexAppServerTransport {
     this.#waiters = []; this.#serverRequests.clear();
   }
 
-  // Unlike bounded close(), this settles only after owned-process cleanup is confirmed.
+  // 待機時間に上限のある close() と異なり、管理下のプロセスの後片付けを確認してから完了する。
   whenClosed(): Promise<void> { return this.#closedPromise; }
 
   close(): Promise<void> {
@@ -280,7 +280,7 @@ export class CodexAppServerTransport {
     const attempt = this.#close();
     this.#closePromise = attempt;
     void attempt.catch(() => {
-      // Only a retained ownership handle can be safely retried; never kill by a retired PID.
+      // 保持している所有ハンドルでのみ安全に再試行できる。管理を終えた PID を使って停止しない。
       if (this.#owner && this.#closePromise === attempt) this.#closePromise = undefined;
     });
     return this.#closePromise;
@@ -298,7 +298,7 @@ export class CodexAppServerTransport {
       try { stream?.destroy(); } catch (error) { failures.push(asError(error)); }
     }
     if (!failures.length) {
-      // A late child close may confirm cleanup after the bounded close attempt timed out.
+      // 時間制限付きの close() がタイムアウトしても、後から届く子プロセスの close イベントで後片付けを確認できる。
       void (this.#exitPromise ?? Promise.resolve()).then(() => this.#resolveClosed());
     }
     try {

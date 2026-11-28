@@ -24,7 +24,7 @@ export type SessionFilePreviewServiceDeps = {
   openDirectory(targetPath: string, assertSender: () => Promise<void>): Promise<OpenPathResult>;
 };
 
-/** Owns detached preview navigation; filesystem authorization and window identity keep their existing owners. */
+/** 独立したプレビューの画面遷移を担う。ファイルシステムの認可とウィンドウの識別は従来の担当に残す。 */
 export class SessionFilePreviewService {
   constructor(private readonly deps: SessionFilePreviewServiceDeps) {}
 

@@ -29,7 +29,7 @@ type PendingChange = {
 
 const HUNK_HEADER_PATTERN = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
-/** Project a unified patch into side-specific rows without treating file text as hunk metadata. */
+/** unified patch を左右それぞれの表示行に変換し、ファイル本文をハンクのメタデータとして扱わない。 */
 export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
   const lines = patch.split(/\r\n|\n|\r/);
   const rows: UnifiedDiffDisplayRow[] = [];

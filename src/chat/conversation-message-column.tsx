@@ -36,8 +36,8 @@ type StableMessageKey = { role: Message["role"]; key: string; withMateTurnId?: s
 
 function turnResponsePosition(history: readonly Message[], userMessageSeq: number, withMateTurnId: string, confirmedInputs?: ReadonlyMap<number, string>): number {
   let seq = userMessageSeq + 1;
-  // Only consecutive inputs of this exact Turn can move its response position.
-  // Another starting prompt or a gap is not evidence that its next assistant belongs here.
+  // 応答位置を移動できるのは、同じ Turn に属する連続した入力だけ。
+  // 別の開始プロンプトや履歴の欠落があれば、それに続く assistant の応答をこの Turn に結び付ける根拠にはならない。
   for (const [index, message] of history.entries()) {
     const messageSeq = getMessageHistoryIndex(message, index);
     if (messageSeq < seq) continue;
@@ -113,7 +113,7 @@ export type ConversationColumnControls = {
   captureMessageListSend: (scrollToLatestOnSend: boolean) => (() => void);
   onToggleAllMessageCollapse: () => void;
   followLatest: () => void;
-  /** Scrolls the pending approval or question form into view; returns whether its top is inside the list afterwards. */
+  /** 保留中の承認・質問フォームが見える位置までスクロールし、その後フォームの上端が一覧内にあるかを返す。 */
   revealRequest: () => boolean;
   messageNavigatorEntries: readonly MessageNavigatorEntry[];
   messageNavigatorPage?: MessageNavigatorPage;
@@ -146,7 +146,7 @@ export function useConversationMessageColumn({
     return cache;
   };
   const conversation = getCache(cacheKey);
-  // This observation belongs to the executing Session, not its selected view.
+  // この観測値は実行中の Session に属し、選択中の表示には属さない。
   const liveState = getCache(sessionId);
   const liveRunEventRevision = useRef(0);
   const [liveReadRevision, setLiveReadRevision] = useState(0);
@@ -247,8 +247,8 @@ export function useConversationMessageColumn({
       if (receipt.userMessageSeq !== null && threadFullIndexes?.has(receipt.userMessageSeq)) return true;
       const owner = receipt.turnId ? children?.find(({ inboundTurnIds }) => inboundTurnIds.includes(receipt.turnId!)) : undefined;
       if (owner) return owner === child;
-      // The live start receipt can arrive before the thread index. Use only the
-      // matching WithMate Turn, never the reservation's former frame.
+      // 実行中の開始受付情報が、スレッドのインデックスより先に到着する場合がある。
+      // 一致する WithMate Turn だけを使い、予約行が以前属していたフレームは使わない。
       if (receipt.turnId === currentTurnId && entry) {
         const startFrame = receiptFrame(entry);
         if (startFrame !== undefined) return startFrame === null ? !child
@@ -272,8 +272,8 @@ export function useConversationMessageColumn({
   const unboundBoundary = firstUnboundSeq(submissions);
   const isUnjoined = (seq: number, boundary: number) => seq >= boundary && !allQueue.receipts.some((receipt) => receipt.userMessageSeq === seq);
   const unjoinedUser = canonicalStartSeqs.find((seq) => isUnjoined(seq, unboundBoundary));
-  // Canonical history and its receipt are one display handoff, not two independent inserts.
-  // A post-history receipt read also confirms unrelated inputs, such as answers to live questions.
+  // 正本の履歴と対応する受付情報は、一度の表示の引き継ぎとして扱い、別々に挿入しない。
+  // 履歴取得後の受付情報の読み取りでは、実行中の質問への回答など、別の入力も確認する。
   const isHistoryHandoffPending = unjoinedUser !== undefined && !queue.historyReconciled;
   const tailMessages = isHistoryHandoffPending
     ? presentedHistory.current.owner === pageOwner ? presentedHistory.current.messages
@@ -295,8 +295,8 @@ export function useConversationMessageColumn({
   const readFreeze = useCallback(() => composerRegistry.isFrozen, [composerRegistry]);
   const queueActionsFrozen = useSyncExternalStore(subscribeFreeze, readFreeze, readFreeze);
   const scopedBoundary = firstUnboundSeq(visibleSubmissions);
-  // The scoped page and the parent tail arrive independently. Keep the existing
-  // reservation until a read can join the exact saved input to its receipt.
+  // 対象ページと親の履歴末尾は別々に届く。正確な保存済み入力と受付情報を
+  // 読み取りで対応付けられるまでは、既存の予約行を残す。
   const pendingScopedSeq = !frame || isBrowsing || queue.historyReconciled ? undefined : scopedMessages.find((message, index) => {
     const seq = getMessageHistoryIndex(message, index);
     return message.role === "user" && !message.turnInput && threadFullIndexes?.has(seq) && isUnjoined(seq, scopedBoundary);
@@ -305,10 +305,10 @@ export function useConversationMessageColumn({
     if (pageIndexes) return pendingScopedSeq === undefined ? scopedMessages
       : scopedMessages.filter((message, index) => {
         const seq = getMessageHistoryIndex(message, index);
-        // A foreign source coordinate supplies only a sent card, not a second input.
+        // 他の会話に属する送信元位置は送信カードにだけ使い、入力行を重複して表示しない。
         return seq < pendingScopedSeq || !threadFullIndexes?.has(seq);
       });
-    // While restoring the All view's old page, its tail is not a valid reading anchor.
+    // All ビューの以前のページを復元している間、その履歴末尾を閲覧位置のアンカーにはできない。
     if (isBrowsing) return currentPage?.messages ?? (showAllThreads ? EMPTY_MESSAGES : tailMessages);
     return tailMessages;
   }, [pageIndexes, currentPage, isBrowsing, showAllThreads, tailMessages, pendingScopedSeq, scopedMessages, threadFullIndexes]);
@@ -358,7 +358,7 @@ export function useConversationMessageColumn({
         page.messages.forEach((message, index) => merged.set(getMessageHistoryIndex(message, page.startIndex + index), message));
         const ordered = [...merged.entries()].sort(([left], [right]) => left - right);
         const retained = direction === "earlier" ? ordered.slice(0, CONVERSATION_WINDOW_SIZE) : ordered.slice(-CONVERSATION_WINDOW_SIZE);
-        // The reader may have reversed direction while the request was in flight.
+        // リクエストの処理中に、閲覧者が移動方向を変えている場合がある。
         if (anchor.messageIndex === undefined || !retained.some(([index]) => index === anchor.messageIndex)) return;
         nextPage = { ...page, startIndex: retained[0][0], messages: retained.map(([, message]) => message) };
       }
@@ -451,7 +451,7 @@ export function useConversationMessageColumn({
   }, [api, enabled, liveRunOverride, liveState, sessionId, refresh, liveReadRevision]);
 
   const previousResponse = responsePresentation.current;
-  // An empty request surface cannot identify an unbound live turn; resolve the receipt before attaching its body or forms.
+  // リクエスト欄が空では未紐付けの実行中 Turn を特定できない。本文やフォームを結び付ける前に受付情報を解決する。
   const isResponseBindingPending = !!api?.listSessionTurnQueue && !!(liveRun?.sessionTurnId || liveRun?.turnId)
     && previousResponse?.owner === pageOwner && !!previousResponse.requestId
     && !conversation.liveBridgeBody
@@ -529,7 +529,7 @@ export function useConversationMessageColumn({
   const remembered = conversation.bridge ? positionResponseBridge(conversation.bridge, tailMessages) : null;
   conversation.bridge = remembered;
   const cachedMessage = remembered ? messages.find((message, index) => message.role === "assistant" && getMessageHistoryIndex(message, index) === remembered.messageIndex) : undefined;
-  // The global tail can confirm persistence before a peer's selected page can replace this row.
+  // 会話全体の履歴末尾で保存を確認できても、相手別の選択ページがこの行を置き換えられるのは後になる場合がある。
   const cachedText = cachedMessage?.text || (enabled && remembered && remembered.messageIndex >= displayWindowStart ? conversation.liveBridgeBody?.text : undefined);
   const cachedBridge = remembered && cachedText ? { ...remembered, text: cachedText } : null;
   if (!currentBridge && remembered && (cachedMessage || remembered.messageIndex < displayWindowStart)) delete conversation.liveBridgeBody;
@@ -556,7 +556,7 @@ export function useConversationMessageColumn({
     }
     stableKeys.set(candidate.messageIndex, { role: "assistant", key, withMateTurnId: candidate.withMateTurnId });
   }
-  // Keep each observed response identity until its saved body arrives, even if the next turn starts first.
+  // 先に次の Turn が始まっても、保存済みの本文が届くまでは観測した各応答の識別情報を保持する。
   for (const receipt of queue.receipts) {
     const key = responseKeys.get(receipt.requestId);
     if (!key || receipt.state === "queued" || receipt.state === "starting" || receipt.state === "running" || receipt.inputTurnId
@@ -795,7 +795,7 @@ export function useConversationMessageColumn({
     const request = list?.querySelector<HTMLElement>(".live-approval-card[data-live-request-id]")
       ?? list?.querySelector<HTMLElement>(".live-elicitation-card[data-live-request-id]");
     if (!request) return false;
-    // Following keeps the list pinned to the bottom, so pause it before moving to the form.
+    // 追尾中は一覧が末尾に固定されるため、フォームへ移動する前に追尾を止める。
     const isInView = () => {
       const requestBounds = request.getBoundingClientRect();
       const listBounds = list!.getBoundingClientRect();
@@ -952,7 +952,7 @@ export function useConversationMessageColumn({
   }, [conversation, refresh, sessionId, projection.keys, loadPage, pageOwner, isBrowsing, tailNavigatorTargets, totalCount, threadPageSignature, followLatest, following.pauseMessageListFollowing]);
   const onJumpToReply = useCallback(async (seq: number, sentKey: string | undefined, isCurrent: () => boolean) => {
     if (!displayEnabled.current || !isCurrent() || (threadIndexes && !threadIndexes.includes(seq))) return;
-    // A live bridge or queued row may temporarily occupy the same index; only a saved row can be a source.
+    // 一時的なライブ応答行やキューの行が同じ位置を占めることがある。返信元にできるのは保存済みの行だけ。
     if (!savedReplySourceIndexes.includes(seq)) {
       const revision = await loadPage(pageAround(seq), undefined, { seq, isCurrent });
       if (revision === undefined || revision !== pageRevision.current || activePageOwner.current !== pageOwner || !isCurrent()) return;
@@ -1077,7 +1077,7 @@ export function useConversationMessageColumn({
     if (!enabled || pending.owner !== pageOwner || !list || pending.element.isConnected) return;
     const active = list.ownerDocument.activeElement;
     if (active !== list && active !== list.ownerDocument.body) return;
-    // A queued control can disappear or become disabled while the input row stays mounted.
+    // 入力行がマウントされたままでも、キューの操作ボタンが消えたり無効になったりする場合がある。
     const status = Array.from(list.querySelectorAll<HTMLElement>("[data-queue-receipt-id]")).find((element) => element.dataset.queueReceiptId === pending.id);
     const button = status?.querySelector<HTMLButtonElement>(`button[data-queue-move="${pending.direction}"]`);
     (button && !button.disabled ? button : status ?? list).focus({ preventScroll: true });

@@ -140,9 +140,9 @@ import type { SessionHtmlPreviewRequest, SessionHtmlPreviewResult } from "../fil
 import type { MainSessionTarget } from "../session/session-target.js";
 
 export type WithMateWindowNavigationApi = {
-  /** Home main frame only. Restart at the first page if a continuation is refused; do not publish partial pages. */
+  /** Home のメインフレーム専用。続きの取得が拒否されたら先頭ページからやり直し、一部のページだけを表示に反映しない。 */
   listHomeCrewPage(request?: OpenSessionWindowIdsPageRequest | null): Promise<HomeCrewPageResult>;
-  /** Home main frame only. Main resolves targets and confirmation from this exact member identity. */
+  /** Home のメインフレーム専用。Main はこのメンバーの厳密な識別情報を基に操作対象と確認内容を決める。 */
   showHomeCrewContextMenu(request: HomeCrewContextMenuRequest): Promise<SessionMonitorContextMenuResult>;
   showSessionFilePreviewContextMenu(request: SessionFilePreviewContextMenuRequest): Promise<SessionFilePreviewContextMenuResult>;
   listSessionFilePreviewWindows(): Promise<SessionFilePreviewWindowGroup[]>;
@@ -251,9 +251,9 @@ export type WithMateWindowSessionApi = {
   setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
   setSessionTitle(request: SetSessionTitleRequest): Promise<SetSessionTitleResult>;
   promoteSessionToOverallCoordinator(sessionId: string, incarnationId: string): Promise<SessionSummary>;
-  /** Reads the saved body of the identified Main or Auxiliary owned by this Window. */
+  /** この Window が所有する Main または Auxiliary を識別し、保存済みの本文を読み取る。 */
   getSessionInstructions(target: import("../session/session-instructions.js").SessionInstructionsTarget): Promise<string>;
-  /** Replaces the saved body for future Turns; an empty body clears it. */
+  /** 以降の Turn に使う保存済み本文を置き換える。空の本文を指定すると消去する。 */
   setSessionInstructions(target: import("../session/session-instructions.js").SessionInstructionsTarget, body: string): Promise<{ byteLength: number }>;
   getCrewDeletionStatus(sessionId: string, incarnationId: string): Promise<import("../session/session-crew-deletion.js").CrewDeletionStatus>;
   setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Promise<void>;

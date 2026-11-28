@@ -1336,7 +1336,7 @@ it("Session generationごとのclientを分離しsettings-only clientをunbound�
   // impact = "CopilotがCharacterの現行定義を受け取れないか、可変contextの配置を誤る"
   // distinction = "composer単体ではなくCopilotのsession設定へ渡す値を実際のcompose経路から確認する"
   // @end-test-value
-  /** Copilot appends fixed instructions to its system config and switches cache key when they are cleared. */
+  /** Copilot は固定指示をシステム設定に追記し、固定指示が消去されるとキャッシュキーを切り替える。 */
   it("固定指示とCharacterをCopilot systemMessageへ渡し、現在日時はinput側に留める", () => {
     const input = { ...createRunSessionInput(), sessionInstructions: "Copilot 固定指示 🧭" };
     input.session.characterRuntimeSnapshot = {

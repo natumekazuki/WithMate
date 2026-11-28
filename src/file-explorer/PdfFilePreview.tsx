@@ -62,7 +62,7 @@ export function PdfFilePreview({ ref, bytes, name, actionsContainer, onCopyText,
     if (!initializedRef.current || !hasSelection) return;
     const requestId = crypto.randomUUID();
     pendingSelectionAction.current = { requestId, action };
-    // The enabled state is only a hint: read the live range after this host gesture.
+    // 有効状態は目安にすぎない。このホスト側の操作を受けて、その時点の選択範囲を読み取る。
     frameRef.current?.contentWindow?.postMessage({ channel: PDF_READER_CHANNEL, instanceId,
       type: "get-selection", requestId } satisfies PdfReaderHostMessage, PDF_READER_ORIGIN);
   };
@@ -120,7 +120,7 @@ export function PdfFilePreview({ ref, bytes, name, actionsContainer, onCopyText,
         setHasSelection(Boolean(message.text.trim()));
         if (!message.text.trim()) pendingSelectionAction.current = null;
       } else if (message.type === "open-link") {
-        // A document message can propose a destination, never invoke a host API.
+        // 文書からのメッセージで遷移先は提案できるが、ホスト API は呼び出せない。
         setPendingLink((current) => current ?? message.target);
       }
     };

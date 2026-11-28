@@ -234,7 +234,7 @@ function readySessionClause(idExpression: string): string {
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
-// Match decodeMessage's retained rows without hydrating every message or artifact.
+// メッセージやアーティファクトを一件ずつ復元せず、decodeMessage が残す行と一致させる。
 const NORMALIZED_MESSAGE_PREDICATE = `(CASE WHEN role IN ('user', 'assistant') THEN 1
   WHEN json_valid(body) THEN
     json_type(body) = 'object' AND json_extract(body, '$.role') IN ('user', 'assistant')
@@ -269,7 +269,7 @@ const V6_HOME_CHARACTER_NAME_EXPRESSION = `CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EX
   THEN ${v6SnapshotJsonValue("$.name")}
   ELSE ${v6RuntimeJsonValue("$.characterName")}
 END`;
-// Shared by Main Session summaries and conversation switcher candidates (sessions_v6 alias: s).
+// Main Session の要約と、会話切り替えの候補で共用する（sessions_v6 の別名は s）。
 export const MAIN_SESSION_CHARACTER_AND_RUN_COLUMNS = `
   ${V6_HOME_CHARACTER_NAME_EXPRESSION} AS character_name,
   CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
@@ -391,7 +391,7 @@ function relatedAuxiliaryFromRow(row: RelatedAuxiliaryRow): RelatedSession {
   const auxiliary = parseAuxiliarySessionSummaryRow(row);
   if (!auxiliary) throw new Error("The saved Auxiliary summary is invalid.");
   assertSessionRole(row.main_session_role);
-  // The parent's identity and relationship are needed, but its summary isn't.
+  // 親の識別情報と関係は必要だが、要約は不要。
   return resolveRelatedAuxiliary(auxiliary, {
     id: row.parent_session_id, incarnationId: row.main_incarnation_id,
     ...normalizeSessionRelationship({ id: row.parent_session_id, sessionRole: row.main_session_role,
@@ -542,7 +542,7 @@ export class SessionStorageV6 {
     return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummary(row)));
   }
 
-  /** Executes in one Worker read: only the saved actor, requested target or page is materialized. */
+  /** Worker の読み取り 1 回で処理し、保存済みの実行主体と要求された対象またはページだけを具体化する。 */
   readSessionManagementScope(reference: SessionTarget, selection: SessionManagementSelection): SessionManagementScope {
     const actor = this.getRelatedSession(reference);
     if (!actor || !matchesRelatedSession(actor, reference)) return { actor: null };
@@ -571,7 +571,7 @@ export class SessionStorageV6 {
     const clauses = [readySessionClause("s.id")];
     const params: string[] = [];
     if (!query.allCrews) {
-      // root_session_id is initialized for legacy roots and normalized by the Session writer.
+      // 旧形式のルートでは root_session_id を初期化済みで、Session の書き込み処理がこの値を正規化する。
       clauses.push("s.root_session_id = ?");
       params.push(query.rootSessionId ?? actor.rootSessionId);
     }
@@ -612,7 +612,7 @@ export class SessionStorageV6 {
       }
       const from = "FROM auxiliary_sessions a JOIN sessions_v6 s ON s.id = a.parent_session_id";
       const filter = `WHERE ${where.join(" AND ")}`;
-      // Count doesn't need draft order or any summary columns.
+      // 件数の取得に、ドラフトの並び順や要約の列は不要。
       auxiliaryCount = (this.db.prepare(`SELECT COUNT(*) AS count ${from} ${filter}`).get(...args) as { count: number }).count;
       const auxiliaryOffset = Math.max(0, offset - mainCount);
       if (entries.length < limit && auxiliaryOffset < auxiliaryCount) {
@@ -729,7 +729,7 @@ export class SessionStorageV6 {
     const seenCharacterIds = new Set<string | null>();
     const usage: SessionCharacterUsage[] = [];
     for (const row of rows) {
-      // Deduplicate SQL IDs before owner recovery, which has different whitespace rules.
+      // 空白の扱いが異なる所有者の復元処理より前に、SQL で取得した ID の重複を除く。
       if (seenCharacterIds.has(row.character_id)) {
         continue;
       }
@@ -796,7 +796,7 @@ export class SessionStorageV6 {
     return this.readSessionSummary(sessionId, false);
   }
 
-  /** Exact consumer read; a saved Session still being initialized is not visible. */
+  /** 利用側が対象を厳密に読み取るための処理。保存済みでも、初期化中の Session は取得できない。 */
   getReadySessionSummary(sessionId: string): SessionSummary | null {
     return this.readSessionSummary(sessionId, true);
   }

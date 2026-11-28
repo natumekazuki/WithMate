@@ -7,7 +7,7 @@ import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
 import { buildProviderAgentRuntimeBindingEnv, mergeDefinedProviderEnv } from "../provider-agent-runtime-binding.js";
 import { APPROVAL_REVIEW_INSTRUCTIONS, approvalReviewDecisionSchema, type OpenApprovalReviewer } from "../approval-reviewer.js";
 
-// The bundled Claude CLI validates --json-schema with draft-07.
+// 同梱の Claude CLI は --json-schema を draft-07 で検証する。
 const providerSchema = z.toJSONSchema(approvalReviewDecisionSchema, { target: "draft-07" });
 
 function nextReviewInput() {
@@ -51,7 +51,7 @@ export const createClaudeApprovalReviewer = (runtime: ClaudeReviewRuntime): Open
     systemPrompt: { type: "preset", preset: "claude_code", append: APPROVAL_REVIEW_INSTRUCTIONS, snapshot: false },
     outputFormat: { type: "json_schema", schema: providerSchema },
     abortController: controller,
-    // Do not copy SDK logs, transcripts, or MCP credentials into provider diagnostics.
+    // SDK ログ、トランスクリプト、MCP 認証情報はプロバイダー診断に転記しない。
     spawnClaudeCodeProcess: (options) => {
       controller.signal.throwIfAborted();
       const child = runtime.spawn(options.command, options.args, { cwd: options.cwd, env: options.env,
@@ -60,7 +60,7 @@ export const createClaudeApprovalReviewer = (runtime: ClaudeReviewRuntime): Open
       child.stderr?.resume();
       childExited = new Promise<void>((resolve) => {
         child.once("close", resolve);
-        // AbortError may precede exit. Only a failed spawn has no child to await.
+        // AbortError は exit より先に届くことがある。待機すべき子プロセスがないのは、起動に失敗した場合だけ。
         child.once("error", () => { if (child.pid === undefined) resolve(); });
       });
       return child;
@@ -72,7 +72,7 @@ export const createClaudeApprovalReviewer = (runtime: ClaudeReviewRuntime): Open
       input.resolve(null);
       controller.abort();
       try { stream?.close(); }
-      catch { /* The owned child's close event is the stop confirmation. */ }
+      catch { /* 管理下の子プロセスの close イベントで停止を確認する。 */ }
     }
     return childExited;
   };
@@ -102,7 +102,7 @@ export const createClaudeApprovalReviewer = (runtime: ClaudeReviewRuntime): Open
             throw new Error("Claude native Auto Review is not active.");
           }
           if (!message.model || (nativeModel && message.model !== nativeModel)) throw new Error("Claude reviewer model changed.");
-          // The native init resolves catalog aliases such as sonnet to the active model.
+          // ネイティブの初期化通知で、sonnet などのカタログ上の別名に対応する実際のモデルを取得する。
           nativeModel = message.model;
         }
         if (message.type === "assistant" && message.parent_tool_use_id === null

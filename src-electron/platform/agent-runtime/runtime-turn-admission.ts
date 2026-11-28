@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-/** Serializable authority for work crossing the main/Worker boundary. */
+/** Main と Worker の境界を越える処理のための、シリアライズ可能な権限情報。 */
 export type WorkerRuntimeTurnAdmission = {
   state: SharedArrayBuffer;
   binding?: { state: SharedArrayBuffer; expiresAtMs: number | null };
@@ -8,7 +8,7 @@ export type WorkerRuntimeTurnAdmission = {
 
 export type RuntimeTurnAdmission = WorkerRuntimeTurnAdmission & {
   isCurrent?: () => boolean;
-  /** Diagnostic-only; reporting must not alter the operation or its public response. */
+  /** 診断専用。報告によって操作や公開応答が変わってはならない。 */
   onOperationError?: (error: unknown) => void;
 };
 
@@ -44,18 +44,18 @@ export function assertRuntimeTurnAdmission(): void {
   }
 }
 
-/** Transfers only the shared revocation flags and expiry, not the credentials or callbacks. */
+/** 共有の失効フラグと有効期限だけを渡し、認証情報やコールバックは渡さない。 */
 export function currentWorkerRuntimeTurnAdmission(): WorkerRuntimeTurnAdmission | undefined {
   const context = admission.getStore();
   return context && { state: context.state, ...(context.binding ? { binding: context.binding } : {}) };
 }
 
-/** Accepted durable work is no longer owned by the initiating runtime Turn. */
+/** 受理されて永続化される処理は、開始したランタイムの Turn の所有から離れる。 */
 export function runWithoutRuntimeTurnAdmission<T>(operation: () => T): T {
   return admission.exit(operation);
 }
 
 export function reportRuntimeTurnOperationError(error: unknown): void {
   try { admission.getStore()?.onOperationError?.(error); }
-  catch { /* Diagnostics do not change confirmed effects or public errors. */ }
+  catch { /* 診断は確認済みの副作用や公開エラーを変えない。 */ }
 }

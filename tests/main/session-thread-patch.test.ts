@@ -322,9 +322,9 @@ test("SessionPersistenceService deferred thread patchはcacheを安全に投影�
         updatedAt: SECOND_TIME,
       });
       await reachedPromise;
-      // The storage commit already happened. Mutate only the in-memory projection
-      // while the returned committed row is deferred; this avoids coupling the
-      // assertion to SessionPersistenceService's mutation queue.
+      // ストレージへのコミットは完了している。コミット済みの行を返す処理を保留する間に、
+      // メモリ上の投影だけを変更する。こうするとアサーションが
+      // `SessionPersistenceService` の変更キューに依存しない。
       cached = [];
       release();
       assert.equal((await update)?.threadId, "service-thread-new");

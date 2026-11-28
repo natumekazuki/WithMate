@@ -122,7 +122,7 @@ type StorageInstances = Record<keyof typeof STORE_METHODS, object>;
 let instances: StorageInstances | null = null;
 let conversationQueries: ConversationQueryCoordinator | null = null;
 
-/** A Worker admission flag is one shared integer, stored by its authority owner. */
+/** Worker の受付フラグは一つの共有整数で、権限の所有者が値を格納する。 */
 function isRevocationState(value: unknown): value is SharedArrayBuffer {
   return value instanceof SharedArrayBuffer && value.byteLength === Int32Array.BYTES_PER_ELEMENT;
 }
@@ -194,7 +194,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
       if ((input.store === "settings" || input.store === "coordination" || input.store === "execution" || input.store === "instructions" || input.store === "localPr" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory") && input.runtimeTurnAdmission !== undefined) {
         const authority = input.runtimeTurnAdmission;
-        // Validate the exact flags received at the Worker boundary before evaluating them.
+        // Worker の境界で受け取ったフラグそのものを、評価する前に検証する。
         if (!authority || !isRevocationState(authority.state) || (authority.binding !== undefined && (
           !authority.binding || !isRevocationState(authority.binding.state)
           || (authority.binding.expiresAtMs !== null && !Number.isFinite(authority.binding.expiresAtMs))

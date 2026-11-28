@@ -18,7 +18,7 @@ export type SessionExecutionOptions = Readonly<{
   customAgentName: string;
 }>;
 
-/** Public per-message selections; the recipient supplies saved permissions. */
+/** メッセージごとに公開指定できる項目。保存済みの権限は宛先側から取得する。 */
 export type SessionMessageExecutionOptions = Partial<Pick<SessionExecutionOptions, "model" | "reasoningEffort">>;
 
 export function captureSessionExecutionOptions(source: Pick<Session, keyof SessionExecutionOptions>): SessionExecutionOptions {

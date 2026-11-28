@@ -16,7 +16,7 @@ import { assertRuntimeTurnAdmission, runWithoutRuntimeTurnAdmission, RuntimeTurn
 import { prepareLocalPrCiCheckout, readLocalPrCiDefinition } from "./local-pr-ci-definition.js";
 import { runLocalPrCiShell } from "./local-pr-ci-process.js";
 
-/** The CI subset shares the exact GUI and Agent operation contracts. */
+/** CI の操作は、GUI と Agent で共通の操作契約に従う。 */
 export type LocalPrCiOperation = Extract<LocalPrOperation, `pr_ci_${string}`>;
 type Repository = { repositoryId: string; workspacePath: string };
 type Options = { userDataPath: string; onChanged?: (repositoryId: string, prId: string) => void };
@@ -28,7 +28,7 @@ const logLimit = 2 * 1024 * 1024;
 const pageSize = 16 * 1024;
 const truncationNotice = Buffer.from("\n[WithMate CI log limit reached]\n");
 
-/** Main-owned Local PR CI lifecycle. Authorization and PR/version resolution belong to the dispatcher. */
+/** Main が管理する Local PR CI のライフサイクル。認可と PR・版の解決はディスパッチャーが担う。 */
 export class LocalPrCiService {
   private readonly root: string;
   private readonly history: string;
@@ -46,12 +46,12 @@ export class LocalPrCiService {
     this.work = join(this.root, "work");
   }
 
-  /** Recover persisted running records; never signal PIDs taken from a previous app instance. */
+  /** 保存済みの実行中レコードを復旧する。前回のアプリ起動時に保存された PID にはシグナルを送らない。 */
   initialize(): Promise<void> {
     return this.initialization ??= this.loadRecords();
   }
 
-  /** Refuse new work, interrupt active runs, and await confirmed completion before app cleanup. */
+  /** 新規実行を拒否し、実行中の処理を中断し、終了を確認してからアプリの後処理に進む。 */
   async shutdown(): Promise<void> {
     this.accepting = false;
     await this.initialize();
@@ -66,7 +66,7 @@ export class LocalPrCiService {
     }
   }
 
-  /** Execute a CI operation for an already-resolved version and repository; never resolve a mutable ref. */
+  /** 解決済みの版とリポジトリに対して CI 操作を実行する。変更可能な ref は解決しない。 */
   async execute<T extends LocalPrCiOperation>(
     repository: Repository, prId: string, version: LocalPrVersion, operation: T, input: LocalPrInput<T>,
   ): Promise<LocalPrResult<T>> {
@@ -101,7 +101,7 @@ export class LocalPrCiService {
       if (operation === "pr_ci_cancel" && previous) {
         const task = this.active.get(previous.run.id);
         if (!task || previous.run.state !== "running") return failure("ci_not_running", "This CI run is not running.");
-        // Startup recovery can outlive the caller's captured Turn; check before sending the stop request.
+        // 起動時の復旧中に呼び出し元の捕捉済み Turn が終わることがあるため、停止要求の送信前に確認する。
         assertRuntimeTurnAdmission();
         effect = "unknown";
         this.requestStop(task, "canceled");
@@ -118,12 +118,12 @@ export class LocalPrCiService {
         return failure("ci_already_running", "CI is already running for this PR version.");
       }
 
-      // Reserve before any await so concurrent requests cannot start two runs for the same tuple.
+      // 並行する要求が同じ組に対して二重に実行を始めないよう、いずれの await よりも前に予約する。
       const record: RecordEntry = { repositoryId: repository.repositoryId, prId, mergeBaseCommit: version.mergeBaseCommit, run: {
         id: randomUUID(), version: version.version, headCommit: version.headCommit, targetCommit: version.targetCommit,
         state: "running", startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, error: null,
       } };
-      // Git reads can outlive the captured Turn. Once reserved, CI is an app-owned job.
+      // Git の読み取り中に捕捉済みの Turn が終わることがある。予約後の CI はアプリが所有するジョブとなる。
       assertRuntimeTurnAdmission();
       effect = "unknown";
       const { saved, run } = runWithoutRuntimeTurnAdmission(() => this.start(record, repository.workspacePath, commands));
@@ -135,7 +135,7 @@ export class LocalPrCiService {
     }
   }
 
-  /** Create managed directories and recover only complete, schema-valid records. */
+  /** 管理ディレクトリを作成し、完全かつスキーマに適合したレコードだけを復旧する。 */
   private async loadRecords(): Promise<void> {
     await directory(this.root);
     await directory(this.history);
@@ -144,7 +144,7 @@ export class LocalPrCiService {
       if (!entry.isDirectory() || !z.uuid().safeParse(entry.name).success) continue;
       const path = this.runPath(entry.name, "run.json");
       const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return null; // Reservation was not published before a crash.
+        if (error.code === "ENOENT") return null; // クラッシュ前に予約が公開されなかった。
         throw error;
       });
       if (!info) continue;
@@ -159,7 +159,7 @@ export class LocalPrCiService {
     }
   }
 
-  /** Publish a durable reservation before executing Git preparation or any repository command. */
+  /** Git の準備やリポジトリに対するコマンドの実行より先に、永続化された予約を公開する。 */
   private start(record: RecordEntry, workspacePath: string, commands: string[]): { saved: Promise<void>; run: LocalPrCiRun } {
     const run = record.run;
     const task: Active = { controller: new AbortController(), done: Promise.resolve() };
@@ -175,12 +175,12 @@ export class LocalPrCiService {
       this.records.delete(run.id);
       throw error;
     }).finally(() => this.active.delete(run.id));
-    // A Window does not own this promise; terminal storage failure still appears in the service state.
+    // この Promise はウィンドウの所有物ではない。最終状態の保存失敗はサービスの状態に反映される。
     void task.done.catch(() => undefined);
     return { saved, run };
   }
 
-  /** Execute and save the final state only after closing the log and confirming process ownership. */
+  /** ログを閉じ、プロセスの所有状態を確認してから、実行の最終状態を保存する。 */
   private async run(record: RecordEntry, task: Active, workspacePath: string, commands: string[]): Promise<void> {
     const log = createWriteStream(this.runPath(record.run.id, "output.log"), { flags: "a" });
     const flushed = finished(log).then(() => true, () => false);
@@ -212,7 +212,7 @@ export class LocalPrCiService {
         if (task.reason) {
           state = task.reason;
         } else {
-          // If native acquisition or release throws, leave the checkout intact until ownership can be confirmed.
+          // ネイティブ側での取得や解放が例外を投げた場合は、所有状態を確認できるまでチェックアウトをそのまま残す。
           stopped = false;
           ({ state, exitCode, error, stopped } = await runLocalPrCiShell(work, checkout, commands, {
             signal: task.controller.signal, reason: () => task.reason,
@@ -246,22 +246,22 @@ export class LocalPrCiService {
     this.changed(record);
   }
 
-  /** Allocate a checkout directory owned only by this run; history stays under userData. */
+  /** この実行専用のチェックアウト先を割り当てる。履歴は引き続き userData に保持する。 */
   private async createWorkDirectory(id: string): Promise<string> {
-    // Git for Windows can fail to write objects under a deep userData path even with core.longpaths.
+    // core.longpaths が有効でも、Git for Windows は深い userData のパスでオブジェクトを書き込めない場合がある。
     if (process.platform === "win32") return mkdtemp(join(tmpdir(), "withmate-pr-ci-"));
     const work = join(this.work, id);
     await mkdir(work, { mode: 0o700 });
     return work;
   }
 
-  /** Shutdown can supersede a pending cancellation; neither is a terminal result by itself. */
+  /** シャットダウンは処理待ちのキャンセルを上書きできる。どちらの要求も、それだけで最終結果にはならない。 */
   private requestStop(task: Active, reason: StopReason): void {
     if (!task.reason || reason === "interrupted") task.reason = reason;
     task.controller.abort();
   }
 
-  /** Expose bounded UTF-16 log pages without accepting any caller-supplied filesystem path. */
+  /** 呼び出し元からファイルシステムのパスを受け取らず、UTF-16 のログを上限付きのページで返す。 */
   private async readLog(id: string, offset: number): Promise<LocalPrData<"pr_ci_log">> {
     const path = this.runPath(id, "output.log");
     const info = await lstat(path);
@@ -272,7 +272,7 @@ export class LocalPrCiService {
     return { log: content.slice(offset, end), nextOffset: Math.max(offset, end), hasMore: end < content.length };
   }
 
-  /** Atomically replace a run record; never overwrite it with a partially written JSON file. */
+  /** 実行レコードはアトミックに置き換え、書き込み途中の JSON ファイルで上書きしない。 */
   private async save(record: RecordEntry): Promise<void> {
     const path = this.runPath(record.run.id, "run.json");
     const temp = `${path}.${randomUUID()}.tmp`;
@@ -284,18 +284,18 @@ export class LocalPrCiService {
     }
   }
 
-  /** All run directories use service-generated or previously validated record IDs. */
+  /** 実行ディレクトリには、サービスが生成したか、検証済みのレコード ID だけを使う。 */
   private runPath(id: string, name: "run.json" | "output.log"): string {
     return join(this.history, id, name);
   }
 
-  /** Event delivery is best-effort and cannot change the persisted result. */
+  /** イベントの配送はベストエフォートであり、永続化された結果は変わらない。 */
   private changed(record: RecordEntry): void {
-    try { this.options.onChanged?.(record.repositoryId, record.prId); } catch { /* A disconnected Window is not a CI failure. */ }
+    try { this.options.onChanged?.(record.repositoryId, record.prId); } catch { /* ウィンドウの切断は CI の失敗ではない。 */ }
   }
 }
 
-/** Only existing ordinary directories may be reused as managed CI roots. */
+/** 既存の通常ディレクトリだけを管理対象の CI ルートとして再利用できる。 */
 async function directory(path: string): Promise<void> {
   await mkdir(path, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "EEXIST") throw error;
@@ -303,12 +303,12 @@ async function directory(path: string): Promise<void> {
   if (!(await lstat(path)).isDirectory()) throw new Error("Invalid managed CI directory.");
 }
 
-/** Map boundary failures to the common Local PR result. */
+/** 境界での失敗を共通の Local PR の結果に変換する。 */
 function failure(code: string, message: string, effect: LocalPrFailure["effect"] = "none"): LocalPrFailure {
   return { ok: false, code, message, effect };
 }
 
-/** Preserve the reason without exposing a raw stack. */
+/** 生のスタックトレースは公開せず、理由を保持する。 */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Local PR CI failed.";
 }

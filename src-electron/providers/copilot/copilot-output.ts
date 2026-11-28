@@ -1,7 +1,7 @@
 import type { SessionEvent } from "@github/copilot-sdk";
 import { projectProviderOutput, type ProviderOutputTextUnit } from "../../../src-shared/session/provider-output.js";
 
-/** Native identity, not text equality, determines updates. Phases are deliberately not Codex phases. */
+/** 更新の判定には、テキストの一致ではなくネイティブ側の識別情報を使う。フェーズは意図的に Codex と区別する。 */
 export class CopilotOutputProjection {
   private readonly units = new Map<string, ProviderOutputTextUnit>();
   private readonly seen = new Set<string>();

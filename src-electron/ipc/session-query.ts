@@ -372,7 +372,7 @@ export function registerSessionQueryHandlers(
           "Additional directory validation IPC is only available from the target Session window.",
         );
       }
-      // Windows rooted paths without a drive depend on the process's current drive.
+      // ドライブ指定のない Windows のルート付きパスは、プロセスの現在のドライブに依存する。
       if (process.platform === "win32" && typeof targetPath === "string" && path.parse(targetPath).root.length === 1) {
         return { valid: false, reason: "not-absolute" };
       }

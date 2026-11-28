@@ -16,7 +16,7 @@ export type CodexProjectionStart = {
   diagnosticTrace?: boolean;
 };
 export type CodexProjectionProgress = {
-  /** Scalar live frame; collection content is delivered only through changes. */
+  /** ライブ状態のスカラー項目を伝える。コレクションの内容は changes でのみ伝える。 */
   state: LiveSessionRunState;
   changes: RunSessionTurnProgressChanges;
 };

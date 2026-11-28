@@ -16,7 +16,7 @@ function managedServerUrls(binding: ProviderAgentRuntimeBindingProjection): [str
 
 export function buildCodexManagedHttpMcpArguments(binding: ProviderAgentRuntimeBindingProjection | null | undefined): string[] {
   if (!binding?.managedMcp) return [];
-  // Codex deep-merges config tables; private HTTP keys keep old stdio fields out.
+  // Codex は設定テーブルを再帰的にマージする。HTTP 専用のキーを使い、旧 stdio フィールドが混入しないようにする。
   return [
     ...managedServerUrls(binding).flatMap(([name, url]) => [
       "-c",

@@ -1240,7 +1240,7 @@ export class FileRootGitChangesService {
         throw new Error(emptyTreeResult.stderr || "Git empty tree identity could not be resolved.");
       }
 
-      // Let Git quote every path and carry the original index mode into the isolated intent-to-add entries.
+      // 各パスの引用処理は Git に任せ、元の index のモードを隔離した intent-to-add エントリに引き継ぐ。
       const intentIndexResult = await this.#runGitCommand(intentWorkTreePath, [
         `--git-dir=${gitDirectoryPath}`,
         `--work-tree=${intentWorkTreePath}`,

@@ -14,7 +14,7 @@ import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-sess
 import type { SessionInstructionsTarget } from "../../src-shared/session/session-instructions.js";
 import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
 
-/** Existing conversations survive additive migration, replacement errors and reopen without sharing instructions between owners. */
+/** 列の追加を伴う移行、置換エラー、再オープンを経ても既存の会話が維持され、所有者間で指示が共有されないことを確認する。 */
 it("persists exact UTF-8 instructions for Main and Auxiliary through the storage worker", async () => {
   const userDataPath = await mkdtemp(join(tmpdir(), "withmate-instructions-"));
   const dbPath = join(userDataPath, APP_DATABASE_V6_FILENAME);
@@ -33,7 +33,7 @@ it("persists exact UTF-8 instructions for Main and Auxiliary through the storage
   };
   let bundle = open();
   try {
-    // Seed a synthetic V6 database with existing owner rows, then emulate its pre-feature schema.
+    // 既存の所有者行を持つ合成 V6 データベースを作り、機能追加前のスキーマを再現する。
     await bundle.initialize();
     const storedParent = await bundle.stores.session.upsertSession({
       ...parent, threadId: "main-thread", messages: [{ role: "user", text: "saved message" }],
@@ -52,7 +52,7 @@ it("persists exact UTF-8 instructions for Main and Auxiliary through the storage
       db.close();
     }
 
-    // Reopening adds the columns without changing existing history, thread or draft.
+    // 再オープン時に列を追加しても、既存の履歴、スレッド、下書きは変わらない。
     bundle = open();
     await bundle.initialize();
     const { instructions, session, auxiliary: auxiliaryStore } = bundle.stores;
@@ -80,9 +80,9 @@ it("persists exact UTF-8 instructions for Main and Auxiliary through the storage
     assert.equal(await instructions.get(aux), auxBody);
     await bundle.client.close();
 
-    // Verify persisted bytes and clear one owner without touching the other after a worker restart.
+    // Worker を再起動した後、永続化された内容がバイト単位で一致することを確認し、もう一方の所有者に影響を与えず一方の指示を消去する。
     bundle = open();
-    // Queued before the new Worker is ready, so revocation deterministically precedes dispatch.
+    // 新しい Worker の準備完了前にキューへ入れるため、必ず実行の送出より先に失効が起きる。
     const state = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
     const pending = runWithRuntimeTurnAdmission({ state }, () => {
       const request = bundle.stores.instructions.set(main, "must not replace");

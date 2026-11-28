@@ -25,7 +25,7 @@ import {
   useImageViewport,
 } from "../../src/ui/image-viewport.js";
 
-// Structure assertions below are independent of the search consumer's source metadata.
+// 以下の構造のアサーションは、検索の利用側が使うソースメタデータに依存しない。
 function renderToStaticMarkup(element: React.ReactNode): string {
   return renderRawStaticMarkup(element).replace(/ data-md-(?:source|definition)-(?:start|end)="\d+"/g, "");
 }

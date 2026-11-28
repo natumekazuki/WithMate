@@ -73,7 +73,7 @@ export function createPdfReader(container: HTMLDivElement, pageContainer: HTMLDi
   const eventBus = new EventBus();
   const linkService = new ReaderLinkService(eventBus, callbacks);
   const findController = new PDFFindController({ eventBus, linkService });
-  // Supply a real Worker port: a worker load failure must not fall back to parsing on the UI thread.
+  // 実体のある Worker ポートを渡す。Worker の読み込みに失敗しても、UI スレッドでの解析に切り替えてはいけない。
   const port = new Worker(workerUrl, { type: "module" });
   const worker = PDFWorker.create({ port });
   const options = {
@@ -97,8 +97,8 @@ export function createPdfReader(container: HTMLDivElement, pageContainer: HTMLDi
     void task?.destroy().catch(() => undefined);
   }, { signal: abort.signal });
 
-  // The standard annotation layer displays existing appearances and comments, without form inputs or scripting.
-  // Relative file links are otherwise omitted by PDF.js when no network base URL is supplied.
+  // 標準の注釈レイヤーでは既存の外観とコメントを表示するが、フォーム入力やスクリプト実行は行わない。
+  // ネットワークの基準 URL が指定されていない場合、この処理がなければ PDF.js は相対ファイルリンクを省く。
   eventBus.on("annotationlayerrendered", async ({ pageNumber, error }: { pageNumber: number; error?: unknown }) => {
     if (error) { callbacks.error(messageOf(error)); return; }
     const pdf = viewer.pdfDocument;

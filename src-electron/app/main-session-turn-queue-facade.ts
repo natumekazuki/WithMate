@@ -125,7 +125,7 @@ export class MainSessionTurnQueueFacade {
           { text: original.request.userMessage, attachments: original.attachments },
           { text: fixed.request.userMessage, attachments: fixed.attachments },
         );
-        // An exact retry retains the instruction's source; a changed retry's fixed input is a GUI edit.
+        // 同じ入力での再試行では指示の出所を維持し、変更して再試行した確定入力は GUI での編集として扱う。
         const fixedInputOrigin = changedSinceAcceptance ? origin : instructionOrigin;
         captured = { ...prepared, attachments: structuredClone(fixed.attachments),
           origin: { kind: "gui", operation: "send", targetSessionId: sessionId, targetIncarnationId: owner.incarnationId },
@@ -220,8 +220,8 @@ export class MainSessionTurnQueueFacade {
       prepared = await this.prepareExecution(session, request, () => this.readSession(sessionId), true, requested !== undefined);
       await assertActorCurrent?.();
     } catch (error) {
-      // Canonical lookup proved absence while this Session's intake was locked.
-      // No queue mutation was issued, so this reply can safely reject acceptance.
+      // この Session の受付をロックした状態で、正本を照会して対象が存在しないことを確認済み。
+      // キューへの変更を発行していないので、この応答では受理を拒否したと確定できる。
       throw new SessionTurnQueuePreflightRejectedError(error instanceof Error ? error.message : "Turn preflight failed.", { cause: error });
     }
     const sourceDisplayText = acceptedOrigin.kind === "session" ? this.deps.captureSourceDisplayText?.(acceptedOrigin) : undefined;

@@ -36,7 +36,7 @@ export function createCoordinationApi(
           if (live && !receivedEvent && request) listener(request);
         })
         .catch(() => {
-          /* Navigation failures are reported by the explicit open request. */
+          /* 画面遷移の失敗は、明示的に開く要求の結果として報告される。 */
         });
       return () => {
         live = false;

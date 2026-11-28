@@ -240,7 +240,7 @@ export function FileRootChangesPane({
 
   useEffect(() => {
     if (visible) {
-      // Resume an unfinished queue first; activation is coalesced into one trailing refresh.
+      // 未完了のキューを先に再開する。アクティブ化による更新は、その後の一回にまとめる。
       refresh();
       drainRefreshQueueRef.current();
     }

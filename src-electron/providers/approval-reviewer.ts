@@ -11,13 +11,13 @@ export const approvalReviewDecisionSchema = z.strictObject({
 export type ApprovalReviewDecision = z.infer<typeof approvalReviewDecisionSchema>;
 
 export type ApprovalReviewerConversation = {
-  /** Only the adapter's structured result channel may satisfy this contract. */
+  /** この契約を満たす結果は、アダプターの構造化結果チャネルからのみ受け取る。 */
   review(prompt: string): Promise<unknown>;
-  /** Idempotent. Completion confirms that the owned reviewer has stopped. */
+  /** 冪等。完了時には管理下のレビュアーが停止している。 */
   close(): void | Promise<void>;
 };
 
-/** Aborting the conversation signal starts cleanup, including during open. Reject only after it is safe to open a replacement. */
+/** 会話のシグナルを中断すると、開始処理中でも後片付けが始まる。代わりの会話を安全に開始できる状態になってから拒否する。 */
 export type OpenApprovalReviewer = (input: {
   selection: WithMateAutoReviewSettings;
   workspacePath: string;

@@ -333,7 +333,7 @@ describe("database-schema-v6", () => {
     }
   });
 
-  /** Fresh DBs install Local PR tables without making their absence in older V6 DBs a migration trigger. */
+  /** 新規 DB には Local PR テーブルを作成するが、旧 V6 DB での欠落は移行の条件にしない。 */
   it("withmate-v6.db 用の schema constants、fresh path、required tables を固定する", () => {
     assert.equal(APP_DATABASE_V6_FILENAME, "withmate-v6.db");
     assert.equal(APP_DATABASE_V6_SCHEMA_VERSION, 6);
@@ -440,7 +440,7 @@ describe("database-schema-v6", () => {
   // lifecycle = "permanent"
   // distinction = "TypeScript型はSQLite owner制約を保証しない"
   // @end-test-value
-  /** Retains the owner tables and adds independent instructions columns without changing history ownership. */
+  /** 所有者テーブルを維持し、履歴の所有関係を変えずに独立した指示の列を追加する。 */
   it("V6 project scope と session/message/turn の最小 schema を固定する", () => {
     const db = createV6Schema();
     try {
@@ -632,7 +632,7 @@ describe("database-schema-v6", () => {
     }
   });
 
-  /** Backfills legacy Auxiliary identity and initializes the new instructions column without changing legacy payload. */
+  /** 旧ペイロードを変更せず、旧 Auxiliary の識別情報を補完して新しい指示の列を初期化する。 */
   it("ensureV6Schema は旧 auxiliary_sessions の created_at を updated_at で backfill する", () => {
     const db = new DatabaseSync(":memory:");
     try {

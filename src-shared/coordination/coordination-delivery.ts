@@ -12,7 +12,7 @@ export type CoordinationNotification = {
   withdrawalReason: string | null;
 };
 
-/** Only saved Coordination metadata identifies a notification; ordinary JSON is authored text. */
+/** 通知を識別するのは保存済みの Coordination メタデータだけ。通常の JSON は作成者が書いた本文として扱う。 */
 export function readCoordinationNotification(input: SessionTurnQueueCapturedInput): CoordinationNotification | null {
   const delivery = input.coordination;
   if (!delivery) return null;

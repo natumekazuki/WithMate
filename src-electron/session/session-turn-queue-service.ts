@@ -14,7 +14,7 @@ export type SessionTurnQueueDispatchResult = {
 type ApplyStop = () => void;
 type CancelDispatchedRun = (onApply?: ApplyStop) => boolean;
 export type SessionTurnQueueDispatchControl = {
-  /** Bind the exact runtime run, or return false if its claim was already canceled. */
+  /** 該当するランタイム実行をひも付ける。その実行権がすでに取り消されていれば false を返す。 */
   bindCancel(cancel: CancelDispatchedRun): boolean;
 };
 type NormalTurnClaim = {
@@ -103,8 +103,8 @@ export class SessionTurnQueueService {
           this.wake(receipt.sessionId);
         }
       })().catch(() => {
-        // The existing queue records pre-dispatch recovery or an unknown outcome.
-        // An accepted operation never creates a second receipt to hide a failure.
+        // 送出前の復旧や結果不明の状態は、既存のキューに記録する。
+        // 受付済みの操作では、失敗を隠すために 2 件目の受付レコードを作らない。
       }));
     } else this.wake(receipt.sessionId);
   }
@@ -112,8 +112,8 @@ export class SessionTurnQueueService {
   reconcileKnownReceipt(receipt: SessionTurnQueueReceipt): void {
     this.adoptOwner(receipt);
     this.rememberCanonicalClaim(receipt);
-    // Receipt reads can wake recovered work, but must not invalidate the read
-    // itself through another queue-change notification.
+    // 受付レコードの読み取りから復旧した処理を再開できるが、キュー変更を再通知して
+    // その読み取り自体を無効化してはならない。
     this.wake(receipt.sessionId);
   }
 
@@ -253,8 +253,8 @@ export class SessionTurnQueueService {
               if (canonical.state === "starting" && canonical.sessionId === owner.sessionId
                 && canonical.incarnationId === owner.incarnationId && canonical.id === id
                 && canonical.inputTurnId === expectedTurnId && canonical.userMessageSeq === null) {
-                // No provider call has begun. Restore only this confirmed input
-                // claim, and resolve a lost restore reply by reading, not retrying.
+                // プロバイダーの呼び出しはまだ始まっていない。確認済みのこの入力の実行権だけを元に戻す。
+                // 応答を受け取れなかった場合は再試行せず、読み取りで結果を確認する。
                 await this.restoreInputClaim(owner, id, expectedTurnId, candidate.requestId);
                 if (this.isCurrentOwner(owner)) {
                   this.blocked.delete(owner.sessionId);
@@ -354,8 +354,8 @@ export class SessionTurnQueueService {
     void this.track(claim.then((receipt) => {
       if (receipt) this.dispatchClaim(receipt);
     }).catch(() => {
-      // A claim or terminal commit may have succeeded before its reply failed.
-      // Never retry an unknown dispatch or advance its followers automatically.
+      // 実行権の取得や終了状態のコミットは、応答の失敗前に成功していた可能性がある。
+      // 送出結果が不明なら、再送出も後続項目への自動進行も行わない。
       if (this.isCurrentOwner(owner)) this.blocked.add(sessionId);
     }));
   }
@@ -413,16 +413,16 @@ export class SessionTurnQueueService {
       return;
     }
     if (before.state !== "interrupted" || before.inputTurnId || this.recoverableClaim(claim)?.id !== claim.id) return;
-    // This is a new, exact reconciliation of a saved interrupted claim, not a
-    // repeat of either the original terminal write or provider dispatch.
+    // 保存済みの中断状態にある該当の実行権に対して、新たに整合を取る。
+    // 元の終了状態の書き込みやプロバイダーへの送出を繰り返す処理ではない。
     const changed = await this.deps.store.recoverInterrupted({ sessionId: claim.sessionId, incarnationId: claim.incarnationId, receiptId: claim.id });
     const canonical = await read();
     if (!canonical) return;
     this.rememberCanonicalClaim(canonical);
     if (isConfirmedTerminal(canonical)) this.notify(canonical);
     else if (canonical.state === "interrupted" && !canonical.inputTurnId) {
-      // The status of this attempt remains unknown, but the saved receipt
-      // proves there is no older claim left to dispatch.
+      // 今回の試行結果は不明のままだが、保存済みの受付レコードから、
+      // 送出待ちの古い実行権が残っていないことは確認できる。
       this.blocked.delete(claim.sessionId);
       this.lastClaim.delete(claim.sessionId);
       if (changed) this.publishRecoveredTurn(canonical);
@@ -445,7 +445,7 @@ export class SessionTurnQueueService {
   }
 
   private publishRecoveredTurn(receipt: SessionTurnQueueReceipt): void {
-    try { this.deps.onTurnRecovered?.(receipt); } catch { /* Observers do not own durable state. */ }
+    try { this.deps.onTurnRecovered?.(receipt); } catch { /* 監視側は永続状態を制御しない。 */ }
   }
 
   private reserveDispatch(receipt: SessionTurnQueueReceipt): void {
@@ -458,14 +458,14 @@ export class SessionTurnQueueService {
   private dispatchClaim(receipt: SessionTurnQueueReceipt): void {
     const { sessionId } = receipt;
     const claim = this.dispatching.get(sessionId)!;
-    // Reservation is recorded under the lock; dispatch only runs after it.
-    // A confirmed claim stays tracked through settlement even during shutdown.
+    // 予約はロック中に記録し、送出はその後に行う。
+    // 確定した実行権は、シャットダウン中でも処理の結果が確定するまで追跡する。
     void this.track(this.executeClaim(claim).catch(() => {
       if (this.isCurrentOwner(receipt)) this.blocked.add(sessionId);
     }).finally(() => {
       this.dispatching.delete(sessionId);
       claim.release();
-      // The next attempt still checks the actual runtime/cleanup guards.
+      // 次の試行でも、実際のランタイム状態と後片付けのガードを確認する。
       this.wake(sessionId);
     }));
   }
@@ -491,8 +491,8 @@ export class SessionTurnQueueService {
     } catch (error) {
       if (!this.isCurrentOwner(receipt)) return;
       this.blocked.add(sessionId);
-      // A concurrent queued Steer can have replaced lastClaim. Once the
-      // normal dispatch has returned, reconcile its own receipt, not the input.
+      // 並行するキュー経由の Steer が lastClaim を置き換えている可能性がある。
+      // 通常の送出から戻った後は、その送出自体の受付レコードを照合し、Steer 入力とは区別する。
       this.lastClaim.set(sessionId, receipt);
       this.notify(receipt);
       const canonical = await this.deps.store.settle(receipt, receipt.id, "interrupted", error instanceof Error ? error.message : "The execution outcome could not be confirmed.");
@@ -505,8 +505,8 @@ export class SessionTurnQueueService {
     try {
       await this.deps.store.settle(receipt, receipt.id, result.state, result.reason);
     } catch {
-      // Only canonical reads can resolve a lost commit reply; never repeat the
-      // mutation or provider dispatch to manufacture a known outcome.
+      // コミットの応答が失われた場合、結果を確かめる手段は正本の読み取りだけ。
+      // 結果を確定させるために、変更処理やプロバイダーへの送出を繰り返さない。
       if (!this.isCurrentOwner(receipt)) return;
       this.blocked.add(sessionId);
       this.notify(receipt);
@@ -539,7 +539,7 @@ export class SessionTurnQueueService {
       const origin = "captured" in owner ? (owner.accepted ?? owner.captured).origin : undefined;
       this.deps.onChanged?.({ sessionId: owner.sessionId, incarnationId: owner.incarnationId }, origin);
     } catch {
-      // Durable acceptance and queue progress do not depend on projection observers.
+      // 永続的な受付とキューの進行は、表示反映の監視側に依存しない。
     }
   }
 

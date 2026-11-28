@@ -51,7 +51,7 @@ test("Windows file-drop検証scriptは同じDataObjectのfile一覧とmarkerを�
       const script = Buffer.from(args.at(-1)!, "base64").toString("utf16le");
       const isolatedScript = script.replace("[System.Windows.Forms.Clipboard]::GetDataObject()", "$fixtureData");
       assert.notEqual(isolatedScript, script);
-      // Keep this test isolated from the user's system clipboard.
+      // テストをユーザーのシステムクリップボードから隔離する。
       assert.doesNotMatch(isolatedScript, /\[System\.Windows\.Forms\.Clipboard\]/u);
       const setup = String.raw`
 $ErrorActionPreference = "Stop"

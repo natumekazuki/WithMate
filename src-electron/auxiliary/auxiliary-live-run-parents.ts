@@ -45,7 +45,7 @@ export class AuxiliaryLiveRunParents {
     owner: object,
     run: () => Promise<T>,
   ): Promise<T> {
-    // Admission can publish cancellation before the first provider/session read.
+    // 受付処理は、プロバイダーや Session を初めて読み取る前にキャンセルを通知することがある。
     if (owner === this.options.getStorageOwner()) {
       this.parents.set(session.id, { parentSessionId: session.parentSessionId, owner });
     }
@@ -72,7 +72,7 @@ export class AuxiliaryLiveRunParents {
 
   public publish(sessionId: string, state: LiveSessionRunState | null, owner: object | null): void {
     if (owner !== this.options.getStorageOwner()) return;
-    // Resolve and deliver the terminal null before releasing its parent association.
+    // 親との関連付けを解放する前に、終了を示す null の配送先を解決して通知する。
     this.options.broadcastLiveSessionRun(sessionId, state);
     if (owner) this.releaseIfUnused(sessionId, owner);
   }

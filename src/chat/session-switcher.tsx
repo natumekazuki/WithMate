@@ -49,7 +49,7 @@ function switcherStatus(option: SessionSwitcherOption | undefined): string | und
   return option?.hasUnreadResult ? "Unread Result" : undefined;
 }
 
-/** Compact arrow/trigger switcher shared by context panes and Auxiliary panes. */
+/** コンテキストペインと Auxiliary ペインが共有する、矢印と開閉ボタンを備えた小型の切り替え UI。 */
 export function SessionSwitcher({
   ariaLabel,
   options,

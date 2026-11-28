@@ -11,7 +11,7 @@ type Submission = { kind: "send"; capture: Capture } | { kind: "resend"; request
 type Acceptance = Submission & { phase: "pending" | "unknown"; observedReceipt?: SessionTurnQueueReceipt };
 type ResendRecoveryRejection = { phase: "rejected"; incarnationId: string; reason: string };
 
-/** Retain the original capture until acceptance or rejection is known. */
+/** 受付または拒否が判明するまで、最初に取得した入力を保持する。 */
 export class SessionTurnAcceptance {
   readonly submissions = new SessionTurnSubmissions();
   private readonly requests = new Map<string, Acceptance | ResendRecoveryRejection>();
@@ -66,7 +66,7 @@ export class SessionTurnAcceptance {
       let receipt;
       try {
         receipt = await this.lookup(api, sessionId, submission);
-      } catch { /* Absence or failure cannot prove that a disconnected enqueue did not commit. */ }
+      } catch { /* 応答が途切れたキュー投入が確定していなかったことは、不在や確認失敗だけでは証明できない。 */ }
       const accepted = receipt ?? entry.observedReceipt;
       if (accepted) return this.settle(sessionId, entry, accepted, registry);
       entry.phase = "unknown";
@@ -94,8 +94,8 @@ export class SessionTurnAcceptance {
       if (submission.observedReceipt) return submission.observedReceipt;
       result = await this.enqueue(api, sessionId, submission);
       if (result.state === "rejected") {
-        // Same-ID retry preflight checks under the intake lock, but an identity conflict
-        // is also a rejection. Confirm there is no other receipt before releasing the capture.
+        // 同じ ID での再試行の事前検査は受付ロック内で行うが、識別情報の競合によっても拒否される。
+        // 取得済みの入力を解放する前に、別の受付情報がないことを確認する。
         result = await this.lookup(api, sessionId, submission) ?? submission.observedReceipt ?? result;
       } else {
         this.validateReceipt(sessionId, submission, result);

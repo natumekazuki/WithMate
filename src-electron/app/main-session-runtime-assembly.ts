@@ -36,7 +36,7 @@ export type MainSessionRuntimeAssemblyDeps = {
   };
 };
 
-/** Creates the main-process runtime with its owner guard and domain callback assembly. */
+/** 所有者のガードと業務処理のコールバックを組み合わせ、Main プロセスのランタイムを作る。 */
 export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): SessionRuntimeService {
   const assertOwner = (operation: string): void => deps.owner.assertActive(`Session runtime ${operation}`);
   const guarded = async <T>(operation: string, callback: () => T | Promise<T>): Promise<T> => {

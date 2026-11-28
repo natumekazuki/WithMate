@@ -97,7 +97,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     getSession: (sessionId) => guarded("session read", () => deps.auxiliary.getRuntimeSession(sessionId)),
     readSessionInstructions: (session) => guarded("instructions read", async () => {
       const source = await resolveSource(session);
-      // This assembly resolves only Auxiliary owners; never fall back to Main instructions.
+      // ここで解決する所有者は Auxiliary に限る。Main の指示本文で代用しない。
       if (source.kind !== "auxiliary") throw new Error("Auxiliary conversation owner is unavailable.");
       return deps.context.readSessionInstructions({
         kind: "auxiliary",

@@ -4,16 +4,16 @@ import { ComposerIcon, type ComposerIconName } from "./composer/composer-icon.js
 
 export type ConversationAttentionKind = "approval" | "input-required" | "input-requested" | "new-messages";
 
-/** One pending request or the unread state of the current target conversation. */
+/** 現在の対象会話の保留中リクエスト一件、または未読状態。 */
 export type ConversationAttentionEntry = { kind: ConversationAttentionKind; key: string };
 
 export type ConversationAttention = {
-  /** Main or the selected Auxiliary that owns the entries, e.g. `Main` or `Aux · Review`. */
+  /** 項目の持ち主である Main または選択中の Auxiliary の表示名。例：`Main`、`Aux · Review`。 */
   targetLabel: string;
   entries: readonly ConversationAttentionEntry[];
-  /** The target conversation is not rendered in the central area. */
+  /** 対象の会話が中央領域に描画されていないことを示す。 */
   isConversationHidden: boolean;
-  /** Shows the target conversation. Never answers, approves or resends. */
+  /** 対象の会話を表示する。回答・承認・再送は行わない。 */
   onShowConversation(kinds: readonly ConversationAttentionKind[]): void;
 };
 
@@ -35,7 +35,7 @@ function splitRequestIds(value: string): string[] {
   return value ? value.split("\n") : [];
 }
 
-/** Projects the live requests and unread state of one conversation into per-request entries. */
+/** 一つの会話の発生中のリクエストと未読状態を、個別の項目に変換する。 */
 export function resolveConversationAttentionEntries(input: {
   sessionId: string | null;
   approvalRequestId: string;
@@ -58,21 +58,21 @@ export function orderedAttentionKinds(entries: readonly ConversationAttentionEnt
 }
 
 export type AttentionAnnouncementState = {
-  /** Entries that the user has already been told about or has seen in the conversation. */
+  /** ユーザーに通知済み、または会話で表示済みの項目。 */
   known: ReadonlySet<string>;
-  /** Entries the current message was announced for; the message ends when any of them resolves. */
+  /** 現在の通知の対象項目。このうち一つでも解消したら通知を終了する。 */
   announced: ReadonlySet<string>;
   message: string;
-  /** Changes for every new announcement so an identical message is announced again. */
+  /** 同じ文面でも再度読み上げられるよう、新しい通知のたびに変える。 */
   serial: number;
 };
 
 export const initialAttentionAnnouncementState: AttentionAnnouncementState = { known: new Set(), announced: new Set(), message: "", serial: 0 };
 
 /**
- * Announces entries that appear while the conversation is hidden. Re-renders keep the
- * same entries known, resolved entries are forgotten, and entries that appeared while the
- * conversation was visible are treated as seen so returning to a preview stays quiet.
+ * 会話が非表示の間に出現した項目を通知する。再描画しても同じ項目は認識済みのままとし、
+ * 解消した項目は忘れる。会話の表示中に出現した項目は表示済みとして扱い、
+ * プレビューに戻ったときに通知し直さない。
  */
 export function advanceAttentionAnnouncement(
   state: AttentionAnnouncementState,
@@ -97,7 +97,7 @@ export function advanceAttentionAnnouncement(
     : { known, announced: isMessageCurrent ? state.announced : new Set(), message, serial: state.serial };
 }
 
-/** The single assistive-technology announcement for conversation attention. */
+/** 会話の要確認事項について支援技術に読み上げさせる単一の通知。 */
 export function ConversationAttentionAnnouncement({ attention }: { attention?: ConversationAttention }) {
   const stateRef = useRef(initialAttentionAnnouncementState);
   const entries = attention?.entries ?? [];
@@ -110,7 +110,7 @@ export function ConversationAttentionAnnouncement({ attention }: { attention?: C
   );
 }
 
-/** Icon-first entry point to the hidden conversation, shared by every Action Dock row. */
+/** すべての Action Dock 行で共有する、アイコンを主とした非表示の会話への入口。 */
 export function ConversationAttentionButton({ attention }: { attention?: ConversationAttention }) {
   if (!attention?.isConversationHidden || attention.entries.length === 0) return null;
   const kinds = orderedAttentionKinds(attention.entries);

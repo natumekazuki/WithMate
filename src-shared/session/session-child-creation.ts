@@ -14,7 +14,7 @@ export type CreateChildSessionRequest = {
   description?: string;
 };
 
-/** Accepted lifecycle input, including permissions resolved before persistence. */
+/** 受付済みのライフサイクル入力。永続化前に解決した権限を含む。 */
 export type ResolvedChildSessionCreation = CreateChildSessionRequest & {
   approvalMode: ApprovalMode;
   codexSandboxMode?: CodexSandboxMode;

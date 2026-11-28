@@ -32,7 +32,7 @@ test("Mermaidは再計算中の図を保持しstale結果を捨て最終errorを
     removeAttribute() {}
     async decode() {}
   }
-  // Simulate only browser geometry/resource loading; keep the real Mermaid parser and strict renderer.
+  // ブラウザーでの位置・寸法とリソース読み込みだけを模擬し、実際の Mermaid パーサーと厳格なレンダラーは維持する。
   const globals: Record<string, unknown> = {
     window: dom.window, document: dom.window.document, DOMParser: dom.window.DOMParser,
     XMLSerializer: dom.window.XMLSerializer, HTMLElement: dom.window.HTMLElement,
@@ -80,7 +80,7 @@ test("Mermaidは再計算中の図を保持しstale結果を捨て最終errorを
     });
   };
   try {
-    // Observe the real promises on both image pre-parsing and plain rendering paths.
+    // 画像の事前解析と通常の描画の両経路で、実際の Promise を観測する。
     mermaid.mermaidAPI = {
       ...originalMermaidAPI,
       getDiagramFromText: (...args) => {

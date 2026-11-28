@@ -12,7 +12,7 @@ import { enqueueLocalPrDiscussion } from "../../src-electron/local-pr/local-pr-s
 
 const requestId = "13d5a026-53b0-4d79-94bc-a63b7733ab10";
 
-/** Lost PR-send acknowledgment is resolved by the actual durable GUI receipt, without another Turn. */
+/** PR 相談送信の応答が失われても、実際に永続化された GUI 受付記録で結果を確定し、別の Turn は作らない。 */
 test("PR相談の応答喪失は通常Session queueで同じ受付へ収束する", async () => {
   const f = fixture();
   const input = { prId: requestId, version: 1, target: { kind: "main" as const, sessionId: f.session.id, incarnationId: f.session.incarnationId }, commentIds: [], message: "Review this change", requestId };

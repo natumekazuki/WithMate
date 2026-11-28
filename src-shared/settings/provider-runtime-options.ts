@@ -74,8 +74,8 @@ type ChildSessionPermissions = {
 const CHILD_PERMISSION_PROVIDERS = new Set(["codex", "claude", "copilot", "opencode"]);
 
 /**
- * Transfers the admitted Turn's public approval choice, not its native permission environment.
- * Captured restrictions without a destination representation fail before child creation.
+ * 受付済み Turn の公開承認設定を引き継ぐ。Provider 固有の権限環境は引き継がない。
+ * 取得済みの制限を引き継ぎ先で表現できなければ、子 Session の作成前に失敗する。
  */
 export function resolveChildSessionPermissions(
   sourceProviderId: string,
@@ -98,8 +98,8 @@ export function resolveChildSessionPermissions(
   }
   const choice = getSessionApprovalChoice({ ...source, provider: sourceProviderId });
   const sandbox = targetProviderId === "codex" ? { codexSandboxMode: "read-only" as const } : {};
-  // Unset mediated reviewers historically follow Settings on mediated children and use
-  // native User elsewhere. Never infer a native Auto Review from the global settings.
+  // 仲介型のレビュー担当を未指定の場合、従来どおり仲介型の子は Settings に従い、
+  // それ以外ではネイティブの User を使う。グローバル設定からネイティブの Auto Review を推定しない。
   if (choice === null && approvalMode === "on-request" && supportsWithMateAutoReview(sourceProviderId) && !withMateReviewerExplicit) {
     return { approvalMode, codexReviewer: "user", ...sandbox };
   }

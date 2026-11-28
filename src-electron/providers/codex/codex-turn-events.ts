@@ -12,7 +12,7 @@ import {
 import { ProviderProgressMap } from "../provider-progress.js";
 import { projectProviderOutput, type ProviderOutput, type ProviderOutputTextUnit } from "../../../src-shared/session/provider-output.js";
 
-// The fields consumed here follow Codex App Server 0.171.0's ThreadItem schema.
+// ここで扱うフィールドは Codex App Server 0.171.0 の ThreadItem スキーマに従う。
 export type CodexFileChange = {
   path: string;
   kind: { type: "add" | "delete" | "update"; move_path?: string | null };
@@ -287,7 +287,7 @@ export function getCodexMcpResultPreview(
   );
 }
 
-/** Non-text activities share the same summary/details in live and saved Operations. */
+/** テキスト以外のアクティビティでは、ライブ表示と保存済み Operations で同じ概要・詳細を使う。 */
 export function getCodexActivityOperation(item: CodexTurnItem): MessageOperation | null {
   switch (item.type) {
     case "imageView":
@@ -383,7 +383,7 @@ function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput =
     throw new Error("Invalid Codex App Server item");
   let item = value as CodexTurnItem;
   if (!boundedOutput && item.type === "commandExecution" && typeof item.aggregatedOutput === "string") {
-    // A sliced prefix can still retain the native output's full backing string.
+    // 先頭部分を切り出しても、ネイティブ出力の元の文字列全体が内部で保持されることがある。
     item = {
       ...item,
       aggregatedOutputOriginalLength: item.aggregatedOutput.length,
@@ -502,7 +502,7 @@ export function applyCodexTurnEvent(
       const total = usageBreakdown(tokenUsage.total);
       const last = usageBreakdown(tokenUsage.last);
       if (!total || !last) break;
-      // Native total is thread-cumulative; last describes one model response.
+      // ネイティブの total はスレッド全体の累計、last は 1 回のモデル応答の使用量を示す。
       state.usageBaseline ??= subtractUsage(total, last);
       state.usage = subtractUsage(total, state.usageBaseline);
       break;

@@ -44,7 +44,7 @@ export function buildHomeSessionProjection(sessions: readonly HomeSessionSummary
     if (!normalizedSessionSearch) return true;
     return [session.taskTitle, session.workspacePath, session.workspaceLabel, session.character, ...getHomeSessionKindSearchLabels(session)].map((value) => value.toLocaleLowerCase()).some((value) => value.includes(normalizedSessionSearch));
   };
-  // Page membership is already filtered by the backend; retain it until its replacement arrives.
+  // ページに含める対象はバックエンドで絞り込み済み。次の結果が届くまで保持する。
   const filteredSessionEntries = sessions.filter((session) => pageSessionIds?.has(session.id) || matchesSearch(session))
     .map((session) => { const auxiliarySessions = [...(byParent.get(session.id) ?? [])]; return { kind: "agent" as const, session, state: getHomeSessionState(session, auxiliarySessions), mainState: getHomeSessionState(session), auxiliarySessions }; });
   const monitorIds = new Set(monitorSessionIds);

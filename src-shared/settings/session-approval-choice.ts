@@ -27,7 +27,7 @@ export function getSessionApprovalChoices(): RuntimeSelectOption<SessionApproval
   return [...approvalChoices];
 }
 
-/** Legacy provider modes and a Settings Default reviewer are not explicit public choices. */
+/** 旧形式の Provider モードと Settings の Default reviewer は、明示的な公開設定として扱わない。 */
 export function getSessionApprovalChoice({ provider, approvalMode, codexReviewer, withMateReviewerExplicit }: ApprovalSelection): SessionApprovalChoice | null {
   if (approvalMode === "never") return "auto-run";
   if (approvalMode === "safety-focused") return "safety-focused";

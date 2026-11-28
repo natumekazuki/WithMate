@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type CSSProperties } from "react";
 import { CloseButton } from "../ui/close-button.js";
 
-// The existing action button remains the recovery path; details never replace it.
+// 復旧には既存の操作ボタンを使う。詳細表示はボタンに取って代わらない。
 export function SettingsActionButton({
   failure,
   actionLabel,

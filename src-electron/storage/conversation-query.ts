@@ -23,7 +23,7 @@ export type ConversationQueryRow = { seq: number; role: string; body: string; ru
 export const CONVERSATION_QUERY_BATCH_SIZE = 32;
 
 export function conversationMessageColumns(table: MessageTable, db: DatabaseSync): string {
-  // Auxiliary transcripts are also read during schema initialization, before minimal turns exist.
+  // Auxiliary の会話記録は、最小限の Turn データがまだ存在しないスキーマ初期化中にも読み取られる。
   if (table === "auxiliary_session_messages" && !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_turns_v6'").get()) {
     return "seq, role, body";
   }
@@ -34,7 +34,7 @@ export function conversationMessageColumns(table: MessageTable, db: DatabaseSync
     ORDER BY t.id DESC LIMIT 1) AS runFailure`;
 }
 
-/** A synchronous cursor read. A scoped read receives at most one batch of canonical indexes. */
+/** 同期カーソル読み取り。範囲を限定した読み取りには、正本のインデックスを最大1バッチ渡す。 */
 export function readConversationQueryBatch(db: DatabaseSync, table: MessageTable, id: string, afterSeq: number,
   includeSpeakers = true, messageIndexes?: readonly number[]): ConversationQueryRow[] {
   if (messageIndexes?.length === 0) return [];
@@ -64,7 +64,7 @@ export function readConversationQueryBatch(db: DatabaseSync, table: MessageTable
         ORDER BY user_message_seq, sequence`).all(
           id, identity?.incarnation?.trim() || `legacy:${id}`, ...userRows.map((row) => row.seq),
         ) as { seq: number; origin: string | null }[];
-    // If a seq was linked more than once, the last receipt still wins (even when its origin is null).
+    // 同じ seq が複数回関連付けられている場合は、origin が null でも最後の受領記録を優先する。
     const bySequence = new Map(receipts.map((receipt) => [receipt.seq, receipt.origin]));
     for (const row of userRows) if (bySequence.has(row.seq)) row.inputOriginJson = bySequence.get(row.seq) ?? null;
   }

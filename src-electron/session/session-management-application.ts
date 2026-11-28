@@ -55,9 +55,9 @@ export type SessionManagementApplicationDeps = {
   operatingPolicy(actor: RelatedSession, operation: SessionOperatingPolicyOperation, request: unknown, assertCurrent: () => void): Promise<SessionOperationResult>;
   readSessionScope(actor: SessionTarget, selection: SessionManagementSelection): Promise<SessionManagementScope>;
   currentTurn(actor: RelatedSession): Promise<SessionCurrentTurn>;
-  /** Reads the exact bound actor's body, without falling back from Auxiliary to Main. */
+  /** バインディングに対応する実行主体の本文だけを読み取る。Auxiliary から Main へのフォールバックはしない。 */
   getInstructions(target: SessionTarget): Awaitable<string>;
-  /** Replaces only the bound actor's body; invalid input must be rejected before writing. */
+  /** バインディングに対応する実行主体の本文だけを置き換える。不正な入力は書き込む前に拒否する。 */
   setInstructions(target: SessionTarget, body: string): Awaitable<{ byteLength: number }>;
   crewFolder(
     actor: RelatedSession,
@@ -136,7 +136,7 @@ export class SessionManagementError extends Error {
   }
 }
 
-/** Saved relationships authorize writes; public saved metadata remains readable across Crews. */
+/** 書き込みは保存済みの関係に基づいて認可する。公開の保存済みメタデータは Crew をまたいで読み取れる。 */
 export class SessionManagementApplication {
   constructor(readonly deps: SessionManagementApplicationDeps) {}
 
@@ -344,18 +344,18 @@ export class SessionManagementApplication {
         return { ok: true, directories: await this.deps.directories(destination, change, context.assertCurrent) };
       }
       case "get_instructions": {
-        // The saved actor was matched to the authenticated binding above; the request has no target.
+        // 上で保存済みの実行主体と認証済みバインディングの一致を確認済み。リクエストには対象の指定がない。
         const body = await this.deps.getInstructions(context.actor);
         context.assertCurrent();
         return { ok: true, body };
       }
       case "set_instructions": {
-        // Reject invalid bytes before dispatch, so this error has a known no-write outcome.
+        // 不正なバイト列は処理を送出する前に拒否し、このエラーでは書き込みがないと確定できるようにする。
         let instructions: string;
         try {
           instructions = validateSessionInstructions((parsed.data as SessionOperationRequest<"set_instructions">).body);
         } catch (error) {
-          // Only the known validation error is a guaranteed no-op.
+          // 何も変更していないと保証できるのは、既知の検証エラーの場合だけ。
           if (error instanceof TypeError || error instanceof RangeError) {
             return { ok: false, code: "SESSION_INVALID_REQUEST", effect: "none", message: error.message };
           }

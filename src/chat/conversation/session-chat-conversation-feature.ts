@@ -24,7 +24,7 @@ export type SessionChatConversationFeatureInput = Omit<
 
 export type SessionChatConversationFeature = ChatWindowProps["messageColumnProps"];
 
-/** Owns artifact expansion and projects messages and live requests for ChatWindow. */
+/** 成果物の展開状態を管理し、メッセージと実行中のリクエストを ChatWindow 用に変換する。 */
 export function useSessionChatConversationFeature() {
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const onToggleArtifact = useMemo(

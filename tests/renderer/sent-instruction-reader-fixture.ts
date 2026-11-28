@@ -18,7 +18,7 @@ function bodyOf(item: SentDelivery | SentSteer): SentInstructionBody {
     text: coordination?.text ?? item.text, consultation: coordination?.consultation };
 }
 
-/** Standalone row tests supply a pre-authored body reader, separate from delivery details. */
+/** 行単体のテストでは、配信の詳細とは別に、あらかじめ用意した本文を読む処理を渡す。 */
 export function sentInstructionFixtureItem(item: SentDelivery | SentSteer): SentInstruction {
   return { ...cardOf(item), bodyRead: {
     enabled: true, revision: 0, read: async () => bodyOf(item),
@@ -27,7 +27,7 @@ export function sentInstructionFixtureItem(item: SentDelivery | SentSteer): Sent
   } };
 }
 
-/** Projects pre-authored receipt/Steer evidence across the two GUI read boundaries. */
+/** あらかじめ用意した受付記録と Steer の証拠を、GUI の二つの読み取り境界に対応する形で返す。 */
 export function sentInstructionReaderFixture(items: readonly (SentDelivery | SentSteer)[], operation: string, request: unknown) {
   if (operation === "list_sent_instruction_cards") {
     return {

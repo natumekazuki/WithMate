@@ -18,7 +18,7 @@ export function useCoordinationStatus(id: string, enabled: boolean) {
   return useCoordinationRead<StatusQuery, CoordinationStatus>({ operation: "status", id }, enabled, readStatus);
 }
 
-/** The query generation, not arrival order, owns the visible snapshot. */
+/** 到着順ではなく、クエリの世代で表示するスナップショットを決める。 */
 function useCoordinationRead<Request extends CoordinationRequest | StatusQuery, Result extends CoordinationResult | CoordinationStatus>(
   request: Request | null,
   enabled: boolean,
@@ -95,7 +95,7 @@ function useCoordinationRead<Request extends CoordinationRequest | StatusQuery, 
     return () => {
       generation.current += 1;
     };
-    // The serialized validated request is the query identity.
+    // 検証済みリクエストを直列化した値がクエリの識別子になる。
   }, [key, enabled, retry, markDeleted, read]);
   useEffect(() => {
     if (!enabled || !request) return;

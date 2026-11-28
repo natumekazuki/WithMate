@@ -5,8 +5,8 @@
 !define WITHMATE_LEGACY_GRAPH_ALIAS "${WITHMATE_WINDOWS_APPS_DIR}\withmate-session-graph.cmd"
 !define WITHMATE_SESSION_ALIAS "${WITHMATE_WINDOWS_APPS_DIR}\withmate-session.cmd"
 
-; Match the wrapper written by the old installer for this install root.
-; WindowsApps is shared: the filename alone does not establish ownership.
+; 旧インストーラーがこのインストール先向けに書いたラッパーと照合する。
+; WindowsApps は共有されるため、ファイル名だけでは所有元を特定できない。
 !macro removeLegacyGraphAlias ALIAS_PATH
   ClearErrors
   FileOpen $0 "${ALIAS_PATH}" r
@@ -23,7 +23,7 @@
   FileRead $0 $1
   StrCmpS $1 "exit /b %ERRORLEVEL%$\r$\n" 0 graph_alias_keep
 
-  ; Any appended content also makes the wrapper a non-match.
+  ; 末尾に追加された内容があれば、そのラッパーも一致とみなさない。
   FileReadByte $0 $1
   StrCmp $1 "" 0 graph_alias_keep
   FileClose $0
@@ -38,8 +38,8 @@ graph_alias_done:
 
 !macro customInstall
   !insertmacro removeLegacyGraphAlias "${WITHMATE_LEGACY_GRAPH_ALIAS}"
-  ; The previous uninstaller normally removes these. Handle files left in
-  ; this install root when no registered previous uninstaller was run.
+  ; 通常は旧アンインストーラーが削除する。
+  ; 登録済みの旧アンインストーラーが実行されず、このインストール先に残ったファイルを削除する。
   Delete "$INSTDIR\withmate-session-graph.cmd"
   Delete "$INSTDIR\resources\resources\cli\withmate-session-graph.mjs"
 

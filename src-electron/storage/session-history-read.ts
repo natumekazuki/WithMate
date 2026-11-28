@@ -77,7 +77,7 @@ function readMessageSpeakers(db: DatabaseSync, layout: Layout, sessionId: string
   return (row: MessageRow) => row.role === "assistant" ? assistant : speakers.get(row.seq) ?? projectSessionInputSender(decodeMessage(row, sessionId).turnInput?.origin);
 }
 
-/** Turn linkage is the exact user/assistant sequence recorded on the turn; no other message is attributed to a turn. */
+/** Turn との関連付けには、その Turn に記録された user/assistant のシーケンス番号だけを使う。他のメッセージは紐付けない。 */
 function readTurns(db: DatabaseSync, layout: Layout, sessionId: string, fromSeq: number, toSeq: number) {
   const rows = db.prepare(`SELECT id, phase, provider_id, model_id, user_message_seq, assistant_message_seq, error_summary
     FROM session_turns_v6 WHERE ${layout.owner} = ?
@@ -104,7 +104,7 @@ function splitsSurrogatePair(text: string, offset: number): boolean {
   return offset > 0 && unit >= 0xdc00 && unit <= 0xdfff && before >= 0xd800 && before <= 0xdbff;
 }
 
-/** A page never ends inside a surrogate pair; a budget of one code unit at a pair returns the whole pair so paging progresses. */
+/** ページをサロゲートペアの途中で切らない。残りの上限が1コード単位でも、ペアの先頭にいれば次のページへ進めるようペア全体を返す。 */
 function sliceText(text: string, offset: number, max: number) {
   let end = Math.min(text.length, offset + max);
   const last = text.charCodeAt(end - 1);
@@ -128,7 +128,7 @@ function pageOf<T>(all: readonly T[], offset: number, limit: number): { offset: 
   return { offset, nextOffset: end < all.length ? end : null, total: all.length, items: all.slice(offset, end) };
 }
 
-/** The execution reader may supply ordered canonical seqs from the same Main thread projection/snapshot. */
+/** 実行情報の読み取り側は、同じ Main スレッドの投影・スナップショットから得た正本の seq を順序付きで渡せる。 */
 export function readSessionHistory(db: DatabaseSync, input: SessionHistoryReadInput, messageIndexes?: readonly number[]): SessionHistoryResult {
   assertRuntimeTurnAdmission();
   const result = readCurrentHistory(db, input, messageIndexes);
@@ -214,7 +214,7 @@ function getMessage(db: DatabaseSync, layout: Layout, sessionId: string, row: Me
 
 const LIST_TEXT_PREVIEW_CHARS = 200;
 
-/** List rows carry bounded previews; the full saved text is read with get_operation_detail `field`. */
+/** 一覧の行は上限付きのプレビューを含む。保存済みの全文は get_operation_detail の `field` で読む。 */
 function listText(name: string, text: string): Record<string, unknown> {
   const preview = sliceText(text, 0, LIST_TEXT_PREVIEW_CHARS);
   return preview.nextOffset === null ? { [name]: text } : { [name]: preview.text, [`${name}Truncated`]: true, [`${name}Chars`]: text.length };
@@ -268,7 +268,7 @@ function getOperationDetail(seq: number, saved: { artifact: MessageArtifact; det
     const text = field === "details" ? operation.details : field === "summary" ? operation.summary : field === "error" ? operation.error?.message : undefined;
     if (text === undefined) return failure(field === "details" || field === "error" ? "HISTORY_NOT_SAVED" : "HISTORY_INVALID_REQUEST",
       field === "details" || field === "error" ? `No ${field} is saved for the operation.` : "field does not apply to an operation.");
-    // truncatedAtSave is reported only when the producer recorded it; an unrecorded flag is not "false".
+    // 生成側が記録した場合だけ truncatedAtSave を返す。未記録を "false" として扱わない。
     return textDetail(seq, "operation", request, text, { type: operation.type, field,
       ...(field === "details" && operation.truncated !== undefined ? { truncatedAtSave: operation.truncated } : {}) });
   }
@@ -303,7 +303,7 @@ function getOperationDetail(seq: number, saved: { artifact: MessageArtifact; det
   while (end < file.diffRows.length && rows.length < maxRows) {
     const length = JSON.stringify(file.diffRows[end]).length;
     if (rows.length && chars + length > budget) break;
-    // A row larger than the budget is not inlined; it is read with `row` in pieces.
+    // 上限を超える行はインラインに含めず、`row` を指定して分割して読む。
     rows.push(length > budget ? { row: end, oversized: true, chars: length } : file.diffRows[end]);
     chars += Math.min(length, budget);
     end += 1;

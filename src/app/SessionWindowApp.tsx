@@ -455,7 +455,7 @@ export default function AgentSessionWindowApp() {
     () => sessions.find((session) => session.id === selectedId) ?? null,
     [selectedId, sessions],
   );
-  // This projection is display-only until the conversation read succeeds.
+  // 会話の読み取りが成功するまでは、この投影を表示にのみ使う。
   const selectedSession = useMemo<Session | null>(() => {
     if (loadedSession) return loadedSession;
     if (mainSessionRuntime.readStatus === "ready" || !sessionSummaryRead.summary) return null;
@@ -550,7 +550,7 @@ export default function AgentSessionWindowApp() {
     const edit = queueEditor.edits[view.main.sessionId];
     const editingFrame = edit?.receipt.incarnationId === view.main.incarnationId ? edit.mainFrameId : undefined;
     setMainViewSelection((previous) => {
-      // Only a successful thread projection can establish that the edit's peer is gone.
+      // 編集中の相手がいなくなったと判断できるのは、スレッドの投影を正常に取得できたときだけ。
       const missingEditFrameId = editingFrame && editingFrame !== ALL_MAIN_THREADS_ID
         && (view.projection
           ? !view.projection.children.some(({ target }) => conversationPeerKey(target) === editingFrame)
@@ -2489,7 +2489,7 @@ export default function AgentSessionWindowApp() {
     ? <LoadError id="session-main-read-error" message={mainSessionRuntime.readError} onRetry={mainSessionRuntime.retryRead} />
     : !loadedSession ? <LoadingIndicator className="concurrent-chat-state" label="Loading conversation" /> : null;
 
-  // Use the ActionDock target, not the focused conversation or the active Turn.
+  // フォーカス中の会話や実行中の Turn ではなく、ActionDock の対象を使う。
   const instructionTarget: SessionInstructionsTarget | null = !loadedSession || isSelectedSessionReadOnly ? null
     : auxiliaryWorkspace.target === "main"
       ? { kind: "main", sessionId: selectedSession.id, incarnationId: mainIncarnation }
@@ -2508,7 +2508,7 @@ export default function AgentSessionWindowApp() {
         if (!target || target.id !== request.target.sessionId) return Promise.reject(new Error("The selected conversation changed."));
         return mainSessionRuntime.submitFailedRetry({ ...request, executionOptions: captureSessionExecutionOptions(target) });
       },
-      // A saved failed start is admitted to the normal queue; a running Turn only blocks dispatch.
+      // 保存済みの開始失敗は通常キューで受け付ける。実行中の Turn が止めるのは配送だけ。
       blocked: (id) => hasUncertainTurnFor(id) || hasPendingSubmitFor(id) || isSelectedSessionReadOnly
         || (id !== selectedSession.id && id !== activeAuxiliarySession?.id),
       onError: (ownerId, message, target) => {

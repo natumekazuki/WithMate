@@ -7,7 +7,7 @@ export function projectOpenCodeUsage(tokens: TokenUsageInfo): ProviderUsage {
     reasoningOutputTokens: tokens.reasoning, totalTokens: tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write };
 }
 
-/** Text ordinals are provisional until native full-text or message snapshots replace them. */
+/** テキストの序数は、ネイティブ側の全文またはメッセージのスナップショットで置き換わるまでの暫定値。 */
 export class OpenCodeTurnProjection {
   private readonly text = new Map<string, string>();
   private readonly reasoning = new Map<string, string>();

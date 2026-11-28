@@ -27,7 +27,7 @@ import {
   type RunSessionTurnRequest,
 } from "../../src-shared/session/runtime-state.js";
 
-/** Connects feature-owned IPC assemblies to Electron's single registration surface. */
+/** 機能ごとに組み立てた IPC を、Electron の単一の登録窓口に接続する。 */
 export function registerMainIpcHandlers(
   ipcMain: IpcMain,
   deps: MainIpcRegistrationDeps,

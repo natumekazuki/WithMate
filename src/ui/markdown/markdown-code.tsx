@@ -200,7 +200,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
     const previousResult = (current: MermaidRenderState) => current.status === "ready" ? current.result : current.previous;
     const run = () => {
       setRenderState((current) => ({ status: "pending", previous: previousResult(current) }));
-      // Mermaid removes DOM with its render ID; never reuse the displayed SVG's ID.
+      // Mermaid は描画 ID を使って DOM を削除するため、表示中の SVG の ID を再利用しない。
       const renderId = `${diagramId}-${++renderSequence.current}`;
       loadMermaid()
         .then((module) => {

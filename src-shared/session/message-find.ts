@@ -7,7 +7,7 @@ type SourceRun = { renderedStart: number; renderedEnd: number; sourceStart: numb
 export type MessageSearchProjection = { sourceText: string; renderedText: string; sourceRuns: SourceRun[] };
 export type MessageSearchMatch = TextSearchMatch & { kind: "rendered" | "source"; renderedOccurrenceIndex?: number };
 
-/** Decoded tokens can map a visible match to a larger source token than the raw query. */
+/** トークンをデコードすると、表示上の一致箇所が検索語より長いソーストークンに対応することがある。 */
 export function messageSearchSourceRangesCorrespond(left: TextSearchMatch, right: TextSearchMatch): boolean {
   return left.startOffset <= right.startOffset && left.endOffset >= right.endOffset
     || right.startOffset <= left.startOffset && right.endOffset >= left.endOffset;
@@ -19,7 +19,7 @@ function decodedMarkdownToken(token: string): string {
   return paragraph?.type === "paragraph" ? paragraph.children.map((node) => "value" in node ? node.value : "").join("") : token;
 }
 
-/** Record only characters actually supplied by a source token, never its hidden syntax. */
+/** ソーストークンが実際に供給した文字だけを記録し、表示されない構文は含めない。 */
 function mapTokens(raw: string, value: string, start: number, renderedStart: number, runs: SourceRun[], kind: "text" | "literal" | "yaml" | "yaml-single" | "json" | "citation" | "citation-windows" = "literal"): boolean {
   const tokenPattern = kind === "text"
     ? /\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]|&(?:#[xX][\da-fA-F]+|#\d+|[a-zA-Z][\da-zA-Z]+);|\r\n?/gu
@@ -202,7 +202,7 @@ export function createMessageSearchProjection(sourceText: string, responseProvid
   return { sourceText, renderedText, sourceRuns };
 }
 
-/** Resolve only a complete, contiguous source occurrence; generated text has no source range. */
+/** ソース上で欠けのない連続した一致だけを解決する。生成されたテキストにソース範囲はない。 */
 export function getMessageSearchMatchSourceRange(projection: MessageSearchProjection, match: MessageSearchMatch): TextSearchMatch | undefined {
   if (match.kind === "source") return { startOffset: match.startOffset, endOffset: match.endOffset };
   let low = 0;
@@ -237,7 +237,7 @@ export function* iterateMessageSearchMatches(projection: MessageSearchProjection
     for (const match of iterateTextMatches(projection.sourceText, query)) yield { ...match, kind: "source" };
     return;
   }
-  // One bit per source code unit keeps exclusion storage bounded even for millions of matches.
+  // ソースのコード単位ごとに 1 ビットを使い、一致が数百万件あっても除外情報の記憶量を抑える。
   const covered = new Uint8Array(Math.ceil(projection.sourceText.length / 8));
   let runIndex = 0;
   let renderedOccurrenceIndex = 0;

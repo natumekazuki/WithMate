@@ -94,7 +94,7 @@ test("全履歴検索はraw-source anchorをmode別ordinalへ解決する", asyn
     await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.auxiliary, messages });
     for (const [store, id] of [[f.bundle.stores.session, f.session.id], [f.bundle.stores.auxiliary, f.auxiliary.id]] as const) {
       for (const mode of ["preview", "source"] as const) {
-        // Preview enumerates the visible occurrence before the raw link destination; Source uses raw order.
+        // プレビューでは表示される一致が生のリンク先より先に列挙され、ソース表示では元データの順序になる。
         for (const [startOffset, expectedOccurrence] of [[8, mode === "source" ? 0 : 1], [16, mode === "source" ? 1 : 0]] as const) {
           const request = { producerId: id, requestId: `${mode}-${startOffset}`, query: "needle", mode };
           const first = await store.searchConversation(id, { ...request, anchor: { messageIndex: 100, startOffset, endOffset: startOffset + 6 } });

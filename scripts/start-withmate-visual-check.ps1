@@ -1,19 +1,19 @@
-<#
+﻿<#
 .SYNOPSIS
-Build and launch an isolated WithMate visual-check environment.
+分離された WithMate の描画確認環境をビルドして起動します。
 .DESCRIPTION
-Uses %APPDATA%\WithMate-visual-check. Reuse preserves that directory and lets
-normal application startup apply migrations. Fresh accepts only a missing or
-empty directory. Copy replaces it with a snapshot of %APPDATA%\WithMate.
+%APPDATA%\WithMate-visual-check を使います。Reuse は既存のディレクトリを維持し、
+通常のアプリ起動時に移行処理を適用します。Fresh はディレクトリが存在しないか空の場合だけ実行できます。
+Copy はそのディレクトリを %APPDATA%\WithMate のスナップショットで置き換えます。
 .PARAMETER DataMode
-Reuse (default), Fresh, or Copy. Reuse requires an existing directory.
-Fresh never deletes existing data. Copy replaces existing visual-check data.
+Reuse（既定）、Fresh、Copy のいずれかを指定します。Reuse には既存のディレクトリが必要です。
+Fresh は既存データを削除せず、Copy は既存の描画確認用データを置き換えます。
 .PARAMETER ValidateOnly
-Validate the selected mode and build without stopping processes, preparing
-user data, or launching Electron. Dependencies may be installed.
+選択したモードの条件確認とビルドを行います。プロセスの停止、ユーザーデータの準備、
+Electron の起動は行いません。依存関係がインストールされる場合があります。
 .PARAMETER RemoteDebuggingPort
-Enable loopback-only browser inspection for the isolated app. Use 0 to choose
-an available port. Omit this parameter for a normal visual-check launch.
+分離されたアプリのブラウザー検査をループバック接続に限って有効にします。
+空きポートを使うには 0 を指定します。通常の描画確認で起動する場合は、このパラメーターを省略します。
 .EXAMPLE
 .\scripts\start-withmate-visual-check.ps1 -DataMode Fresh
 .EXAMPLE
@@ -561,7 +561,7 @@ try {
     return
   }
 
-  # Recheck after the build before stopping processes or changing user data.
+  # ビルド後、プロセスの停止やユーザーデータの変更に進む前に条件を再確認する。
   Assert-VisualCheckUserData `
     -Mode $DataMode `
     -SourcePath $resolvedSourceUserDataPath `

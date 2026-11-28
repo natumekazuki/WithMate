@@ -4,7 +4,7 @@ export class CoordinationRejectedError extends Error {
   constructor(message: string) { super(message); this.name = "CoordinationRejectedError"; }
 }
 
-/** An authoritative saved lookup, not a transport or authorization failure. */
+/** 保存データの正本を照会した結果であり、通信や認可の失敗ではない。 */
 export class CoordinationDeletedError extends Error {
   readonly code = "COORDINATION_DELETED";
   readonly effect = "none";

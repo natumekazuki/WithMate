@@ -131,9 +131,9 @@ export function areCharacterEditorDraftsEqual(
 }
 
 /**
- * Keeps edits made while a save request was in flight. A create request needs
- * the newly assigned character id, so its saved draft is used as the base and
- * only the newer field values are carried across.
+ * 保存リクエストの処理中に加えた編集を保持する。作成リクエストでは
+ * 新しく割り当てられた character ID が必要なので、保存済みの下書きを基にし、
+ * 保存開始後に変わったフィールドの値だけを引き継ぐ。
  */
 export function reconcileCharacterEditorDraftAfterSave(
   savedDraft: CharacterEditorDraft,

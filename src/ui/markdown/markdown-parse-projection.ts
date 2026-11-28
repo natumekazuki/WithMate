@@ -6,7 +6,7 @@ function hasDocumentReferences(node: Node): boolean {
   if (node.type === "definition" || node.type.endsWith("Reference") || node.type.startsWith("footnote")) {
     return true;
   }
-  // Unresolved reference labels are ordinary text until a later definition arrives.
+  // 未解決の参照ラベルは、後続の定義が届くまでは普通のテキストとして扱う。
   if (node.type === "text" && "value" in node && typeof node.value === "string" && node.value.includes("[")) {
     return true;
   }
@@ -34,8 +34,8 @@ export function createMarkdownParseProjection() {
 
     let tree: Root;
     const previousText = previous?.text ?? "";
-    // ATX headings interrupt preceding blocks without depending on their context.
-    // An unclosed document-start YAML block can still absorb every later heading.
+    // ATX 見出しは、それまでの文脈に依存せず直前のブロックを打ち切る。
+    // 文書先頭の YAML ブロックが閉じていなければ、後続の見出しをすべて取り込む可能性がある。
     const openFrontmatter = previous && /^---(?:\r?\n|$)/.test(previousText) && previous.tree.children[0]?.type !== "yaml";
     const anchorIndex = previous && !openFrontmatter
       ? previous.tree.children.findLastIndex((node) => {
@@ -46,9 +46,9 @@ export function createMarkdownParseProjection() {
       : -1;
     const anchor = previous?.tree.children[anchorIndex]?.position?.start;
     if (previous && !previous.references && text.startsWith(previous.text) && anchor?.offset && anchorIndex > 0) {
-      // Reparse from a stable heading, keeping its entire following block context.
+      // 安定した見出しから再解析し、それに続くブロック全体の文脈を保つ。
       const start = anchor.offset - anchor.column + 1;
-      // A leading blank prevents fragment-start YAML from becoming document frontmatter.
+      // 先頭に空行を置き、断片の冒頭にある YAML が文書のフロントマターとして扱われないようにする。
       const tail = parse(`\n${text.slice(start)}`);
       movePositions(tail, start - 1, anchor.line - 2);
       tree = {
@@ -60,7 +60,7 @@ export function createMarkdownParseProjection() {
       tree = parse(text);
     }
     previous = { text, tree, references: hasDocumentReferences(tree) };
-    // Downstream remark transforms may mutate their input; never expose the retained AST.
+    // 後段の remark 変換が入力を書き換えることがあるため、保持中の AST をそのまま渡さない。
     return structuredClone(tree);
   };
 }

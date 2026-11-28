@@ -220,7 +220,7 @@ test("削除・再作成された元Sessionと親が一致しないAuxiliaryを�
     assert.throws(() => read(main, auxScope, "list_messages", {}), /require a main source/);
     assert.throws(() => read(auxiliary, mainScope(main, session), "list_messages", {}), /require an auxiliary source/);
 
-    // Editing the draft keeps the same conversation; recreating it with the same ID, parent and createdAt does not.
+    // 下書きの編集では同じ会話が維持されるが、同じ ID、親、`createdAt` で作り直しても同じ会話にはならない。
     const draft = auxiliary.getAuxiliaryDraft(aux.id)!;
     const saved = auxiliary.saveAuxiliaryDraft({ auxiliarySessionId: aux.id, parentSessionId: session.id, incarnation: draft.incarnation,
       expectedDurableRevision: draft.durableRevision, text: "edited", updatedAt: "2026-07-30T00:01:00.000Z" });

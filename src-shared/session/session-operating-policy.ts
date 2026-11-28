@@ -6,7 +6,7 @@ const text = z.string().trim().min(1).max(20000);
 const path = z.string().min(1).max(32768);
 const workspace = { workspacePath: path.optional() };
 
-/** Human-authored guidance, not execution defaults or provider credentials. Array order is priority. */
+/** 人が作成した指針であり、実行の既定値や Provider の認証情報ではない。配列の順序が優先順位を表す。 */
 export const selectionPolicySchema = z.object({
   selectionCriteria: text.describe("Task/output/judgment criteria for choosing Provider and Model; not a fixed Role mapping."),
   executionGuidelines: text.describe("Depth, Approval and Sandbox guidelines; these never grant permissions."),

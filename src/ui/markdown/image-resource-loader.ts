@@ -58,8 +58,8 @@ export function createMarkdownImageLoader(
           throw new Error("Image contents changed while they were being read.");
         }
         if (!isCurrent()) return null;
-        // IPC supplies exact ArrayBuffers. Blob snapshots their bytes in order;
-        // no concatenated buffer or backing-buffer view is needed.
+        // IPC は必要な範囲そのものの ArrayBuffer を渡す。Blob はそれらのバイト列を順に取り込むため、
+        // 連結したバッファーや裏側のバッファーを参照するビューは不要。
         return URL.createObjectURL(new Blob(parts, { type: descriptor.mimeType }));
       } finally {
         signal?.removeEventListener("abort", release);

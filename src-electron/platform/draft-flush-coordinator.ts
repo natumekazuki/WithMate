@@ -51,7 +51,7 @@ export class DraftFlushCoordinator<TWindow> {
     try {
       this.onSettled?.({ reason: pending.reason, outcome, elapsedMs: Math.max(0, Date.now() - pending.startedAt) });
     } catch {
-      // Diagnostics must not change the draft persistence result.
+      // 診断が下書きの保存結果を変えてはならない。
     }
     pending.resolve(outcome === "saved");
   }

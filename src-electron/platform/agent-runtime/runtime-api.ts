@@ -71,7 +71,7 @@ const secureRuntimePath: RuntimePathSecurity = async (target, kind) => {
   await chmod(target, kind === "directory" ? 0o700 : 0o600);
 };
 
-/** The shared tool runtime owns transport and discovery only; it never opens application storage. */
+/** 共通ツールランタイムは通信と検出だけを担う。アプリケーションのストレージは開かない。 */
 export async function startAgentRuntimeApi(options: StartAgentRuntimeApiOptions): Promise<AgentRuntimeApiHandle> {
   const runtimeGenerationId = randomUUID();
   const apiSecret = randomBytes(32).toString("base64url");
@@ -114,7 +114,7 @@ export async function startAgentRuntimeApi(options: StartAgentRuntimeApiOptions)
       if (!parsed.success) return error(400, "RUNTIME_INVALID_REQUEST");
       const payload = parsed.data;
       if (!equalSecret(payload.apiSecret, apiSecret) || !equalSecret(payload.adapterSecret, secrets[payload.adapter])) return error(401, "RUNTIME_UNAUTHORIZED");
-      // Glossary permits one dispatch regardless of body size.
+      // 用語集は本文のサイズにかかわらず、一回のディスパッチを許可する。
       if (!largeAdmitted && payload.operation.path.startsWith("/v1/glossary/")) {
         if (largeRequests >= 1) return error(429, "RUNTIME_BUSY"); largeRequests++; largeAdmitted = true;
       }
@@ -141,7 +141,7 @@ export async function startAgentRuntimeApi(options: StartAgentRuntimeApiOptions)
     const publishedAt = (options.clock?.now() ?? new Date()).toISOString();
     publication = await publishRuntimeDiscoveryEntry({
       challenge: async (entry, slotDirectoryPath) => {
-        // Do not retire registrations of another runtime kind.
+        // 別種のランタイムの登録は廃止しない。
         if (entry.runtimeKind !== AGENT_RUNTIME_KIND) return true;
         try {
           const serialized = await readRuntimeDiscoveryCredential({ entry, slotDirectoryPath, slotName: path.basename(slotDirectoryPath) }, "mcp");

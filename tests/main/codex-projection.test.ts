@@ -279,7 +279,7 @@ test("release confirms Worker owner deletion while another run handles a burst",
       void release.catch(() => undefined);
       await Promise.all([release, ...pending]);
       assert.ok(worker);
-      // Observe deletion at the Worker protocol, rather than only the client run registry.
+      // クライアント側の実行レジストリだけでなく、Worker のプロトコル境界で削除を確認する。
       const response = once(worker, "message", { signal: AbortSignal.timeout(2_000) });
       worker.postMessage({ id: -1, runId: retired, command: { type: "live", inputAvailable: true } } satisfies CodexProjectionRequest);
       const [reply] = await response as [CodexProjectionResponse];

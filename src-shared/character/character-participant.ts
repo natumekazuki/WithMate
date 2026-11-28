@@ -10,7 +10,7 @@ export type ConversationParticipant = z.infer<typeof conversationParticipantSche
 export const characterPublicProfileSchema = z.object({ id: z.string(), name: z.string(), description: z.string() }).strict();
 export type CharacterPublicProfile = z.infer<typeof characterPublicProfileSchema>;
 
-/** Public identity is saved Session metadata, never the current catalog or a persona instruction. */
+/** 公開用の識別情報は Session に保存されたメタデータであり、現行のカタログやペルソナ指示ではない。 */
 export function projectCharacterPublicProfile(session: {
   characterId?: string; character?: string; characterDescription?: string;
   characterRuntimeSnapshot?: { name: string; description: string } | null;
@@ -26,7 +26,7 @@ export function participantMemoryTag(participant: ConversationParticipant) {
 }
 
 export function affectMatchesParticipant(component: { targetType: string; targetId: string }, participant: ConversationParticipant | null): boolean {
-  // Older user targets used free-form IDs; all refer to this installation's one human.
+  // 旧形式のユーザー宛先 ID は任意の文字列だったが、すべてこのインストールを使う一人のユーザーを指す。
   if (component.targetType === "user") return participant?.type === "user";
   return component.targetType !== "user" && component.targetType !== "character"
     || participant !== null && component.targetType === participant.type && component.targetId === participant.id;

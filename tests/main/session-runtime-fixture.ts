@@ -8,7 +8,7 @@ export type SessionRuntimeFixtureDeps = Omit<SessionRuntimeServiceDeps, SmallWri
   upsertTerminalSession?: SessionRuntimeServiceDeps["appendTerminalSession"];
 };
 
-/** Full history belongs to the fixture store; the runtime sees metadata and turn-local messages only. */
+/** 履歴全体は fixture のストアが保持し、ランタイムが参照するのはメタデータと現在の Turn 内のメッセージだけである。 */
 export class SessionRuntimeFixture extends SessionRuntimeService {
   constructor(deps: SessionRuntimeFixtureDeps) {
     const stored = new Map<string, Session>();

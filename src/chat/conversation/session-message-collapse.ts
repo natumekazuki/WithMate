@@ -158,8 +158,8 @@ export function toggleMessageCollapseState(
   state: MessageCollapseState,
   target: MessageCollapseTarget,
 ): Map<string, MessageCollapseStateEntry> {
-  // The caller reconciles the complete projection before toggling. Preserve
-  // unrelated entries here so an individual toggle cannot clear other rows.
+  // 切り替え前に呼び出し側が投影全体の整合を取る。
+  // ここでは無関係な項目を残し、一行の切り替えが他の行を消さないようにする。
   const next = new Map(state);
   const current = next.get(target.key);
   if (current && isMatchingCollapseStateEntry(current, target)) {

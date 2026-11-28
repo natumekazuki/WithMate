@@ -51,7 +51,7 @@ export type AuxiliaryCreationResult = {
   auxiliarySessionId?: string;
 };
 
-/** Minimal lifecycle metadata used by the main-process operation diagnostics. */
+/** Main プロセスの操作診断に使う最小限のライフサイクル情報。 */
 export type AuxiliaryCreationStateChange = AuxiliaryCreationResult & {
   clientRequestId: string;
   parentSessionId: string;
@@ -68,7 +68,7 @@ export type CreateAuxiliarySessionInput = {
   codexSandboxMode?: CodexSandboxMode;
   codexSpeed?: CodexSpeed;
   customAgentName?: string;
-  /** Stable key used to make a retried create operation return the same row. */
+  /** 作成操作を再試行しても同じ行を返すための固定キー。 */
   clientRequestId?: string;
   creationContext?: AuxiliaryCreationContext;
 };
@@ -96,13 +96,13 @@ export type AuxiliarySession = {
   displayAfterMessageIndex: number | null;
   createdAt: string;
   updatedAt: string;
-  /** Character identity is fixed when the Auxiliary is created. Legacy rows omit it. */
+  /** Character の識別情報は Auxiliary の作成時に固定する。旧形式の行には含まれない。 */
   characterId?: string;
   characterRuntimeSnapshot?: CharacterRuntimeSnapshot | null;
-  /** Internal migration marker: a present, malformed new snapshot must not fall back to parent identity. */
+  /** 移行用の内部マーカー。不正な新形式のスナップショットが存在する場合は親の識別情報に戻さない。 */
   characterRuntimeSnapshotInvalid?: boolean;
   characterIconPath?: string;
-  /** Deterministic, non-AI projection used by the lightweight list. */
+  /** 簡易一覧で使う、AI を介さない決定的な表示データ。 */
   preview?: string;
   clientRequestId?: string;
   creationContext?: AuxiliaryCreationContext;
@@ -523,8 +523,8 @@ function clipAuxiliaryPreview(value: string): string {
 }
 
 /**
- * Builds the list projection without invoking a provider. Accent assistant messages
- * are status/tool/error blocks in the current message contract and are excluded.
+ * Provider を呼ばずに一覧用の表示データを組み立てる。現在のメッセージ契約では、
+ * アクセント付きの assistant メッセージは状態・ツール・エラーのブロックなので除外する。
  */
 export function buildAuxiliaryPreview(
   messages: readonly Message[],
@@ -542,7 +542,7 @@ export function buildAuxiliaryPreview(
   return latestUser ? clipAuxiliaryPreview(latestUser.text) || AUXILIARY_PREVIEW_DEFAULT : AUXILIARY_PREVIEW_DEFAULT;
 }
 
-/** Preserve the last confirmed projection while a new turn is streaming or fails. */
+/** 新しい Turn のストリーミング中や失敗時には、直近の確定済み表示データを保持する。 */
 export function resolveAuxiliaryPreview(
   messages: readonly Message[],
   previousPreview?: string | null,

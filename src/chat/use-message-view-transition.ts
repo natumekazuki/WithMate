@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject, type SetStateAction } from "react";
 import type { MessageViewMode } from "../ui/markdown/MessageRichText.js";
 
-// Only representation changes wait for motion; live state and request controls do not.
+// アニメーションを待つのは表示形式の変更だけ。実行中の状態やリクエストの操作要素は待たない。
 export function useMessageViewTransition(
   mainRef: RefObject<HTMLElement | null>,
   auxiliaryRef: RefObject<HTMLElement | null>,
@@ -84,7 +84,7 @@ export function useMessageViewTransition(
         stop();
         opacityRef.current = new WeakMap();
       }
-    }, () => { /* Cancellation belongs to the latest selection or lifecycle cleanup. */ });
+    }, () => { /* キャンセルは最新の選択またはライフサイクルの後処理が担う。 */ });
     return () => {
       stop();
       if (stopRef.current === stop) stopRef.current = null;

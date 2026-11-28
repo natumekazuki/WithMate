@@ -708,7 +708,7 @@ test("child reports inherit provider Default depth through acceptance and dispat
 
 function assertRejected(result: Record<string, unknown>) {
   if (result.isError === true) {
-    // SDK-level schema validation returns text rather than application structuredContent.
+    // SDK のスキーマ検証では、アプリケーションの `structuredContent` ではなくテキストが返る。
     assert.match(JSON.stringify(result.content), /[Ii]nvalid|[Rr]equired/);
   } else {
     assert.equal(result.ok, false); assert.equal(result.effect, "none"); assert.ok(result.message);

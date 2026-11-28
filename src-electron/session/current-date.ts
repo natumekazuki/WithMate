@@ -1,4 +1,4 @@
-/** Current local datetime with an explicit UTC offset; no conversation-history lookup. */
+/** 現在のローカル日時を UTC オフセット付きで表す。会話履歴は参照しない。 */
 export function formatCurrentDateTime(date: Date, offsetMinutes = -date.getTimezoneOffset()): string {
   const shifted = new Date(date.getTime() + offsetMinutes * 60_000);
   const pad = (value: number, width = 2) => String(value).padStart(width, "0");

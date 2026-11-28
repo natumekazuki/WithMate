@@ -55,7 +55,7 @@ export function emitStorageOperationDiagnostic(
   try {
     sink?.(event);
   } catch {
-    // Diagnostics must never change the operation result.
+    // 診断によって操作結果が変わってはならない。
   }
 }
 
@@ -83,7 +83,7 @@ export function startEventLoopDelayMonitoring(
         ...report,
       });
     } catch {
-      // Diagnostic reporting must never terminate the Main event loop.
+      // 診断の報告が Main のイベントループを終了させてはならない。
     } finally {
       histogram.reset();
     }

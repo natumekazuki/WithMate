@@ -6,7 +6,7 @@ import { applyCodexTurnEvent, collectCodexAssistantResponseFromItems, collectCod
 import type { CodexProjectionStart, CodexProjectionProgress, CodexProjectionFinal, CodexProjectionEvent } from "./codex-projection-protocol.js";
 import type { BoundedProviderRawItem } from "../../session/provider-payload-limits.js";
 
-/** Owns native items and sanitized projections inside the shared projection Worker. */
+/** 共有の投影 Worker 内で、ネイティブ項目と秘匿化済みの投影データを管理する。 */
 export class CodexProjectionOwner {
   private readonly state;
   private readonly redactor: ProviderAgentRuntimeBindingRedactor;
@@ -75,8 +75,8 @@ export class CodexProjectionOwner {
 
   private unhandledNotification(event: CodexNativeNotification): NonNullable<CodexProjectionEvent["unhandledNotification"]> {
     const { sanitizeText } = this.redactor;
-    // Bound identifiers independently of params. Reserve room for params even
-    // when a notification uses long IDs or JSON escape sequences.
+    // 識別子の長さは params とは別に制限する。通知に長い ID や JSON のエスケープシーケンスが
+    // 含まれていても、params 用の容量を確保する。
     const identifier = (value: string) => {
       const redacted = sanitizeText(value, 256);
       return value.length > 256 || redacted.length > 256 ? `${redacted.slice(0, 256)}...` : redacted;
@@ -95,9 +95,9 @@ export class CodexProjectionOwner {
     }, budget, sanitizeText, APP_LOG_MAX_STRING_LENGTH - 100).data!;
     const data = { ...context, ...bounded };
     if (JSON.stringify(data).length <= APP_LOG_MAX_SERIALIZED_DATA_LENGTH) return data;
-    // The raw-item budget is approximate (nesting and omitted-item markers).
-    // Keep the correlation fields and a prefix of the already redacted params.
-    // A UTF-16 code unit expands to at most six characters in JSON.
+    // 生の項目に割り当てる上限は、入れ子や省略マーカーを含む概算。
+    // 対応付けに必要なフィールドと、秘匿化済みの params の先頭部分を残す。
+    // UTF-16 の 1 コードユニットは JSON で最大 6 文字に展開される。
     return {
       ...context,
       params: { truncated: true, preview: JSON.stringify(bounded.params).slice(0, Math.floor((budget - 80) / 6)) },

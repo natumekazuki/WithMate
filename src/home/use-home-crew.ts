@@ -14,7 +14,7 @@ type CrewReadState = {
   error: string;
 };
 
-/** Only return a complete snapshot of the current request. A superseded read has no result. */
+/** 現在のリクエストの完全なスナップショットだけを返す。後続の取得に置き換えられた読み取りは結果を返さない。 */
 async function loadCrewSnapshot(
   api: Pick<WithMateWindowApi, "listHomeCrewPage">,
   isCurrent: () => boolean,
@@ -34,7 +34,7 @@ async function loadCrewSnapshot(
     }
     for (const auxiliary of page.auxiliarySessions) auxiliaries.set(auxiliary.id, auxiliary);
     if (!page.hasMore) return { entries: [...entries.values()], auxiliarySessions: [...auxiliaries.values()] };
-    // Within a Main snapshot the cursor is a fixed generation prefix followed by an ascending Session ID.
+    // 一つの Main スナップショット内では、カーソルは固定の世代接頭辞に続けて昇順の Session ID を持つ。
     if (!page.nextCursor || (cursor !== null && page.nextCursor <= cursor)) {
       throw new Error("Could not advance the Crew page.");
     }

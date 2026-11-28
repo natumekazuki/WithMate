@@ -58,7 +58,7 @@ export function CoordinationAnswerDelivery({ ownerSessionId, target, receiptId, 
   const turnFailure = result && ["failed", "canceled"].includes(result.turnState ?? "")
     ? ` · Turn ${receiptStateLabel(result.turnState)}` : "";
   const entry = result?.inputs?.entry;
-  // A start receipt mirrors its Turn's terminal phase. An additional input has its own delivery outcome.
+  // 開始の受付情報には、その Turn の終了状態が反映される。追加入力には独立した配送結果がある。
   const sameFailedTurn = result?.turnState === "failed"
     && (result.receiptState === "failed" || result.receiptState === "interrupted")
     && entry?.kind === "start" && entry.inputSeq !== null && entry.inputSeq === result.userMessageSeq;

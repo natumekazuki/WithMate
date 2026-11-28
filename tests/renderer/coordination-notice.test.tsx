@@ -70,7 +70,7 @@ test("consultation notices read visible IDs and distinguish live answer, resolut
     assert.equal(requests.length, 0);
     await visible(true);
     assert.deepEqual(requests, [{ id: "first" }]);
-    assert.equal(state(), "Awaiting Your Reply"); // Retiring an answer can leave a positive revision without an answer.
+    assert.equal(state(), "Awaiting Your Reply"); // 回答を取り下げると、回答がなくても正のリビジョンが残る場合がある。
     checkShape();
     const count = requests.length;
     await notify("unrelated");

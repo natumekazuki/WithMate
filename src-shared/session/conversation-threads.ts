@@ -3,7 +3,7 @@ import { mainSessionTargetSchema, sessionTargetSchema, type MainSessionTarget, t
 import type { SessionReply } from "./session-reply.js";
 
 const sequence = z.number().int().nonnegative();
-/** null selects the initial frame; a Main target selects that exact direct peer. ALL is not a thread. */
+/** null は初期フレームを選び、Main の指定は特定の直接の相手を選ぶ。ALL はスレッドではない。 */
 export const mainConversationThreadSchema = mainSessionTargetSchema.nullable();
 export const conversationThreadsRequestSchema = z.object({ target: sessionTargetSchema }).strict();
 export const conversationThreadsResultSchema = z.object({
@@ -30,7 +30,7 @@ export function conversationPeerKey(target: SessionTarget): string {
     : [target.kind, target.sessionId, target.incarnationId, target.mainSessionId, target.mainIncarnationId]);
 }
 
-/** Resolve a saved message's frame, not a sent-card overlay. Undefined means not represented here. */
+/** 送信カードのオーバーレイではなく、保存済みメッセージのフレームを解決する。undefined はここに表示されないことを示す。 */
 export function savedReplyConversationFrame(main: MainSessionTarget, threads: ConversationThreads | undefined, reply: SessionReply | undefined): MainSessionTarget | null | undefined {
   if (!threads || !reply || !("seq" in reply) || conversationPeerKey(reply.target) !== conversationPeerKey(main)) return undefined;
   return savedMessageConversationFrame(threads, reply.seq);

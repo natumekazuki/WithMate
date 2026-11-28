@@ -12,7 +12,7 @@ export const localPrCommitSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{6
 const prId = { prId: id };
 const prVersion = { ...prId, version };
 
-/** A version pins both repository tips and the merge base used for the reviewed diff. */
+/** 版には、レビュー対象の差分に使った両側の先端コミットとマージベースを固定する。 */
 export const localPrVersionSchema = z.strictObject({
   version,
   headCommit: localPrCommitSchema,
@@ -22,7 +22,7 @@ export const localPrVersionSchema = z.strictObject({
   submittedBy: sessionTargetSchema,
 });
 
-/** An anchor addresses a file or its line range on one side of an immutable comparison. */
+/** アンカーは、固定された比較の片側にあるファイル、またはその行範囲を指す。 */
 export const localPrAnchorSchema = z.strictObject({
   mode: z.enum(["full", "previous"]),
   path,
@@ -32,7 +32,7 @@ export const localPrAnchorSchema = z.strictObject({
 }).refine((input) => input.startLine === null ? input.endLine === null : input.endLine !== null && input.startLine <= input.endLine,
   "Use two null line values for a file comment or an ordered pair of line numbers.");
 
-/** Public comments and GUI-only drafts retain their original version and anchor. */
+/** 公開コメントと GUI 専用の下書きは、元の版とアンカーを保持する。 */
 export const localPrCommentSchema = z.strictObject({
   id,
   version,
@@ -59,7 +59,7 @@ const prSummary = z.strictObject({
   mergedCommit: localPrCommitSchema.nullable(),
 });
 
-/** The approval tuple includes the exact tips the GUI reviewed. */
+/** 承認の組には、GUI でレビューした正確な先端コミットを含める。 */
 export const localPrApprovalTargetSchema = z.strictObject({
   ...prVersion,
   headCommit: localPrCommitSchema,
@@ -79,7 +79,7 @@ const changedFile = z.strictObject({
   kind: z.enum(["added", "modified", "deleted", "renamed", "copied", "type-changed"]),
 });
 
-/** Captured comparison endpoints and either a change list or one file's patch. */
+/** 記録済みの比較両端と、変更一覧または単一ファイルのパッチ。 */
 export const localPrDiffSchema = z.strictObject({
   beforeCommit: localPrCommitSchema,
   afterCommit: localPrCommitSchema,
@@ -116,7 +116,7 @@ const commentInput = z.strictObject({
 });
 const submitInput = { headCommit: localPrCommitSchema, expectedTargetCommit: localPrCommitSchema.optional() };
 
-/** The complete Agent surface; GUI-only actions deliberately have no public schema here. */
+/** Agent 向けの全操作。GUI 専用の操作には、意図的にここで公開スキーマを定義しない。 */
 export const localPrAgentInput = {
   pr_list: z.strictObject({ offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(100).optional() }),
   pr_branches: z.strictObject({}),
@@ -153,7 +153,7 @@ export const localPrAgentData = {
   pr_ci_log: z.strictObject({ log: z.string(), nextOffset: z.number().int().nonnegative(), hasMore: z.boolean() }),
 } as const satisfies Record<keyof typeof localPrAgentInput, z.ZodType>;
 
-/** Trusted Main-frame IPC only; never spread these operations into the Agent tools. */
+/** 信頼済みのメインフレーム IPC 専用。これらの操作を Agent ツールに展開しない。 */
 export const localPrGuiInput = {
   ...localPrAgentInput,
   approve: localPrApprovalTargetSchema,
@@ -194,7 +194,7 @@ export type LocalPrComment = z.infer<typeof localPrCommentSchema>;
 export type LocalPrDetail = z.infer<typeof localPrDetailSchema>;
 export type LocalPrCiRun = z.infer<typeof localPrCiRunSchema>;
 
-/** Renderer calls have a fixed repository/source Session on the Main-owned Window. */
+/** renderer からの呼び出しでは、Main が所有する Window に紐付いたリポジトリと送信元 Session が固定される。 */
 export type LocalPrWindowApi = {
   execute<T extends LocalPrOperation>(operation: T, input: LocalPrInput<T>): Promise<LocalPrResult<T>>;
   pickAttachment(): Promise<string[]>;

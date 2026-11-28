@@ -36,7 +36,7 @@ export class WindowEntryLoader {
     await this.load(window, "file-preview.html", search);
   }
 
-  /** Load the isolated PR renderer without passing repository or actor identity in its URL. */
+  /** リポジトリや実行主体の識別情報を URL に渡さず、隔離された PR renderer を読み込む。 */
   async loadLocalPrEntry(window: WindowLike): Promise<void> {
     await this.load(window, "local-pr.html", "");
   }

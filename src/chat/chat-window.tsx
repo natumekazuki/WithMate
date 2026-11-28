@@ -452,8 +452,8 @@ export function ChatAdditionalDirectoryList({
   );
 }
 
-// Keep every conversation surface on one chat layout. Projection builders own
-// the feature-specific props and content.
+// 会話を表示する画面はすべて同じチャットレイアウトを使う。
+// 機能固有の props と内容は、それぞれの投影を組み立てる処理が担う。
 export function ChatWindow({
   isHeaderExpanded,
   headerProps,
@@ -713,7 +713,7 @@ export function ChatWindow({
     }
     : screenProps.rightPaneProps;
 
-  // Notice actions reveal the conversation first; requests are reached once its column is rendered.
+  // 通知の操作ではまず会話を表示し、その列が描画されてからリクエストの位置へ移動する。
   const followAfterRevealRef = useRef(false);
   const revealFrameRef = useRef<number | null>(null);
   const revealRequestRef = useRef<(() => boolean) | null>(null);
@@ -729,10 +729,10 @@ export function ChatWindow({
       }
     }
     followAfterRevealRef.current = false;
-    // Bring the pending request form into view; scrolling never focuses or answers it.
+    // 保留中のリクエストフォームを表示範囲に入れる。スクロールでフォーカスや回答は行わない。
     targetColumnControls.followLatest();
-    // The re-shown column catches up with the live run and restores its previous position
-    // asynchronously, so keep the form in view until the position stays settled.
+    // 再表示した列は実行中の状態に追いつき、以前の位置を非同期に復元するため、
+    // 位置が落ち着くまでフォームを表示範囲内に保つ。
     let frames = 0;
     let settledFrames = 0;
     const poll = () => {

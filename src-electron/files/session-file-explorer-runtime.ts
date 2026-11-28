@@ -13,7 +13,7 @@ export type SessionFileExplorerRuntimeDeps = Pick<
   openResolvedPath(targetPath: string, reveal: boolean): Promise<OpenPathResult>;
 };
 
-/** Owns the shared authorization boundary for session files and git-root operations. */
+/** Session ファイルと Git ルートの操作に共通する認可境界を担う。 */
 export class SessionFileExplorerRuntime {
   private readonly explorer: SessionFileExplorerService;
   private readonly gitChanges: FileRootGitChangesService;

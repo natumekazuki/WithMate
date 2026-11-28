@@ -9,7 +9,7 @@ const shell = process.argv[2];
 const expectedMajor = Number(process.argv[3]);
 assert.ok(shell && (expectedMajor === 7 || expectedMajor === 5), "Pass the shell path and expected major version");
 const workspace = process.cwd();
-// Keep the test independent of user profiles and do not persist test commands in history.
+// テストをユーザープロファイルに依存させず、テスト用コマンドを履歴に残さない。
 const script = "Import-Module PSReadLine; Set-PSReadLineOption -HistorySaveStyle SaveNothing;\n" + Buffer.from(integration.args[2], "base64").toString("utf16le");
 const pty = spawn(shell,
   ["-NoProfile", "-NoExit", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
@@ -79,7 +79,7 @@ try {
     output = "";
     for (const chunk of chunks) write(chunk);
     await until(() => activities.includes("busy") && output.includes("unfinished"), "pasted trailing edit");
-    // Observe several PSReadLine idle intervals while the trailing line remains unsubmitted.
+    // 末尾の行が未送信の間に、PSReadLine のアイドル間隔を数回分観測する。
     await sleep(1000);
     assert.equal(tracker.getActivity(), "unknown", JSON.stringify(chunks));
     assert.equal(service.countRequiringCloseConfirmation(owner), 1);
@@ -106,7 +106,7 @@ try {
   process.exitCode = 1;
 } finally {
   if (!exited) pty.kill();
-  // ConPTY keeps native helper handles alive; isolate their lifetime in this child process.
+  // ConPTY がネイティブヘルパーのハンドルを保持するため、その生存期間をこの子プロセス内に隔離する。
   await sleep(500);
   process.exit(process.exitCode ?? 0);
 }

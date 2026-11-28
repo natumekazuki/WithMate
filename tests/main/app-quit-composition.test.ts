@@ -12,9 +12,9 @@ import { MainInfrastructureRegistry } from "../../src-electron/app/main-infrastr
 import { MainStoreContext } from "../../src-electron/app/main-store-context.js";
 import { PersistentStoreLifecycleService } from "../../src-electron/storage/persistent-store-lifecycle-service.js";
 
-/** Execute the production composition without main.ts's unrelated startup side effects.
- * Keep factories, store cleanup, registry destruction and the event callback from main.ts;
- * only external runtime/Window operations are supplied by the fixture.
+/** 本番の組み立て処理を、`main.ts` の無関係な起動時の副作用なしで実行する。
+ * ファクトリー、ストアの後処理、レジストリの破棄、イベントコールバックは `main.ts` の実装を使い、
+ * 外部のランタイムと Window の操作だけを fixture で置き換える。
  */
 async function loadQuitComposition() {
   const source = await readFile(new URL("../../src-electron/main.ts", import.meta.url), "utf8");
@@ -67,8 +67,8 @@ async function loadQuitComposition() {
   let flushResult = true;
   let handler: ((event: { preventDefault(): void }) => void) | undefined;
   const storeContext = new MainStoreContext();
-  // A live closeable resource lets us observe the actual MainStoreContext ->
-  // PersistentStoreLifecycleService.close path, not a stub closePersistentStores.
+  // `closePersistentStores` のスタブではなく、実際の `MainStoreContext` から
+  // `PersistentStoreLifecycleService.close` までの経路を、終了可能な実リソースで観測する。
   storeContext.setCharacterStorage({ close: () => { counts.storeCloses += 1; } } as MainStoreContext["characterStorage"]);
   const context = createContext({
     AppLifecycleService: class extends AppLifecycleService {
@@ -105,8 +105,8 @@ async function loadQuitComposition() {
       },
     },
   });
-  // Unrelated lazy services are initially absent, just as at startup. These are
-  // read/cleared by the real store cleanup; no factory or cleanup is replaced.
+  // 起動直後と同じく、無関係な遅延初期化サービスはまだ存在しない。
+  // 実際のストア後処理が各サービスを参照してクリアする。ファクトリーも後処理も置き換えない。
   for (const name of [
     "providerModelDiscoveryService", "sessionRuntimeService", "auxiliarySessionRuntimeService",
     "sessionObservabilityService", "characterService", "characterAuthoringService",
@@ -121,7 +121,7 @@ async function loadQuitComposition() {
   return {
     counts,
     attempt: async () => {
-      // Invoke the actual registered before-quit callback, as Electron does.
+      // Electron と同様に、実際に登録された `before-quit` コールバックを呼び出す。
       runInContext("app.quit()", context);
       for (let i = 0; i < 5; i += 1) await setImmediate();
     },
@@ -182,7 +182,7 @@ test("production quit composition は実行中確認取消と保存失敗を中�
   fixture.setConditions({ running: true, confirm: false, flush: true });
   await fixture.attempt();
   assert.equal(fixture.counts.flushes, 1, "failed save must restore the running confirmation");
-  // The next accepted quit has its own initial event plus the cleanup reentry.
+  // 次の終了が受理されると、その初回イベントと、後処理による再入が発生する。
   fixture.counts.quits = 0;
   fixture.setConditions({ running: true, confirm: true, flush: true });
   await fixture.attempt();

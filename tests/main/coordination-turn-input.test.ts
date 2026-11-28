@@ -315,7 +315,7 @@ test("GUI Coordination replies retain original thread and accepted text through 
         assert.equal(promptFrame(started[1]!), null);
         const reply = f.answer(later.id, owner, session).receipt;
         assert.deepEqual(reply.captured.request.mainConversationFrame, peer);
-        // A preview.4 receipt had the same immutable Coordination link but no frame.
+        // preview.4 の受付記録には、同じ変更不可の Coordination リンクがあったが、フレームはなかった。
         f.db.prepare(`UPDATE session_turn_queue_v6 SET captured_json=json_remove(captured_json,'$.request.mainConversationFrame'),
           accepted_json=json_remove(accepted_json,'$.request.mainConversationFrame') WHERE id=?`).run(reply.id);
         const parked = f.queue.listActive(owner).find(({ id }) => id === reply.id);

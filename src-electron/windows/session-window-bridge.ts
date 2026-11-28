@@ -120,7 +120,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   retainSessionForMonitor(sessionId: string): void {
     this.retainedMonitorSessionIds.add(sessionId);
     const window = this.sessionWindows.get(sessionId);
-    // Work that starts during a stopped close also needs a later explicit dismissal.
+    // 停止中として閉じる手続きの最中に処理が始まった場合も、後から明示的な終了操作が必要になる。
     if (window && this.retainMonitorOnClose.has(window)) this.retainMonitorOnClose.set(window, true);
   }
 
@@ -420,7 +420,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     return result;
   }
 
-  /** Only a Home Crew descendant operation can supply a synchronous scope and impact check. */
+  /** 範囲と影響の同期確認を指定できるのは、Home の Crew 子孫に対する操作だけ。 */
   async closeHomeCrewDescendantWindow(sessionId: string, window: TWindow, validateBatch: () => boolean): Promise<"closed" | "already-closed" | "blocked"> {
     if (this.getWindow(sessionId) !== window || this.draftFlushGateActive
       || this.pendingCloseConfirmations.has(window) || this.pendingCloseRequests.has(window)
@@ -437,7 +437,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   }
 
   closeAllSessionWindows(): void {
-    // DB reset explicitly discards sessions; ordinary close first attempts draft persistence.
+    // DB リセットは Session を明示的に破棄する。通常のウィンドウ終了では先に下書きの保存を試みる。
     this.retainedMonitorSessionIds.clear();
     for (const sessionId of Array.from(this.sessionWindows.keys())) {
       this.discardSessionWindow(sessionId);
@@ -493,8 +493,8 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       this.resolveCloseRequest(window, false);
       return;
     }
-    // Capture before confirmation/flush: terminal completion must not turn a
-    // running close into a stopped close that ends monitoring.
+    // 確認や保存の前に実行状態を捕捉する。実行が完了しても、
+    // 実行中として始めたウィンドウ終了を停止中の終了に切り替え、監視を打ち切ってはならない。
     this.retainMonitorOnClose.set(window, hasRunningSession);
     const hasTerminalsRequiringConfirmation = (this.deps.getTerminalCloseConfirmationCount?.(window) ?? 0) > 0;
     if (!crewClose && (hasRunningSession || hasTerminalsRequiringConfirmation)) {
@@ -548,20 +548,20 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     const closeFlush = this.flushDrafts(window, sessionId, "close");
     void closeFlush.then((flushed) => {
       if (this.draftFlushes.get(window)?.promise !== closeFlush) {
-        // A stronger quit request superseded this close request. Its late ACK
-        // must not close the Window or affect a later retry.
+        // より優先度の高いアプリ終了要求が、このウィンドウ終了要求に取って代わった。
+        // 遅れて届く ACK でウィンドウを閉じたり、後続の再試行に影響を与えたりしてはならない。
         return;
       }
       this.pendingDraftFlushWindows.delete(window);
       if (window.isDestroyed()) {
-        // A concurrent quit owns the freeze until all its windows have settled.
+        // 並行するアプリ終了処理が、そのすべてのウィンドウの処理が確定するまで凍結を管理する。
         if (!this.draftFlushGateActive) this.releaseDraftFlush(window, false);
         this.resolveCloseRequest(window, false);
         return;
       }
       if (this.draftFlushGateActive) {
-        // Quit owns the renderer freeze. A normal close ACK must not destroy
-        // the renderer while the stronger quit barrier is still settling.
+        // renderer の凍結はアプリ終了処理が管理する。より強いアプリ終了の待機条件が確定するまでは、
+        // 通常のウィンドウ終了の ACK で renderer を破棄してはならない。
         return;
       }
       try {
@@ -573,7 +573,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
         }
         if (crewClose) crewClose.committed = true;
         if (!flushed || this.rendererState(window) !== "responsive") {
-          // Only the input surface is discarded. Main owns provider execution and persistence.
+          // 破棄するのは入力画面だけ。プロバイダーの実行と永続化は Main が担う。
           window.destroy();
         } else {
           this.allowCloseSessionWindows.add(window);
@@ -589,7 +589,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   }
 
   private releaseWindowClaim(sessionId: string, window: TWindow): void {
-    // The closed event runs after BrowserWindow destruction; do not read webContents.
+    // closed イベントは BrowserWindow の破棄後に発生するため、webContents を参照しない。
     this.draftFlushCoordinator.forgetWindow(window);
     this.draftFlushes.delete(window);
     this.rendererStates.delete(window);
@@ -661,7 +661,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     try {
       this.deps.onDraftFlushSettled?.(result);
     } catch {
-      // Diagnostics must not change the draft persistence result or block close.
+      // 診断が下書きの保存結果を変えたり、ウィンドウの終了を妨げたりしてはならない。
     }
   }
 
@@ -688,7 +688,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     try {
       this.deps.sendDraftFlushRelease?.(window, { success });
     } catch {
-      // A destroyed renderer has already lost its freeze channel.
+      // 破棄された renderer では、凍結を制御するチャネルは既に失われている。
     }
   }
 

@@ -10,7 +10,7 @@ type NativeRename = {
 
 let nativeRename: NativeRename | undefined;
 
-/** Publishes a directory without replacing any existing destination entry. */
+/** 移動先に既存の項目があっても置き換えずに、ディレクトリを公開する。 */
 export function renameDirectoryNoReplace(source: string, destination: string): void {
   if (source.includes("\0") || destination.includes("\0")) {
     throw new TypeError("Directory rename paths must not contain null bytes.");
@@ -32,7 +32,7 @@ export function renameDirectoryNoReplace(source: string, destination: string): v
 
   const result = nativeRename.rename(source, destination);
   if (!nativeRename.failed(result)) return;
-  // Read the native error before making any other native call.
+  // 次のネイティブ呼び出しを行う前に、ネイティブ側のエラーを読み取る。
   const errno = nativeRename.errorCode();
   const code = process.platform === "win32"
     ? `WIN32_${errno}`
@@ -52,7 +52,7 @@ function loadNativeRename(): NativeRename {
     const moveFileEx = kernel32.func("__stdcall", "MoveFileExW", "int", ["str16", "str16", "uint32_t"]);
     const getLastError = kernel32.func("__stdcall", "GetLastError", "uint32_t", []);
     return {
-      // No REPLACE_EXISTING or COPY_ALLOWED: neither overwrite nor copy/delete is permitted.
+      // REPLACE_EXISTING と COPY_ALLOWED は指定せず、上書きもコピー後の削除も許可しない。
       rename: (source, destination) => moveFileEx(path.toNamespacedPath(source), path.toNamespacedPath(destination), 0),
       failed: (result) => result === 0,
       errorCode: getLastError,

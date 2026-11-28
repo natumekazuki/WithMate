@@ -17,7 +17,7 @@ import type { LocalPrChange, LocalPrRecord, LocalPrStore, LocalPrSummary } from 
 export { resolveLocalPrRepository, type LocalPrRepository } from "./local-pr-git.js";
 export type { LocalPrStore } from "./local-pr-store.js";
 
-/** Operations owned by the PR core, excluding CI and Session routing. */
+/** PR の中核が担う操作。CI と Session への振り分けは含まない。 */
 export type LocalPrCoreOperation = Exclude<LocalPrOperation, `pr_ci_${string}` | "session_choices" | "discuss">;
 type CoreRequest = { [K in LocalPrCoreOperation]: { operation: K; input: LocalPrInput<K> } }[LocalPrCoreOperation];
 type Origin = "agent" | "gui";
@@ -32,7 +32,7 @@ type Execution = {
   guard(): void;
 };
 
-/** Supplies the currently active SQLite Worker and a repository-scoped UI invalidation. */
+/** 現在有効な SQLite Worker と、リポジトリ単位の UI 更新通知を提供する。 */
 export type LocalPrServiceDeps = {
   getStore(): LocalPrStore | null;
   getActiveOwner(): object | null;
@@ -46,12 +46,12 @@ const operations = new Set<LocalPrCoreOperation>([
 const guiOnly = new Set<LocalPrCoreOperation>(["approve", "revoke", "save_draft", "discard_draft", "publish_drafts"]);
 const readOnly = new Set<LocalPrCoreOperation>(["pr_list", "pr_branches", "pr_get", "pr_diff"]);
 
-/** Returns public detail from committed SQLite state plus the explicitly live target tip. */
+/** 確定済みの SQLite の状態に、現時点のマージ先の先端コミットを明示的に加えて公開用の詳細を返す。 */
 function detail(record: LocalPrRecord, currentTargetCommit: string | null): LocalPrDetail {
   return { ...record.summary, approval: record.approval, versions: record.versions, comments: record.comments, currentTargetCommit };
 }
 
-/** Only the exact most recent open version may affect workflow state. */
+/** ワークフローの状態を変更できるのは、PR が開いていて版がその最新版と完全に一致する場合だけ。 */
 function requireOpenVersion(record: LocalPrRecord, requested: number): LocalPrVersion {
   if (record.summary.state !== "open") throw new LocalPrError("PR_NOT_OPEN", "The PR is no longer open.");
   if (record.summary.latestVersion !== requested) {
@@ -60,7 +60,7 @@ function requireOpenVersion(record: LocalPrRecord, requested: number): LocalPrVe
   return localPrVersion(record.versions, requested);
 }
 
-/** Approval and merge must reference both fixed tips, not just a PR number. */
+/** 承認とマージは PR 番号だけでなく、固定した両方の先端コミットを指定する必要がある。 */
 function requireTuple(record: LocalPrRecord, input: ApprovalTuple): LocalPrVersion {
   const version = requireOpenVersion(record, input.version);
   if (version.headCommit !== input.headCommit || version.targetCommit !== input.targetCommit) {
@@ -69,14 +69,14 @@ function requireTuple(record: LocalPrRecord, input: ApprovalTuple): LocalPrVersi
   return version;
 }
 
-/** Exact anchor equality is required when editing a draft or supplying a reply anchor. */
+/** 下書きの編集や返信アンカーの指定には、アンカーの完全一致が必要。 */
 function sameAnchor(left: LocalPrComment["anchor"], right: LocalPrComment["anchor"]): boolean {
   if (!left || !right) return left === right;
   return left.mode === right.mode && left.path === right.path && left.side === right.side
     && left.startLine === right.startLine && left.endLine === right.endLine;
 }
 
-/** Keeps write failures honest when a worker reply was lost, as distinct from a rejected command. */
+/** Worker の応答を受信できなかった書き込みは、コマンド自体が拒否された場合と区別する。 */
 function storeWriteError(error: unknown): LocalPrError {
   if (error instanceof RuntimeTurnInactiveError ||
       (error instanceof StorageWorkerRemoteError && error.code === "RUNTIME_TURN_INACTIVE")) {
@@ -88,14 +88,14 @@ function storeWriteError(error: unknown): LocalPrError {
   return new LocalPrError("STORAGE_EFFECT_UNKNOWN", "The review store did not confirm the write. Refresh the PR before retrying.", "unknown");
 }
 
-/** Main-owned repository review and GUI approval gate shared by all callers. */
+/** Main が管理するリポジトリレビューと、全呼び出し元で共通の GUI 承認条件。 */
 export class LocalPrService {
   private readonly queues = new Map<string, Promise<void>>();
 
-  /** Store ownership is captured for each request and cannot silently change while queued. */
+  /** 要求ごとにストアの所有者を捕捉し、キューでの待機中に暗黙に切り替えない。 */
   constructor(private readonly deps: LocalPrServiceDeps) {}
 
-  /** Validates untrusted input, then uses only the repository and actor resolved by the trusted caller. */
+  /** 信頼できない入力を検証し、信頼された呼び出し元が解決したリポジトリと実行主体だけを使う。 */
   async execute<T extends LocalPrCoreOperation>(
     repository: LocalPrRepository, actor: SessionTarget, origin: Origin, operation: T, input: unknown,
   ): Promise<LocalPrResult<T>> {
@@ -125,14 +125,14 @@ export class LocalPrService {
         }
         guard();
         const result = await this.perform({ store, repository: live, actor: identity.data, origin, assertOwner, guard }, { operation, input: parsed.data } as CoreRequest);
-        // A completed mutation has an effect, but an obsolete read must not reach the caller.
+        // 完了した変更には副作用があるが、失効した読み取り結果を呼び出し元に返してはならない。
         if (readOnly.has(operation)) guard();
         return result;
       });
-      // The dispatch union is paired with its operation by the shared input schema above.
+      // 上で共通入力スキーマを適用し、振り分ける共用体の各要素を対応する操作に結び付けている。
       return { ok: true, data: data as LocalPrData<T> };
     } catch (error) {
-      // Public results distinguish a predictable rejection from an uncertain write.
+      // 公開結果では、想定内の拒否と、書き込み結果が不明な場合を区別する。
       if (error instanceof LocalPrError) return { ok: false, code: error.code, message: error.message, effect: error.effect };
       if (error instanceof RuntimeTurnInactiveError) return { ok: false, code: "RUNTIME_TURN_INACTIVE", message: error.message, effect: "none" };
       console.warn("Local PR operation failed", operation, error);
@@ -140,7 +140,7 @@ export class LocalPrService {
     }
   }
 
-  /** Serializes GUI approval, repo mutation, and merge within the single application owner. */
+  /** 単一のアプリケーション所有者の中で、GUI 承認、リポジトリの変更、マージを直列化する。 */
   private async serial<T>(repositoryId: string, run: () => Promise<T>): Promise<T> {
     const step = (this.queues.get(repositoryId) ?? Promise.resolve()).then(run);
     const tail = step.then(() => undefined, () => undefined);
@@ -148,12 +148,12 @@ export class LocalPrService {
     try {
       return await step;
     } finally {
-      // A later queued operation has taken ownership of the map entry.
+      // 後からキューに入った操作がマップのエントリを引き継いでいる。
       if (this.queues.get(repositoryId) === tail) this.queues.delete(repositoryId);
     }
   }
 
-  /** Dispatches reads and mutations against one repository-specific storage capture. */
+  /** 対象リポジトリについて捕捉した一つのストレージに、読み取りと変更を振り分ける。 */
   private async perform(ctx: Execution, request: CoreRequest): Promise<LocalPrData<LocalPrCoreOperation>> {
     const { root, repositoryId } = ctx.repository;
     const { operation, input } = request;
@@ -165,7 +165,7 @@ export class LocalPrService {
     if (operation === "pr_branches") return this.branches(root);
     if (operation === "pr_create") return this.create(ctx, input);
 
-    // Agent operations never receive drafts, even indirectly through a public reply.
+    // Agent の操作には、公開された返信を介しても下書きを返さない。
     const record = await ctx.store.readLocalPr(repositoryId, input.prId, ctx.origin === "gui");
     ctx.guard();
     if (!record) throw new LocalPrError("PR_NOT_FOUND", "The Local PR does not exist in this repository.");
@@ -207,7 +207,7 @@ export class LocalPrService {
     }
   }
 
-  /** Lists only local commits and identifies the owning workspace's HEAD, including an unborn branch. */
+  /** ローカルコミットだけを列挙し、まだコミットがないブランチも含めて、所有ワークスペースの HEAD を特定する。 */
   private async branches(root: string): Promise<LocalPrData<"pr_branches">> {
     const [refs, head, headBranch] = await Promise.all([
       localPrGit(root, ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(symref)", "refs/heads"]),
@@ -222,12 +222,12 @@ export class LocalPrService {
     return { branches, head: head.code === 0 ? gitObjectId(gitLine(head.stdout)) : null, headBranch: symbolic?.startsWith("refs/heads/") ? symbolic : null };
   }
 
-  /** Creates the first immutable version without committing or stashing local edits. */
+  /** ローカルの編集をコミットも stash もせず、不変の初版を作る。 */
   private async create(ctx: Execution, input: LocalPrInput<"pr_create">): Promise<LocalPrDetail> {
     const { root, repositoryId } = ctx.repository;
     await validateLocalPrBranch(root, input.targetBranch);
     if (input.sourceBranch) {
-      // The source branch is provenance; only the submitted commit determines the reviewed contents.
+      // 元ブランチは出所の記録であり、レビュー対象の内容は提出されたコミットだけで決まる。
       await validateLocalPrBranch(root, input.sourceBranch);
       if (!await readLocalPrBranch(root, input.sourceBranch)) throw new LocalPrError("BRANCH_NOT_FOUND", "The selected source branch no longer exists.");
     }
@@ -242,7 +242,7 @@ export class LocalPrService {
     try {
       await ctx.store.createLocalPr(repositoryId, summary, version);
     } catch (error) {
-      // Pinning happens before save so an ambiguous write cannot orphan its commit objects.
+      // 保存前にコミットを固定し、書き込み結果が不明でもそのコミットオブジェクトが孤立しないようにする。
       const failure = storeWriteError(error);
       if (failure.effect === "unknown") this.changed(ctx);
       throw failure;
@@ -251,7 +251,7 @@ export class LocalPrService {
     return detail({ revision: 1, summary, approval: null, versions: [version], comments: [] }, version.targetCommit);
   }
 
-  /** Re-captures both tips; a target-only move still creates a new, unapproved version. */
+  /** 両方の先端コミットを取得し直す。マージ先だけが変わった場合も、未承認の新版を作る。 */
   private async submit(ctx: Execution, record: LocalPrRecord, input: LocalPrInput<"pr_submit">): Promise<LocalPrDetail> {
     const latest = requireOpenVersion(record, input.expectedVersion);
     const version = await this.capture(ctx, record.summary.targetBranch, latest.version + 1, input);
@@ -264,7 +264,7 @@ export class LocalPrService {
     return detail({ ...record, summary, approval: null, versions: [...record.versions, version] }, version.targetCommit);
   }
 
-  /** Reads the current target and merge base without substituting branch tips for the selected head. */
+  /** 選択された head をブランチの先端で置き換えずに、現在のマージ先とマージベースを読む。 */
   private async capture(
     ctx: Execution, branch: string, version: number, input: { headCommit: string; expectedTargetCommit?: string },
   ): Promise<LocalPrVersion> {
@@ -281,7 +281,7 @@ export class LocalPrService {
     return { version, targetCommit, headCommit: input.headCommit, mergeBaseCommit: gitObjectId(gitLine(base.stdout)), submittedAt: new Date().toISOString(), submittedBy: ctx.actor };
   }
 
-  /** Uses ordinary Git refs so past submissions survive branch deletion and object pruning. */
+  /** 通常の Git ref を使い、ブランチ削除やオブジェクトの刈り込み後も過去の提出版を保持する。 */
   private async pin(ctx: Execution, prId: string, version: LocalPrVersion): Promise<void> {
     const commits = new Set([version.headCommit, version.targetCommit, version.mergeBaseCommit].map(gitObjectId));
     const refUpdates = [...commits].map((commit) => `update refs/withmate/local-pr/${prId}/${commit} ${commit}`);
@@ -289,7 +289,7 @@ export class LocalPrService {
     await localPrGit(ctx.repository.root, ["update-ref", "--stdin"], refUpdates.join("\n") + "\n");
   }
 
-  /** A stale GUI tuple can be revoked, but cannot be used to approve a changed target. */
+  /** 古くなった GUI 承認の組は取り消せるが、変更されたマージ先の承認には使えない。 */
   private async approval(ctx: Execution, record: LocalPrRecord, input: ApprovalTuple, operation: "approve" | "revoke"): Promise<LocalPrDetail> {
     const version = requireTuple(record, input);
     const current = await readLocalPrBranch(ctx.repository.root, record.summary.targetBranch);
@@ -302,7 +302,7 @@ export class LocalPrService {
     return detail({ ...record, summary, approval }, current);
   }
 
-  /** Enforces the GUI approval tuple and Git target under the same application serialization. */
+  /** GUI 承認の組と Git のマージ先を、アプリケーションの同じ直列化の範囲内で検証する。 */
   private async merge(ctx: Execution, record: LocalPrRecord, input: LocalPrInput<"pr_merge">): Promise<LocalPrDetail> {
     const version = requireTuple(record, input);
     const branch = record.summary.targetBranch;
@@ -317,16 +317,16 @@ export class LocalPrService {
     try {
       mergedCommit = await mergeLocalPr(ctx.repository, branch, version, ctx.guard);
     } catch (error) {
-      // An indeterminate Git result may affect the worktree or target tip visible in other windows.
+      // Git の実行結果が不明でも、他のウィンドウから見える worktree やマージ先の先端が変わっている可能性がある。
       if (error instanceof LocalPrError && error.effect === "unknown") this.changed(ctx);
       throw error;
     }
     const summary = { ...this.touched(record), state: "merged", mergedCommit } as const;
     try {
-      // Git is already committed. Record that result even if the initiating Agent turn ends now.
+      // Git の変更は確定済み。開始した Agent の Turn がここで終わっても結果を記録する。
       await runWithoutRuntimeTurnAdmission(() => this.save(ctx, record, { summary, approval }, true));
     } catch {
-      // SQLite and Git cannot share a transaction; never claim a clean refusal after a confirmed ref update.
+      // SQLite と Git はトランザクションを共有できない。ref の更新が確認できた後は、副作用のない拒否として扱わない。
       this.changed(ctx);
       throw new LocalPrError("MERGE_EFFECT_UNKNOWN",
         `Git updated ${branch} to ${mergedCommit}, but the PR store did not confirm the merge. Refresh and inspect the branch before retrying.`, "unknown");
@@ -334,7 +334,7 @@ export class LocalPrService {
     return detail({ ...record, summary }, mergedCommit);
   }
 
-  /** Resolves public replies and immutable draft locations before persisting any comment. */
+  /** コメントを保存する前に、公開された返信先と、後から変わらない下書きの位置を解決する。 */
   private async comment(
     ctx: Execution, record: LocalPrRecord, input: CommentInput, draft: boolean, commentId?: string,
   ): Promise<LocalPrComment> {
@@ -356,10 +356,10 @@ export class LocalPrService {
       }
       anchor = parent.anchor;
     } else if (anchor && !prior) {
-      // Reply and edit locations were already validated when their original comment was made.
+      // 返信や編集の位置は、元のコメントを作成したときに検証済み。
       await validateLocalPrAnchor(ctx.repository.root, record.versions, record.summary.id, input.version, anchor);
     }
-    // Private draft edits must not change the public summary's last activity timestamp.
+    // 非公開の下書きを編集しても、公開概要の最終活動日時は変更しない。
     const stamp = new Date().toISOString();
     const summary = draft ? record.summary : { ...record.summary, updatedAt: stamp };
     const comment: LocalPrComment = {
@@ -371,19 +371,19 @@ export class LocalPrService {
     return comment;
   }
 
-  /** Confirms that only a GUI draft belonging to this PR may be edited, published or discarded. */
+  /** この PR に属する GUI の下書きだけが、編集・公開・破棄の対象になることを確認する。 */
   private requireDraft(record: LocalPrRecord, id: string): LocalPrComment {
     const comment = record.comments.find((item) => item.draft && item.id === id);
     if (!comment) throw new LocalPrError("DRAFT_NOT_FOUND", "The selected Local PR draft does not exist.");
     return comment;
   }
 
-  /** Updates the chronological review index without altering the stored PR identity. */
+  /** 保存された PR の識別情報は変えず、時系列のレビュー索引を更新する。 */
   private touched(record: LocalPrRecord): LocalPrSummary {
     return { ...record.summary, updatedAt: new Date().toISOString() };
   }
 
-  /** Persists a SQLite CAS and notifies repository listeners only after change or uncertain delivery. */
+  /** SQLite の比較・交換で保存し、変更があった場合か、結果の受信が不確かな場合だけリポジトリのリスナーに通知する。 */
   private async save(ctx: Execution, record: LocalPrRecord, change: LocalPrChange, finishingMerge = false): Promise<void> {
     if (finishingMerge) ctx.assertOwner();
     else ctx.guard();
@@ -391,7 +391,7 @@ export class LocalPrService {
     try {
       saved = await ctx.store.saveLocalPr(ctx.repository.repositoryId, record.revision, change);
     } catch (error) {
-      // An interrupted connection is not evidence that the transaction was rolled back.
+      // 接続が中断されても、トランザクションがロールバックされたとは限らない。
       const failure = storeWriteError(error);
       if (failure.effect === "unknown" && !finishingMerge) this.changed(ctx);
       throw failure;
@@ -400,12 +400,12 @@ export class LocalPrService {
     this.changed(ctx);
   }
 
-  /** A window notification failure must not turn a committed write into a rejected operation. */
+  /** ウィンドウ通知の失敗を理由に、確定済みの書き込みを拒否として扱わない。 */
   private changed(ctx: Execution): void {
     try {
       this.deps.onChanged(ctx.repository.repositoryId);
     } catch (error) {
-      // Reopening or refreshing still reads the authoritative Git and SQLite state.
+      // 開き直すか再読み込みすれば、Git と SQLite の正本の状態を取得できる。
       console.warn("Local PR change notification failed", error);
     }
   }

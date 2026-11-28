@@ -68,7 +68,7 @@ export type MainIpcWindowAssemblyContext = MainIpcEventWindowDeps &
   MainIpcWorkspaceValidationDeps &
   MainIpcAuxiliaryLookupDeps;
 
-/** Main-process window service ports owned by the window feature. */
+/** ウィンドウ機能が所有する Main プロセスのウィンドウサービス用ポート。 */
 export type MainIpcWindowServiceDeps = MainIpcHomeCrewDeps & {
   showSessionFilePreviewContextMenu: MainIpcWindowDeps["showSessionFilePreviewContextMenu"];
   listSessionFilePreviewWindows: MainIpcWindowDeps["listSessionFilePreviewWindows"];

@@ -11,7 +11,7 @@ export type CoordinationIdentityRead = {
   error?: string;
 };
 
-/** Only identities used by the visible page/detail are read; no history is loaded. */
+/** 表示中のページ・詳細で使う識別情報だけを読み取り、履歴は読み込まない。 */
 export function useCoordinationIdentities(identities: CoordinationIdentity[], active: boolean) {
   const [reads, setReads] = useState<Record<string, CoordinationIdentityRead>>({});
   const [revision, setRevision] = useState(0);

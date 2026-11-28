@@ -70,7 +70,7 @@ export function useCtrlWheelZoom(
         return nextZoom === effectiveZoom ? currentZoom : nextZoom;
       });
     };
-    // React's passive wheel listener cannot cancel the browser's Ctrl+wheel zoom.
+    // React の passive な wheel リスナーでは、ブラウザーの Ctrl+wheel ズームをキャンセルできない。
     viewport.addEventListener("wheel", handleWheel, { passive: false });
     return () => viewport.removeEventListener("wheel", handleWheel);
   }, [fitZoom, setZoom, viewportRef, wheelZoomStep]);

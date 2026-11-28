@@ -72,7 +72,7 @@ test("MainとAuxiliaryは失敗理由を本文と分離して再読する", asyn
       for (const owner of ["session_id", "auxiliary_session_id"]) {
         const id = owner === "session_id" ? "session-1" : "auxiliary-session-1";
         for (const seq of [1, 2, 3, 5]) {
-          // seq 5 belongs to a completed turn; seq 6 has no terminal evidence.
+          // `seq` 5 は完了済み Turn に属し、`seq` 6 には終端状態を示す記録がない。
           db.prepare(`INSERT INTO session_turns_v6 (${owner}, phase, assistant_message_seq, error_summary, started_at, updated_at)
             VALUES (?, ?, ?, ?, 'now', 'now')`).run(id, seq === 5 ? "completed" : "failed", seq, reason);
         }
@@ -968,7 +968,7 @@ test("Auxiliary送信の終了待ちは実SQLiteのconsumeと復元保存まで�
     getParentSession: (id) => id === parent.id ? parentStorage.getSession(id) : null,
     getStorage: () => {
       if (!auxiliaryStorage) throw new Error("storage closed");
-      // The production Worker adapter is asynchronous; gate only its save boundary.
+      // 本番の Worker アダプターは非同期なので、保存境界だけを保留する。
       const storage = auxiliaryStorage;
       return new Proxy(storage, {
         get(target, key) {
@@ -1069,8 +1069,8 @@ test("Auxiliary送信の終了待ちは実SQLiteのconsumeと復元保存まで�
     await assert.rejects(failedOperation, /draft restore failed/);
     assert.equal(await failedBarrier, false);
     assert.equal(auxiliaryStorage.getAuxiliaryDraft(failedSession.id)?.text, "");
-    // Another Window can still be awaiting its ACK when this send finishes.
-    // Starting the Main barrier later must not forget the failed restoration.
+    // この送信が完了する時点で、別の Window がまだ ACK を待っている場合がある。
+    // Main 側の待機を後から開始しても、復元の失敗を見失ってはならない。
     assert.equal(await service.waitForPendingDraftSends(), false);
     assert.equal(await service.waitForPendingDraftSends(), false);
 
@@ -2611,7 +2611,7 @@ test("Auxiliary draft migration はactive/closedを移行しmalformed payloadを
           .get(active.id) as { count: number }).count, 2);
         assert.equal((verify.prepare("SELECT auxiliary_session_id FROM session_turns_v6 WHERE id = 1")
           .get() as { auxiliary_session_id: string }).auxiliary_session_id, active.id);
-        // The released normalized schema also stores lifecycle columns independently of the payload.
+        // リリース済みの正規化スキーマでも、ライフサイクル用の列はペイロードと分けて保存する。
         verify.exec(`ALTER TABLE auxiliary_sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'active'
           CHECK (status IN ('active', 'closed'));
           ALTER TABLE auxiliary_sessions ADD COLUMN closed_at TEXT NOT NULL DEFAULT '';`);

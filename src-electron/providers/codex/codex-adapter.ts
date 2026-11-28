@@ -770,7 +770,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     try {
       this.logger?.(input);
     } catch {
-      /* Logging does not control execution. */
+      /* ログ記録は実行を左右しない。 */
     }
   }
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
@@ -831,7 +831,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           if (++burst >= 32) { burst = 0; await new Promise<void>((resolve) => setImmediate(resolve)); }
           const event = await transport.nextEvent();
           signal.throwIfAborted();
-          // Any request left to the client is not a native approval result.
+          // クライアントに対応が委ねられたリクエストは、ネイティブの承認結果ではない。
           if (event.kind === "serverRequest") throw new Error("Codex reviewer requires user interaction.");
           const params = asRecord(event.params);
           if (params.threadId !== threadId) continue;
@@ -1250,11 +1250,11 @@ export class CodexAdapter implements ProviderTurnAdapter {
       while (!state.turnCompleted) {
         signal?.throwIfAborted();
         if (projectionFailed) throw projectionError;
-        // Bound work even when nextEvent returns an already-resolved queue entry.
+        // nextEvent が解決済みのキュー項目を返し続けても、連続処理に上限を設ける。
         if (++burst >= 32) { burst = 0; await new Promise<void>((resolve) => setImmediate(resolve)); }
         let event: CodexProtocolEvent;
         try {
-          // close() rejects the transport's idle waiter without retaining consumed events.
+          // close() はトランスポートの待機を拒否し、消費済みのイベントを保持しない。
           event = await transport.nextEvent();
         } catch (error) {
           signal?.throwIfAborted();
@@ -1302,7 +1302,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         const incomingTurnId = typeof params.turnId === "string" ? params.turnId : turn.id;
         const inScope = (typeof params.threadId !== "string" || params.threadId === state.threadId)
           && (typeof incomingTurnId !== "string" || incomingTurnId === state.turnId);
-        // Prior-turn token usage establishes the baseline; other foreign-turn data has no projection use.
+        // 以前の Turn のトークン使用量は基準値に使うが、対象外の Turn のその他のデータは表示反映に使わない。
         if (typeof params.threadId === "string" && params.threadId !== state.threadId
           || !inScope && event.method !== "thread/tokenUsage/updated") continue;
         eventBatch.push({ method: event.method, params: event.params });
@@ -1320,7 +1320,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
               void transport.close().catch(() => undefined);
             };
             try {
-              // Async delivery answers are ordinary user messages, submitted by the session service.
+              // 非同期配信の回答は通常のユーザーメッセージとして Session サービスから送信する。
               void Promise.resolve(sessionInput.onElicitationRequest(request, asyncQuestionSignal)).catch(failQuestion);
             } catch (error) {
               failQuestion(error);

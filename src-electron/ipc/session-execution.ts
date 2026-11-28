@@ -25,8 +25,8 @@ export function registerSessionExecutionHandlers(ipc: IpcHandleRegistrar, deps: 
     if (readOperation === "read_conversation_threads" && (parsed.target.kind !== "main" || parsed.target.sessionId !== ownerSessionId)) {
       throw new Error("Main conversation projection requires the owning Session.");
     }
-    // The common reader validates the saved target/incarnation and Auxiliary parent.
-    // A GUI Session Window may read public saved information in any Crew.
+    // 共通の読み取り処理は、保存された対象と incarnation、および Auxiliary の親を検証する。
+    // GUI の Session ウィンドウは、どの Crew の公開保存情報でも読み取れる。
     const result = await deps.readExecution({ target: parsed.target, operation: readOperation, request: parsed });
     assertCurrent();
     if (typeof result === "object" && result !== null && "ok" in result && result.ok === false) return readFailure.parse(result);

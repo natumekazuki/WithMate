@@ -111,7 +111,7 @@ test("opened response Details and focus survive turn handoff and late saved sequ
             return sentResult;
           }
           if (operation !== "get_execution") return { ok: true, items: [], nextCursor: null };
-          // A new message-seq read cannot replace the already available execution until it arrives.
+          // 新しいメッセージ連番による読み取りは、結果が届くまではすでに取得済みの実行情報を置き換えられない。
           if (!input.turnId && !input.receiptId) return new Promise(() => {});
           const r = input.turnId === next.turnId || input.receiptId === next.id ? next
             : input.turnId === started.turnId || input.receiptId === receipt.id ? observed : null;

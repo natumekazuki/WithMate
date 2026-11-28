@@ -3,7 +3,7 @@ import { coordinationNotificationText, readCoordinationNotification } from "../.
 import type { CoordinationIdentity, CoordinationRecord } from "../../src-shared/coordination/coordination-contract.js";
 import type { SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
 
-/** A consultation follows its start receipt, never an unrelated additional input. */
+/** 相談は開始時の受領記録に対応付け、無関係な追加入力には結び付けない。 */
 export function assertCoordinationInputTurn(db: DatabaseSync, captured: SessionTurnQueueCapturedInput, owner: CoordinationIdentity, turnId: string): void {
   const delivery = captured.coordination;
   const row = delivery && db.prepare("SELECT payload_json FROM coordination_records_v7 WHERE id=?").get(delivery.id) as { payload_json: string } | undefined;
@@ -27,7 +27,7 @@ export function assertCoordinationInputTurn(db: DatabaseSync, captured: SessionT
   if (!related) throw new Error("Coordination does not belong to this running Turn.");
 }
 
-/** Preserve accepted answer text while taking current consultation state at dispatch. */
+/** 受理済みの回答本文を維持しつつ、配送時点の相談状態を反映する。 */
 export function coordinationDispatchJson(db: DatabaseSync, json: string): string {
   const captured = JSON.parse(json) as SessionTurnQueueCapturedInput;
   if (!captured.coordination) return json;
@@ -41,7 +41,7 @@ export function coordinationDispatchJson(db: DatabaseSync, json: string): string
   return JSON.stringify(captured);
 }
 
-/** Called in the transaction that saves the recipient's queued Turn input. */
+/** 受信側のキュー済み Turn 入力を保存するトランザクション内で呼び出す。 */
 export function acquireCoordinationAnswer(db: DatabaseSync, captured: SessionTurnQueueCapturedInput, owner: CoordinationIdentity): void {
   const delivery = captured.coordination;
   if (!delivery || delivery.operation !== "answer") return;

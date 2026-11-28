@@ -594,7 +594,7 @@ export function SessionMessageColumn({
     keys.splice(sharedPendingIndex, 0, responsePresentationKey!);
     return keys;
   }, [suppliedMessages, suppliedMessageKeys, sharedPendingIndex, responsePresentationKey, sessionId]);
-  // The inserted surface has no saved seq, search ordinal, or message group.
+  // 挿入する表示要素には保存済みの seq、検索順序番号、メッセージグループがない。
   const savedReplySourceIndexes = useMemo(() => insertPendingRowValue(suppliedSavedReplySourceIndexes, sharedPendingIndex, undefined), [suppliedSavedReplySourceIndexes, sharedPendingIndex]);
   const responseExecutionTurnIds = useMemo(() => insertPendingRowValue(suppliedResponseExecutionTurnIds, sharedPendingIndex, undefined), [suppliedResponseExecutionTurnIds, sharedPendingIndex]);
   const searchMessageIndexes = useMemo(() => insertPendingRowValue(suppliedSearchMessageIndexes, sharedPendingIndex, -1), [suppliedSearchMessageIndexes, sharedPendingIndex]);
@@ -767,8 +767,8 @@ export function SessionMessageColumn({
     const jump = handledMessageJumpRef.current;
     if (jump === messageJumpRequest && jump?.reply?.sentKey && jump.reply.isCurrent()
       && savedReplySourceIndexes?.[item.index] === jump.reply.seq) {
-      // On a frame switch, resize can see the previous offset before the jump's
-      // scroll event. A row that still contains the viewport must not shift it.
+      // フレーム切り替え時、移動後のスクロールイベントより先にサイズ変更処理が以前のオフセットを読む場合がある。
+      // まだ表示範囲と重なる行のサイズ変更では、スクロール位置をずらさない。
       const list = messageListRef.current;
       const row = list?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${item.index}"]`);
       if (list && row && row.getBoundingClientRect().bottom > list.getBoundingClientRect().top) return false;
@@ -825,7 +825,7 @@ export function SessionMessageColumn({
       const row = element?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
       if (element && row) {
         handledMessageJumpRef.current = messageJumpRequest;
-        // Replace the index target so a later reconciliation cannot undo the viewport offset.
+        // 行インデックスを指定した移動を置き換え、後続の整合処理で表示位置のオフセットが取り消されないようにする。
         messageVirtualizer.scrollToOffset(element.scrollTop + row.getBoundingClientRect().top - element.getBoundingClientRect().top - messageJumpRequest.offset);
         return;
       }
@@ -1254,8 +1254,8 @@ export function SessionMessageColumn({
           const matches = findRenderedTextMatchOffsets(index, findQuery);
           appendRenderedTextMatches(resolvedMatches, index, matches);
           if (current?.kind === "message" && current.messageIndex === messageIndex && !sourceMatch) {
-            // Count the original prefix, including a question currently replaced by controls.
-            // Form labels and inserted tool-only questions do not belong to the message body.
+            // 現在コントロールに置き換えられている質問も含め、元の先頭部分を数える。
+            // フォームのラベルやツールだけが挿入した質問はメッセージ本文に含まれない。
             const sourceStart = Number(richText.dataset.sourceStart ?? 0);
             const prefix = sourceStart > 0 ? messages[messageIndex].text.slice(0, sourceStart) : "";
             const prefixText = messageViewMode === "source" || !prefix ? prefix : projectMessageRenderedSearchText(prefix, messages[messageIndex].role === "assistant" ? provider : undefined);
@@ -1428,8 +1428,8 @@ export function SessionMessageColumn({
       if (turn) outgoingResponseRows.set(turn, index);
     }
   });
-  // A verified response owns the card. A saved input coordinate is a fallback
-  // until that response becomes available, not a second place to render it.
+  // 確認済みの応答にカードを紐付ける。保存済み入力の位置は
+  // その応答を取得できるまでの代替であり、カードを二重に描画するための場所ではない。
   const sourceRow = ({ sourceTurnId, sourceMessageSeq }: { sourceTurnId: string; sourceMessageSeq: number | null }) => {
     const savedRow = sourceMessageSeq === null ? undefined : outgoingSavedRows.get(sourceMessageSeq);
     return savedRow !== undefined && messages[savedRow].role === "assistant" ? savedRow : outgoingResponseRows.get(sourceTurnId) ?? savedRow;
@@ -1773,7 +1773,7 @@ export function SessionMessageColumn({
                           ) : null}
                         </div>
                       ) : null}
-                      {/* Keep the disclosure target without treating a collapsed empty body as a visible result. */}
+                      {/* 開閉操作の対象は残すが、折りたたまれて空の本文を表示中の結果として扱わない。 */}
                       <div
                         id={messageBodyId}
                         data-message-body={shouldRenderFullMessage || collapsedPreview ? "true" : "false"}

@@ -112,7 +112,7 @@ test("Character usage は fallback・空ID・無効JSON・owner回復・同時�
 // @end-test-value
 test("Character usage は少数/多数Character分布の全件を最新使用順で返す", async () => {
   const count = 3000;
-  // 19 makes repeated IDs use both storage routes and gives oldest/latest rows different orders.
+  // 19 件にすると、重複 ID が両方の保存経路を通り、最古と最新の行の並び順が異なる。
   for (const characterCount of [19, count]) {
     const rows = Array.from({ length: count }, (_, index): UsageRow => {
       const characterId = `char-${index % characterCount}`;

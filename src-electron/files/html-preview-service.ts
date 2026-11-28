@@ -26,7 +26,7 @@ export function registerHtmlPreviewScheme(): void {
   } }]);
 }
 
-/** Installed before loading any trusted application document. Unregistered guests never attach. */
+/** 信頼されたアプリの文書を読み込む前に設定する。未登録のゲストはアタッチさせない。 */
 export function configureHtmlPreviewHost(contents: WebContents): void {
   contents.on("will-attach-webview", (event, preferences, params) => {
     const preview = mounts.get(params.partition);
@@ -158,7 +158,7 @@ export class HtmlPreviewService {
           action: "allow",
           overrideBrowserWindowOptions: { show: false, autoHideMenuBar: true, webPreferences: { ...safePreferences, session: browserSession } },
           createWindow: (options) => {
-            // Keep Chromium's opener/postBody handling; hold requests until confirmation.
+            // Chromium の opener と postBody の処理を維持し、確認が済むまで要求を保留する。
             const child = new BrowserWindow({ ...options, show: false, webPreferences: { ...safePreferences, session: browserSession } });
             const childId = child.webContents.id;
             preview.windows.add(child);
@@ -223,7 +223,7 @@ export class HtmlPreviewService {
     };
     const download = (_event: Electron.Event, item: Electron.DownloadItem, contents: WebContents) => {
       if (!active() || !preview.contents.has(contents)) { item.cancel(); return; }
-      // Electron's Save dialog confirms destination and overwrite. Never choose an automatic save path.
+      // 保存先と上書きは Electron の保存ダイアログで確認する。保存先を自動で決めない。
       item.setSaveDialogOptions({ title: "Save HTML preview download" });
       downloads.add(item);
       item.once("done", (_doneEvent, state) => {
@@ -242,7 +242,7 @@ export class HtmlPreviewService {
         browserSession.protocol.unhandle(HTML_PREVIEW_SCHEME);
         browserSession.webRequest.onBeforeRequest((_details, callback) => callback({ cancel: true }));
         void Promise.all([browserSession.clearStorageData(), browserSession.clearCache(), browserSession.closeAllConnections()])
-          .catch(() => { /* This unique, non-persistent partition is never reused. */ });
+          .catch(() => { /* この非永続の専用パーティションは再利用しない。 */ });
         browserSession.removeListener("will-download", download);
         owner.removeListener("closed", dispose);
         if (!ownerContents.isDestroyed()) {

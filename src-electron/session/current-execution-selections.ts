@@ -16,7 +16,7 @@ function ownerIdentity(owner: SelectionOwner): string {
     : getSessionIncarnationId(owner);
 }
 
-/** Current UI selections for one persistent-store generation, independent of checkpoints. */
+/** 永続ストアの 1 世代に対する現在の UI 選択値。チェックポイントとは独立している。 */
 export class CurrentExecutionSelections {
   private readonly entries = new Map<string, CurrentSelection>();
 

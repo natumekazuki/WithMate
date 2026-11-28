@@ -23,7 +23,7 @@ import { buildNewSession, getSessionIncarnationId } from "../../src-shared/sessi
 
 const bundledCli = fileURLToPath(new URL("../../resources/cli/withmate-session.mjs", import.meta.url));
 
-/** The distributed CLI and real managed HTTP MCP use the same worker-owned body and reject invalid, expired and cross-owner requests without modifying it. */
+/** 配布 CLI と実際の管理対象 HTTP MCP が Worker の管理する同じ本文を使い、不正・失効済み・所有者をまたぐ要求を本文の変更なしに拒否することを確認する。 */
 test("bundled CLI and managed HTTP MCP only read and replace their bound Session instructions", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-instructions-transport-"));
   const registryDirectoryPath = join(directory, "runtime-registry");
@@ -32,7 +32,7 @@ test("bundled CLI and managed HTTP MCP only read and replace their bound Session
   t.after(async () => {
     await runningApi?.stop();
     await bundle.client.close();
-    // Remove only the isolated fixture directory created above.
+    // 先に作成した隔離 fixture のディレクトリだけを削除する。
     await rm(directory, { recursive: true, force: true });
   });
   await bundle.initialize();
@@ -65,10 +65,10 @@ test("bundled CLI and managed HTTP MCP only read and replace their bound Session
       return body;
     },
     setInstructions: async (target, body) => {
-      // Holding a write at its effect boundary lets the test revoke the original provider Turn.
+      // 書き込みを効果の適用直前で保留し、元のプロバイダー Turn をテストから失効させられるようにする。
       await beforeWrite?.();
       if (afterQueuedWrite) {
-        // A fresh Worker cannot dispatch until the main thread processes its ready event.
+        // 新しい Worker は、メインスレッドが ready イベントを処理するまで要求を送出できない。
         const delayed = createV6StorageWorkerBundle({ dbPath: join(directory, APP_DATABASE_V6_FILENAME), userDataPath: directory });
         try {
           const request = delayed.stores.instructions.set(target, body);
@@ -94,11 +94,11 @@ test("bundled CLI and managed HTTP MCP only read and replace their bound Session
   const connection = await resolveAgentRuntimeApi({ adapter: "mcp", env: {}, registryRootDirectoryPath: registryDirectoryPath, ...owner });
   assert.equal(connection.kind, "selected");
   if (connection.kind !== "selected") {
-    // A discovery failure is a fixture error, not an authentication rejection under test.
+    // 接続先の検出失敗は fixture のエラーであり、検証対象の認証による拒否ではない。
     throw new Error("Fixture runtime discovery failed.");
   }
 
-  /** Start a real binding and managed MCP credential for one saved actor and invoke the bundled CLI with the same authority. */
+  /** 保存済みの一つの actor に実際の binding と管理対象 MCP の資格情報を発行し、同じ権限で同梱 CLI を呼び出す。 */
   const bind = async (target: SessionTarget) => {
     const binding = bindings.issueOrReuse({ actorSessionId: target.sessionId, providerId: "codex",
       authoritySnapshot: { sessionIdentity: target, sessionWorkspacePath: directory }, operationGrants: getSessionAgentRuntimeOperations() });
@@ -120,7 +120,7 @@ test("bundled CLI and managed HTTP MCP only read and replace their bound Session
         } });
         return { exit: 0, stdout: result.stdout };
       } catch (error) {
-        // Nonzero CLI exits are part of the public error contract.
+        // CLI の非ゼロ終了は、公開エラー契約の一部である。
         const failure = error as { code: number; stdout: string };
         return { exit: failure.code, stdout: failure.stdout };
       }
@@ -134,7 +134,7 @@ test("bundled CLI and managed HTTP MCP only read and replace their bound Session
     assert.match(help.stdout, /set-instructions.*byteLength, not body/);
     const schema = JSON.parse((await mainRuntime.cli(["schema"])).stdout).operations;
     const tools = (await mainRuntime.client.listTools()).tools;
-    // Verify the advertised schema as well as the runtime rejection of unexpected keys.
+    // 公開スキーマと、実行時に想定外のキーを拒否する挙動の両方を確認する。
     for (const operation of ["get_instructions", "set_instructions"] as const) {
       const tool = tools.find(({ name }) => name === `session.${operation}`);
       assert.ok(tool);
@@ -180,7 +180,7 @@ test("bundled CLI and managed HTTP MCP only read and replace their bound Session
     });
     assert.deepEqual(JSON.parse(rejectedCli.stdout), rejectedMcp.structuredContent);
 
-    // A target override fails identically in both adapters, for read and for write.
+    // 読み取りでも書き込みでも、対象の上書き指定は両アダプターで同じように拒否される。
     for (const [name, args, input] of [
       ["get_instructions", readArgs, { target: mainTarget }],
       ["set_instructions", ["set-instructions"], { body: "forged", target: mainTarget }],
@@ -219,8 +219,8 @@ test("bundled CLI and managed HTTP MCP only read and replace their bound Session
     assert.equal(expired.effect, "none");
     assert.equal(await instructions.get(auxTarget), "");
 
-    // Revoking only the binding after queueing the command must also block the pending write.
-    // Native completion can close the MCP connection without ending application-save admission.
+    // コマンドをキューに入れた後に binding だけを失効させた場合も、保留中の書き込みを阻止する必要がある。
+    // ネイティブ実行の完了で MCP 接続が閉じても、アプリケーション側の保存受付は終了するとは限らない。
     runtime.managedMcp.closeConnection(mainRuntime.turn);
     beforeWrite = undefined;
     afterQueuedWrite = () => bindings.revokeProviderExecution(mainTarget.sessionId, "codex");

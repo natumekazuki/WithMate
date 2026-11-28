@@ -8,7 +8,7 @@ import {
   type CoordinationSummary,
 } from "./coordination-contract.js";
 
-/** Current Session display metadata, not a snapshot captured by the record. */
+/** 現時点の Session 表示用メタデータであり、レコードに記録されたスナップショットではない。 */
 export type CoordinationDisplayIdentity = {
   title: string;
   character: { name: string; iconPath: string };
@@ -38,7 +38,7 @@ export type CoordinationStatus = {
 export type CoordinationStatusResult = CoordinationStatus | CoordinationDeletedResult;
 export type CoordinationWindowApi = {
   getCoordinationIdentity(identity: CoordinationIdentity): Promise<CoordinationDisplayIdentity | null>;
-  /** Visible consultation status only; full user reads and Agent operations use their existing paths. */
+  /** 画面に表示する相談の状態のみ。ユーザーによる詳細の読み取りと Agent の操作は既存経路を使う。 */
   getCoordinationStatus(request: CoordinationStatusRequest): Promise<CoordinationStatusResult>;
   executeCoordination(
     request: CoordinationRequest,

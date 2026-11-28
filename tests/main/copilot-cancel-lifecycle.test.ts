@@ -86,7 +86,7 @@ class FakeSession {
     this.abortReply.reject(new Error("Connection is closed."));
     this.disconnectReply.reject(new Error("Connection is closed."));
     this.inputAck.reject(new Error("Connection is closed."));
-    // Unused RPC gates are fixture controls, not dispatched requests.
+    // 使われなかった RPC の待機点は fixture の制御用であり、送出された要求ではない。
     void this.abortReply.promise.catch(() => undefined);
     void this.disconnectReply.promise.catch(() => undefined);
     void this.inputAck.promise.catch(() => undefined);
@@ -162,11 +162,11 @@ class FakeClient {
     if (this.forceMode === "pending") await this.forceReply.promise;
     if (this.forceMode === "reject") throw new Error("force stop unavailable");
     this.closeTransport();
-    // Exercise transport disposal without process-exit confirmation, including
-    // failed termination. The adapter must retain its captured child lifetime.
+    // 終了に失敗する場合も含め、プロセスの終了確認なしで通信経路を破棄する状況を再現する。
+    // アダプターは取得済みの子プロセスの生存期間を引き続き追跡する必要がある。
     const child = this.cliProcess;
     this.cliProcess = null;
-    try { child?.kill(); } catch { /* SDK suppresses kill failures. */ }
+    try { child?.kill(); } catch { /* SDK は `kill` の失敗を握りつぶす。 */ }
   }
 }
 
@@ -200,7 +200,7 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
       options.configureClient?.(fake, clients.length);
       clients.push(fake);
       if (options.realForceStop) {
-        // Instantiate the SDK without starting a process or contacting Copilot.
+        // プロセスを起動せず、Copilot に接続せずに SDK のインスタンスを作る。
         const sdk = new CopilotClient({ connection: RuntimeConnection.forStdio({ path: "unused-cancel-fixture" }) });
         sdk.createSession = async () => await fake.createSession() as unknown as CopilotSession;
         sdk.resumeSession = async (id) => await fake.resumeSession(id) as unknown as CopilotSession;
@@ -579,8 +579,8 @@ it("Copilotはsend呼出後の結果不明を自動再送しない", { timeout: 
         client.onSend = (prompt) => {
           prompts.push(prompt);
           effects.push("external action accepted");
-          // Settle an unexpected second dispatch so the assertions report the
-          // duplicate rather than waiting for the retry to finish.
+          // 想定外の二度目の送出を完了させ、
+          // 再試行の完了を待ち続けるのではなく、アサーションで重複を報告できるようにする。
           if (index > 0) {
             const retried = client.sessions.at(-1)!;
             retried.sends[0].resolve("retried");
@@ -642,7 +642,7 @@ it("Copilotはsend未呼出の接続準備を一度だけ回復する", { timeou
         };
       } });
       if (stage === "event registration") {
-        // Prime a real adapter cache and persisted thread via the runtime fixture.
+        // ランタイムの fixture を通じ、実アダプターのキャッシュと永続化されたスレッドを用意する。
         await f.start("prime");
         prompts.length = 0;
         const cached = await f.current();

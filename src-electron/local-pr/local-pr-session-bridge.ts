@@ -5,7 +5,7 @@ import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import { MainSessionTurnQueueFacade, SessionTurnQueuePreflightRejectedError } from "../app/main-session-turn-queue-facade.js";
 import { failure } from "./local-pr-application.js";
 
-/** Send the assembled discussion through the existing GUI Turn intake and receipt contract. */
+/** 組み立てた議論を、既存の GUI Turn の受付経路と受領記録の契約に従って送信する。 */
 export async function enqueueLocalPrDiscussion(
   queue: Pick<MainSessionTurnQueueFacade, "enqueueSessionTurn" | "getSessionTurnQueueReceipt">,
   input: LocalPrInput<"discuss">,
@@ -20,7 +20,7 @@ export async function enqueueLocalPrDiscussion(
     return failure("PR_DISCUSSION_TARGET", "The selected Session is no longer available for sending.");
   }
 
-  // Use the original request ID to reconcile an ambiguous result; never start a second Turn implicitly.
+  // 結果が不明な場合は元の要求 ID で照合する。暗黙に二つ目の Turn を開始しない。
   const receipt = async (): Promise<LocalPrResult<"discuss"> | null> => {
     const previous = await queue.getSessionTurnQueueReceipt(sessionId, input.requestId, incarnationId);
     if (!previous) return null;
@@ -46,7 +46,7 @@ export async function enqueueLocalPrDiscussion(
     try {
       const known = await receipt();
       if (known) return known;
-    } catch { /* The transport result is still unknown, so preserve the request identity. */ }
+    } catch { /* 通信結果は引き続き不明なので、要求の識別情報を保持する。 */ }
     return failure("PR_DISCUSSION_UNKNOWN", "Session acceptance could not be confirmed. Retry the same request to check its receipt.", "unknown");
   }
 }

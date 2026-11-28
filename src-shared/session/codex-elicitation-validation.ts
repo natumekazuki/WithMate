@@ -3,7 +3,7 @@ import type { LiveElicitationField } from "./runtime-state.js";
 
 const mcpDateTimePattern = regexes.datetime({ offset: true });
 
-/** Validate the submitted value, not the editor draft. Omission is allowed only for optional fields. */
+/** エディターの下書きではなく送信された値を検証する。省略は任意項目だけに許可する。 */
 export function isValidCodexElicitationField(field: LiveElicitationField, value: unknown): boolean {
   if (value === undefined) return !field.required;
   switch (field.type) {
@@ -27,7 +27,7 @@ export function isValidCodexElicitationField(field: LiveElicitationField, value:
   }
 }
 
-/** Check the full response at the boundary that accepts a Codex form answer. */
+/** Codex フォームの回答を受け付ける境界で、回答全体を検証する。 */
 export function isValidCodexElicitationContent(fields: LiveElicitationField[], content: unknown): boolean {
   const values = content === undefined ? {} : content;
   if (values === null || typeof values !== "object" || Array.isArray(values)) return false;

@@ -869,7 +869,7 @@ async function walkWorkspace(
 
 export async function scanWorkspacePaths(rootDirectory: string): Promise<SnapshotScanResult> {
   return walkWorkspace(rootDirectory, async () => {
-    // no-op
+    // 処理なし。
   });
 }
 

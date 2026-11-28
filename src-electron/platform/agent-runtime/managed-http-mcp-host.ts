@@ -139,7 +139,7 @@ export class ManagedHttpMcpHost {
     this.#options.turns.end(handle);
   }
 
-  /** Native completion closes tool access without ending application-save admission. */
+  /** ネイティブ側の処理が完了したらツールへのアクセスを閉じるが、アプリケーションによる保存の受付は終了しない。 */
   closeConnection(handle: ProviderAgentRuntimeTurnHandle): void {
     for (const context of this.#connections.values()) {
       if (context.handle !== handle) continue;

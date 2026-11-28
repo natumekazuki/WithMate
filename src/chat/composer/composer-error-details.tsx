@@ -28,7 +28,7 @@ export function ComposerErrorDetails({ label, message, isActive = true }: { labe
       const trigger = triggerRef.current;
       const panel = panelRef.current;
       if (!trigger || !panel) return;
-      // Keep the entire recovery row, including wrapped buttons, unobscured.
+      // 折り返されたボタンも含め、復旧操作の行全体が隠れないようにする。
       const anchor = (trigger.closest(".composer-save-feedback") ?? trigger).getBoundingClientRect();
       const margin = 16;
       const gap = 8;

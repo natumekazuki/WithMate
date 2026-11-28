@@ -470,7 +470,7 @@ test("旧turn通知と遅いsnapshotで現在のMain/Auxiliaryを巻き戻さな
     assert.ok(home.element.querySelector('[aria-label="Main Running"]'));
     assert.ok(home.element.querySelector('[aria-label="Auxiliary Waiting For Stop: 1"]'));
 
-    await home.emitLive("open", "requested"); // Old-turn notification; query still returns the new turn.
+    await home.emitLive("open", "requested"); // 旧 Turn の通知。読み取り結果は引き続き新しい Turn を返す。
     assert.ok(home.element.querySelector('[aria-label="Main Running"]'));
     home.setListPage(async (request) => page(request.scope === "open" ? [session("open")] : []));
     home.setMonitorEntries(async () => [session("open")]);
@@ -733,7 +733,7 @@ test("追加pageの失敗は行を残し、Retryで続きを表示する", async
     assert.match(home.element.textContent ?? "", /first/);
     const sentinel = home.element.querySelector(".home-session-list-load-sentinel");
     assert.ok(sentinel);
-    // JSDOM has no IntersectionObserver; install one for the panel's actual pagination callback.
+    // JSDOM には `IntersectionObserver` がないため、パネルの実際のページ送りコールバックを動かすために用意する。
     const previousObserver = globalThis.IntersectionObserver;
     let trigger!: () => void;
     class TestObserver {

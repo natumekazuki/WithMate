@@ -2,7 +2,7 @@ import type { CharacterRuntimeSnapshot } from "../../src-shared/character/charac
 import { NEUTRAL_CHARACTER_ID } from "../../src-shared/character/character-owner.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 
-/** Resolves one definition for the whole turn without mutating the saved Session. */
+/** 保存済みの Session を変更せず、Turn 全体で使う定義を一つ解決する。 */
 export async function refreshSessionCharacterRuntimeSnapshot(
   session: Session,
   refreshSnapshot: (

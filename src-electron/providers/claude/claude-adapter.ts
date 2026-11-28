@@ -88,7 +88,7 @@ function commandOf(name: string, input: unknown, redactor: ProviderAgentRuntimeB
   const preview = (command.length > PROVIDER_TEXT_PREVIEW_LIMIT
     ? `${sanitized}\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`
     : sanitized) || null;
-  // Detach the bounded preview from the native command's backing string.
+  // 長さを制限したプレビューが、元のコマンド文字列の内部表現を保持しないようにする。
   return command.length > PROVIDER_TEXT_PREVIEW_LIMIT
     ? JSON.parse(JSON.stringify(preview)) as string
     : preview;
@@ -96,7 +96,7 @@ function commandOf(name: string, input: unknown, redactor: ProviderAgentRuntimeB
 
 
 function usageFromResult(result: SDKResultMessage, resumed: boolean): ProviderUsage {
-  // modelUsage includes subagents, but its totals can include older turns after resume.
+  // modelUsage はサブエージェントも含むが、再開後の集計には以前の Turn が含まれることがある。
   const models = resumed ? [] : Object.values(result.modelUsage ?? {});
   const inputTokens = models.length > 0
     ? models.reduce((sum, usage) => sum + usage.inputTokens + usage.cacheReadInputTokens + usage.cacheCreationInputTokens, 0)
@@ -296,7 +296,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     async function* emptyInput(): AsyncGenerator<SDKUserMessage> { await inputClosed; }
     try {
       if (controller.signal.aborted) throw new Error("Canceled");
-      // Managed policy can force hooks and MCP before any prompt is supplied.
+      // 管理ポリシーによって、プロンプトを渡す前でもフックや MCP が強制されることがある。
       const settings = await signalRace(this.inspectSettings({ cwd: process.cwd(), settingSources: [] }), controller.signal);
       if (settings.sources.some((source) => source.source === "managed")) throw new Error("Claude quota retrieval is unavailable with managed settings");
       if (controller.signal.aborted) throw new Error("Canceled");
@@ -334,8 +334,8 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       }
     }
   }
-  async invalidateSessionThread(): Promise<void> { /* One process per turn; no cached thread. */ }
-  async invalidateAllSessionThreads(): Promise<void> { /* One process per turn; no cached thread. */ }
+  async invalidateSessionThread(): Promise<void> { /* Turn ごとにプロセスを起動し、スレッドはキャッシュしない。 */ }
+  async invalidateAllSessionThreads(): Promise<void> { /* Turn ごとにプロセスを起動し、スレッドはキャッシュしない。 */ }
 
   private makeTrace(threadId: string | null, redactor = createProviderAgentRuntimeBindingRedactor(null)): ClaudeTrace {
     return { threadId, messages: [], streamingBlocks: new Map(), pendingBlockIndexes: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), backgroundTasks: new ProviderProgressMap(), backgroundTaskInfo: new Map(), backgroundFailure: "", operations: [], redactor, usage: null, result: null, resultOutputCurrent: false, errorMessage: "" };
@@ -410,7 +410,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       }
       const existing = entry.deliveries.findIndex((delivery) => delivery.uuid === message.uuid);
       const previous = entry.deliveries[existing];
-      // Each SDK notification contains completed blocks, not a message-wide snapshot.
+      // SDK の各通知に含まれるのは完了したブロックであり、メッセージ全体のスナップショットではない。
       const indexes = trace.streamingId === messageId && !previous ? trace.pendingBlockIndexes.splice(0, content.length) : [];
       const delivery = { uuid: message.uuid, blocks: content.map((block, localIndex) => ({
         index: previous?.blocks[localIndex]?.index ?? indexes[localIndex],
@@ -539,7 +539,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         if (signal.aborted) throw new Error("Canceled");
         return action(signal);
       });
-      // Keep the single pending service slot occupied until its actual request settles.
+      // 実際のリクエストが完了するまで、サービス処理の唯一の待機枠を占有したままにする。
       interactionTail = pending.then(() => undefined, () => undefined);
       return signalRace(pending, signal);
     };
@@ -601,7 +601,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         childExited = new Promise<void>((resolve) => {
           child.once("exit", () => resolve());
           child.once("error", () => {
-            // AbortError may precede exit. Only a failed spawn has no child to await.
+            // AbortError は exit より先に届くことがある。待機すべき子プロセスがないのは、起動に失敗した場合だけ。
             if (child.pid === undefined) resolve();
           });
         });
@@ -697,8 +697,8 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       if (controller.signal.aborted) throw new Error("Canceled");
       async function* sdkInput(): AsyncGenerator<SDKUserMessage> {
         yield userMessage;
-        // A transcript-only notification can emit a result before this send runs.
-        // Do not let that result close the SDK's approval/hook input channel.
+        // トランスクリプトのみの通知が、この送信の処理前に結果を通知することがある。
+        // その結果で SDK の承認・フック用入力チャネルを閉じないようにする。
         await inputReleased;
       }
       iterator = this.runQuery({ prompt: sdkInput(), options });
@@ -731,8 +731,8 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
           }
         }
         await signalRace(progress(), controller.signal);
-        // The input result can precede background reports. SDK idle, not an empty
-        // task snapshot, confirms that their parent turn has finished processing.
+        // 入力の結果はバックグラウンド処理の報告より先に届くことがある。親 Turn の処理完了は、
+        // タスクのスナップショットが空かどうかではなく、SDK の idle で確認する。
         if (trace.result && (trace.result.subtype !== "success" || trace.result.is_error || sessionState === "idle")) {
           terminalReceived = true;
           break;

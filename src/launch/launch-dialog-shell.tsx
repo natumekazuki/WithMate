@@ -6,7 +6,7 @@ type LaunchDialogShellProps = {
   dialogRef: RefObject<HTMLElement | null>;
   onKeyDown: KeyboardEventHandler<HTMLElement>;
   ariaLabel?: string;
-  /** ID of the visible heading used as the dialog name. */
+  /** ダイアログ名に使う、画面上の見出しの ID。 */
   ariaLabelledBy?: string;
   showDismissControl?: boolean;
   closeOnBackdropClick?: boolean;

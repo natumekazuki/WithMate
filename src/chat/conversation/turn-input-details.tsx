@@ -63,8 +63,8 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
   const statusReference = input && !receiptId && message.historyIndex !== undefined
     ? { messageSeq: message.historyIndex } : reference ?? (message.historyIndex !== undefined ? { messageSeq: message.historyIndex } : null);
   const referenceIdentity = JSON.stringify([context, statusReference, mode]);
-  // The rendered retry input can outlive its active receipt. Reuse only a display read already
-  // bound to this owner's exact saved user sequence, while the saved-sequence read catches up.
+  // 再試行した入力の表示は、処理中の受付情報がなくなった後も残る場合がある。
+  // 保存シーケンスでの読み取りが追いつくまでは、この所有者の正確なユーザー入力シーケンスに紐付け済みの表示データだけを再利用する。
   const retainsRetryDisplay = mode === "display" && message.role === "user" && !receiptId
     && message.historyIndex !== undefined && loaded?.retryUserSeq === message.historyIndex
     && loaded.display?.receiptId && loaded.key === JSON.stringify([context, { receiptId: loaded.display.receiptId }, mode]);
@@ -72,12 +72,12 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
   const observed = currentRead?.display ?? null;
   const execution = currentRead?.execution ?? null;
   const captured = receipt?.dispatched ?? receipt?.captured;
-  // A direct additional input belongs to its own sender, not the Turn's start input.
+  // 直接送った追加入力は、Turn の開始入力でなく、その追加入力自体の送信者に属する。
   const origin = input && !receiptId ? input.origin : observed?.origin ?? execution?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
   const displayOrigin = projectRetryInputAuthor(origin, captured ? captured.retrySource : observed?.retrySource,
     receipt ? !!captured?.retrySource && retryReceiptInputUnchanged(receipt) : observed?.retryInputUnchanged);
   const observedAuthor = projectRetryInputAuthor(origin, observed?.retrySource, observed?.retryInputUnchanged);
-  // The local queue may reflect a newer edit than the last read. Never paint it with the earlier author's color.
+  // ローカルのキューには直近の読み取りよりも新しい編集が反映されている場合がある。その場合に以前の作成者の色で描画しない。
   const senderTheme = displayOrigin?.kind === "session" && observedAuthor?.kind === "session"
     && displayOrigin.actorSessionId === observedAuthor.actorSessionId && displayOrigin.actorIncarnationId === observedAuthor.actorIncarnationId
     && displayOrigin.actorKind === observedAuthor.actorKind
@@ -95,7 +95,7 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
   useEffect(() => {
     if (!active || mode !== "display" || !sourceSessionId) return;
     return getWithMateApi()?.subscribeSessionInvalidation?.((event) => {
-      // Main title, description and pin updates affect only summaries, not saved origin or color.
+      // Main のタイトル・説明・ピンの更新が変えるのは要約だけで、保存済みの来歴や色には影響しない。
       if (event.detailChanged === false) return;
       if (event.scope === "ids" && !event.sessionIds.includes(sourceSessionId) && (!sourceMainId || !event.sessionIds.includes(sourceMainId))) return;
       setRevision((value) => value + 1);

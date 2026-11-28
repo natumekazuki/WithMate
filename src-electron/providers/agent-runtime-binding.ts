@@ -311,7 +311,7 @@ export class AgentRuntimeBindingRegistry {
     return active.record.executionGeneration;
   }
 
-  /** Captures the shared revocation state of an already authenticated, exact binding. */
+  /** 認証済みの特定のバインディングに対応する共有の失効状態を取得する。 */
   getBindingRevocationState(binding: ResolvedAgentRuntimeBinding): SharedArrayBuffer | null {
     const active = this.bindingsByKey.get(bindingKey(binding.actorSessionId, binding.providerId));
     return active?.record.executionGeneration === binding.executionGeneration ? active.revocationState : null;
@@ -339,7 +339,7 @@ export class AgentRuntimeBindingRegistry {
   }
 
   private removeActiveBinding(key: string, active: ActiveBinding): void {
-    // Already-dispatched work must observe revocation even when the originating Turn stays active.
+    // 起点の Turn が続いていても、送出済みの処理はバインディングの失効を検知できなければならない。
     Atomics.store(new Int32Array(active.revocationState), 0, 1);
     this.bindingsByKey.delete(key);
     this.keysByReferenceHash.delete(active.record.bindingReferenceHash);
@@ -350,7 +350,7 @@ export class AgentRuntimeBindingRegistry {
       try {
         listener({ ...change });
       } catch {
-        // Binding state transitions must not fail because a projection listener failed.
+        // 表示反映のリスナーが失敗しても、バインディングの状態遷移は失敗させない。
       }
     }
   }

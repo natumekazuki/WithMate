@@ -1,6 +1,6 @@
 import type { ElicitationRecord, LiveElicitationRequest, LiveElicitationResponse } from "../../src-shared/session/runtime-state.js";
 
-/** Project only answers that correspond to the submitted values, never secret fields. */
+/** 送信された値に対応する回答のみを反映し、機密フィールドは反映しない。 */
 export function questionAnswerHistory(
   request: LiveElicitationRequest,
   response: LiveElicitationResponse,

@@ -210,7 +210,7 @@ export function CoordinationPane({
       detail.refresh();
       list.refresh();
     } catch (error) {
-      // Keep both the text and exact operation for an explicit idempotent retry.
+      // 明示的に冪等な再試行をできるよう、本文と正確な操作をどちらも残す。
       setDrafts((current) => ({
         ...current,
         [key]: {

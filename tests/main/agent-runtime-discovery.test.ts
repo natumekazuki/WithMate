@@ -148,7 +148,7 @@ test("bound selectorの不一致と欠落は別ownerへfallbackしない", async
         [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV]: scenario.application,
         [WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV]: scenario.generation,
       },
-      // CLI options cannot override the captured bound env identity.
+      // CLI オプションでは、環境変数から取得した binding の識別情報を上書きできない。
       applicationInstanceId: current.applicationInstanceId,
       runtimeGenerationId: current.runtimeGenerationId,
       fetch: async () => { challenges++; throw new Error("must not challenge a different owner"); },

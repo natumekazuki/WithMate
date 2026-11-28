@@ -28,17 +28,17 @@ export type RunSessionTurnInput = {
   userMessage: string;
   replyTo?: import("../../src-shared/session/session-reply.js").SessionReply;
   messageIdentity?: { sessionId: string; incarnationId: string; seq?: number; finalAnswerTurnId?: string };
-  /** Main display thread for this input. The exact history owner is its Message Identity. */
+  /** この入力を Main に表示するためのスレッド。履歴の厳密な所有者は Message Identity で識別する。 */
   mainConversationFrame?: import("../../src-shared/session/session-target.js").MainSessionTarget | null;
   inputProvenance?: { origin: SessionTurnQueueOrigin | import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin | null; originalChanged: boolean | null; retrySource?: import("../../src-shared/session/session-turn-queue.js").SessionTurnQueueCapturedInput["retrySource"]; coordinationOperation?: string; coordination?: import("../../src-shared/coordination/coordination-delivery.js").CoordinationNotification };
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
   currentDateTime?: string;
-  /** Verbatim saved body captured once at the start of this Turn. */
+  /** この Turn の開始時に一度だけ取得した、保存済みの本文そのもの。 */
   readonly sessionInstructions?: string;
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null;
   signal?: AbortSignal;
-  /** Resolves only after owned process cleanup is confirmed, independently of turn outcome. */
+  /** Turn の成否とは独立に、管理下のプロセスの後片付けを確認してから、渡す Promise が解決する。 */
   onCleanupPending?: (completion: Promise<void>) => void;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
   onElicitationRequest?: RunSessionTurnElicitationRequestHandler;
@@ -53,7 +53,7 @@ export function resolveRunWorkspacePath(input: Pick<RunSessionTurnInput, "sessio
 }
 
 export type RunSessionTurnProgressChanges = {
-  /** False when state collections are empty and changes carry the collection update. */
+  /** state 内のコレクションが空で、更新内容を changes で伝える場合は false。 */
   snapshot?: false;
   steps: { upserts: LiveSessionRunState["steps"]; removes: string[] };
   backgroundTasks: { upserts: LiveSessionRunState["backgroundTasks"]; removes: string[] };
@@ -67,22 +67,22 @@ export type RunSessionTurnProgressHandler = (
 export type ApprovalDecisionSource = "manual" | "reviewer" | "blocked";
 export type ApprovalDecisionSourceObserver = (source: ApprovalDecisionSource) => void;
 
-/** Decision reporting must not change the approval outcome. */
+/** 判定元の通知は承認結果を変えてはならない。 */
 export function reportApprovalDecisionSource(observer: ApprovalDecisionSourceObserver | undefined, source: ApprovalDecisionSource): void {
   if (!observer) return;
   try {
     void Promise.resolve(observer(source)).catch(() => undefined);
   } catch {
-    // An observer cannot approve or veto the decision.
+    // 監視側はその判定を承認したり覆したりできない。
   }
 }
 
 export type RunSessionTurnApprovalRequestHandler = (
   request: LiveApprovalRequest,
   signal?: AbortSignal,
-  /** Complete redacted native operation and any native freshness check; never a display preview. */
+  /** 秘匿化済みのネイティブ操作全体と、ネイティブ側で操作が引き続き有効かを確認する処理。表示用プレビューは使わない。 */
   review?: { operation: unknown; isCurrent?: () => boolean },
-  /** Called once with the source of this decision, before the returned result is consumed. */
+  /** 戻り値が利用される前に、この判定の出所を引数として一度だけ呼ばれる。 */
   onDecisionSource?: ApprovalDecisionSourceObserver,
 ) => Promise<LiveApprovalDecision> | LiveApprovalDecision;
 

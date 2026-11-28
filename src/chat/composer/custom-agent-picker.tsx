@@ -79,7 +79,7 @@ export function CustomAgentPicker({ items, isOpen, loading, disabled, label, tit
   useEffect(() => {
     if (!open || !positioned) return;
     const list = listRef.current;
-    // Preserve navigation when the owner refreshes the same candidate list.
+    // 所有元が同じ候補一覧を更新しても、現在の移動位置を維持する。
     if (list?.contains(document.activeElement)) return;
     const option = list?.querySelector<HTMLElement>('[aria-selected="true"]')
       ?? list?.querySelector<HTMLElement>('[role="option"]');
@@ -123,7 +123,7 @@ export function CustomAgentPicker({ items, isOpen, loading, disabled, label, tit
           event.stopPropagation();
           close(true);
         } else if (event.key === "Tab") {
-          // Resume native tab order at the trigger instead of the body portal.
+          // body のポータルではなく、開くボタンを起点にブラウザー標準の Tab 順へ戻る。
           close(true);
         }
       }}>
@@ -140,7 +140,7 @@ export function CustomAgentPicker({ items, isOpen, loading, disabled, label, tit
           key={item.key} type="button" role="option" aria-selected={item.isSelected}
           tabIndex={item.isSelected || (!items.some((entry) => entry.isSelected) && index === 0) ? 0 : -1}
           className="composer-agent-option" title={item.title} onClick={() => {
-            // Selection persists asynchronously. Keep focus at its surviving origin.
+            // 選択は非同期に保存される。フォーカスは画面に残る起点に戻しておく。
             triggerRef.current?.focus({ preventScroll: true });
             onSelect(item.value);
           }}>

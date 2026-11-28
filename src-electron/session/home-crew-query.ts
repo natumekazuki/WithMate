@@ -20,7 +20,7 @@ export function parseHomeCrewPageRequest(input: unknown): { cursor: string | nul
     throw new TypeError("Invalid Home Crew page request.");
   }
   const { cursor, limit } = (input ?? {}) as Record<string, unknown>;
-  // The cursor holds the source generation in addition to the Session ID.
+  // カーソルには Session ID に加え、取得元の世代も保持する。
   if (cursor != null && (typeof cursor !== "string" || !cursor || cursor.length > 400)) {
     throw new TypeError("Invalid Home Crew cursor.");
   }

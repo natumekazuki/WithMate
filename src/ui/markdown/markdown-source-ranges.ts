@@ -60,7 +60,7 @@ export const rehypeSourceRanges: Plugin<[], HastRoot> = () => (tree) => {
       const mathFence = node.tagName === "pre" && node.children.some((child) => child.type === "element"
         && Array.isArray(child.properties.className) && child.properties.className.includes("language-math"));
       if (!math && !mathFence) visit(node);
-      // KaTeX replaces its input nodes. Retain the original expression range outside that generated subtree.
+      // KaTeX は入力ノードを置き換える。元の数式の範囲は、生成した部分木の外側に保持する。
       return math || mathFence ? {
         type: "element", tagName: "span", properties: markdownSourceAttributes(node) as Properties, children: [node],
       } : node;

@@ -73,7 +73,7 @@ it("端末のClipboard操作とシェルへの制御入力を分離する", asyn
   };
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
-    // Capture the real instance through its public API without replacing key handling or selection.
+    // キー処理や選択の挙動を置き換えず、公開 API を通じて実際のインスタンスを取得する。
     const { Terminal: Xterm } = await import("@xterm/xterm");
     let terminal: Terminal | undefined;
     const open = Xterm.prototype.open;
@@ -133,7 +133,7 @@ it("端末のClipboard操作とシェルへの制御入力を分離する", asyn
       });
       return keydown;
     };
-    // The shell controls bracketed-paste mode through its output, not platform detection.
+    // ブラケット付きペーストモードはプラットフォームの判定ではなく、シェルの出力によって切り替わる。
     for (const bracketed of [false, true, false]) {
       await act(async () => {
         await new Promise<void>((resolve) => terminal!.write(`\x1b[?2004${bracketed ? "h" : "l"}`, resolve));
@@ -480,12 +480,12 @@ it("端末の表示と終了結果に応じてタブを保持し、最後の終�
     assert.deepEqual(released, created);
     assert.equal(emptyCount, 1);
 
-    // Prompt remains selected in the consumer, so dock expansion keeps Terminal hidden.
+    // 利用側では Prompt の選択が維持されるため、ドックを展開しても Terminal は非表示のままになる。
     await render(false);
     await render(false);
     assert.equal(created.length, 2);
     assert.equal(emptyCount, 1);
-    // Explicitly selecting Terminal again can start a new shell.
+    // Terminal を改めて明示的に選ぶと、新しいシェルを起動できる。
     await render(true);
     await waitForCreated(3);
     assert.equal(dom.window.document.querySelectorAll('[role="tab"]').length, 1);

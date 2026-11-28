@@ -53,8 +53,8 @@ function indexPage<T extends IndexedRow>(db: DatabaseSync, read: typeof receiptR
   const first = `SELECT ${read.columns}, ${read.turn} AS source_turn_id, ${fields} FROM ${read.from} WHERE ${read.where}`;
   const args = sourceArgs(source);
   const limit = SENT_INSTRUCTION_CARD_PAGE_SIZE + 1;
-  // Seek the current Turn by sequence first so a single very large Turn does not
-  // rescan its earlier cards. For later Turns, order by the existing sender index.
+  // 非常に大きな一つの Turn の先行カードを再走査しないよう、まずシーケンス番号で現在の Turn を走査する。
+  // 後続の Turn は既存の送信者インデックス順に読む。
   if (cursor && turns.includes(cursor.sourceTurnId)) {
     rows.push(...db.prepare(`${first} AND ${read.turn}=? AND ${read.seq}>? ORDER BY ${read.seq} LIMIT ?`)
       .all(...args, cursor.sourceTurnId, cursor.sequence, limit) as T[]);
@@ -70,7 +70,7 @@ function indexPage<T extends IndexedRow>(db: DatabaseSync, read: typeof receiptR
   return { rows, next: { sourceTurnId: last.source_turn_id, sequence: last.sequence } };
 }
 
-/** GUI catalogue; the positioning and authorization inputs are the saved source Turn and recipient identity. */
+/** GUI 用の一覧。位置決めと認可には、保存済みの送信元 Turn と受信者の識別情報を使う。 */
 export function listSentInstructionCards(db: DatabaseSync, source: SessionTarget, scope: SentInstructionCardRequest, sourceTurns: SentSourceTurn[]) {
   const byTurn = new Map(sourceTurns.map((turn) => [String(turn.id), turn]));
   const turns = [...byTurn.keys()];
@@ -100,7 +100,7 @@ export function listSentInstructionCards(db: DatabaseSync, source: SessionTarget
   ] };
 }
 
-/** Return full saved display text only for exact requested cards still in the authorized source range. */
+/** 認可された送信元の範囲に引き続き含まれ、指定と完全一致するカードについてだけ、保存済みの表示本文全体を返す。 */
 export function readSentInstructionBodies(db: DatabaseSync, source: SessionTarget, scope: SentInstructionBodyRequest, sourceTurns: SentSourceTurn[]) {
   const turns = new Set(sourceTurns.map((turn) => String(turn.id)));
   const inScope = scope.cards.filter((key) => turns.has(key.sourceTurnId));
@@ -110,8 +110,8 @@ export function readSentInstructionBodies(db: DatabaseSync, source: SessionTarge
   const exactRows = <T,>(read: typeof receiptRead, fields: string, keys: typeof inScope): T[] => {
     if (!keys.length) return [];
     const sequences = [...new Set(keys.map((key) => key.sequence))];
-    // Use the requested primary keys as the outer scan, not the sender index
-    // for the whole source range. Each lookup is still checked against origin.
+    // 送信元の範囲全体を送信者インデックスで走査せず、要求された主キーを外側の走査に使う。
+    // 各読み取り結果については引き続き出所を照合する。
     return db.prepare(`WITH wanted(sequence) AS (VALUES ${sequences.map(() => "(?)").join(",")})
       SELECT ${read.columns}, ${read.turn} AS source_turn_id, ${fields}
       FROM wanted CROSS JOIN ${read.from} WHERE ${read.seq}=wanted.sequence AND ${read.where}`).all(...sequences, ...args) as T[];

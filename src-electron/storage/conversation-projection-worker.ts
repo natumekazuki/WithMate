@@ -82,7 +82,7 @@ export function projectConversationBatch(input: ConversationProjectionInput): Co
   return { count, items, ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }) };
 }
 
-// This worker owns only CPU projections: no database or filesystem capability is imported.
+// この Worker は CPU での投影だけを担い、データベースやファイルシステムを操作する機能はインポートしない。
 parentPort?.on("message", (input: ConversationProjectionInput) => {
   try {
     parentPort!.postMessage({ result: projectConversationBatch(input) });

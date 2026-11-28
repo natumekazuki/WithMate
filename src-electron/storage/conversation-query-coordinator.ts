@@ -32,7 +32,7 @@ type Job = {
   waiterCount: number;
 };
 
-/** One CPU task and one logical latest slot per producer, with three bounded page reads. */
+/** 生成元ごとに CPU タスク一つと論理上の最新クエリ枠一つを持ち、上限付きのページ読み取りを3件扱う。 */
 export class ConversationQueryCoordinator {
   private readonly producers = new Map<string, Producer>();
   private readonly pending = new Map<string, Job[]>();
@@ -77,7 +77,7 @@ export class ConversationQueryCoordinator {
       this.producers.set(request.producerId, producer);
     }
     const current = producer!;
-    // A cached page is validated against its owner again; deletion/recreation cannot publish it.
+    // キャッシュ済みのページも所有者との対応を再検証する。削除・再作成された場合は公開できない。
     return new Promise((resolve, reject) => {
       const jobs = this.pending.get(request.producerId) ?? [];
       const active = this.active?.producer === current && !this.active.stopped ? this.active : null;
@@ -91,7 +91,7 @@ export class ConversationQueryCoordinator {
         duplicate.reject = (error) => { previousReject(error); reject(error); };
         return;
       }
-      // Three neighboring pages belong to one logical latest query, not three replacements.
+      // 隣接する3ページは一つの論理的な最新クエリの一部であり、互いに置き換える別々のクエリではない。
       if (jobs.length + (active ? 1 : 0) >= 3) { resolve({ status: "cancelled" }); return; }
       jobs.push({ producer: current, offset, schedule, reader: this.readers[table], resolve, reject, waiterCount: 1 });
       this.pending.set(request.producerId, jobs);
@@ -204,7 +204,7 @@ export class ConversationQueryCoordinator {
       const rows = await job.schedule(() => job.reader.readConversationQueryBatch(producer.id, afterSeq, producer.query.kind === "navigator", window));
       if (job.stopped) return { status: job.stopped };
       const last = rows.at(-1);
-      // The byte cap may split a window. A window with no more stored rows can be skipped.
+      // バイト数の上限でウィンドウが分割されることがある。保存行がもうないウィンドウはスキップできる。
       if (window && (!last || last.seq === window.at(-1))) scopeOffset += window.length;
       if (!last) {
         if (!window) break;
@@ -236,7 +236,7 @@ export class ConversationQueryCoordinator {
     if (!this.worker) {
       const created = new Worker(this.workerUrl, import.meta.url.endsWith(".ts") ? { execArgv: ["--import", "tsx"] } : {});
       this.worker = created;
-      // An idle CPU worker fault must not become an unhandled Storage owner error.
+      // 待機中の CPU Worker の障害を、ストレージ所有者の未処理エラーにしてはならない。
       created.on("error", () => {});
       created.on("exit", () => { if (this.worker === created) this.worker = null; });
     }

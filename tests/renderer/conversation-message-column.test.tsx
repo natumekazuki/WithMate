@@ -760,7 +760,7 @@ test("conversation column shows question answers independently of queued submiss
         if (reserved.length) {
           const queuedUserKey = column().messageKeys?.[4];
           const queuedResponseNode = dom.window.document.querySelector(".pending-row");
-          // Persisted user and bound receipt are committed together; only their delivery order differs.
+          // ユーザーメッセージと対応する受付記録は一緒に確定され、異なるのは配信順だけである。
           terminals.set("request-1", { ...reserved[0], state: "completed", turnId: "next", userMessageSeq: 4 });
           active = [reserved[1]];
           if (arrival === "receipt-first") {
@@ -1313,7 +1313,7 @@ test("saved Steer keeps its queued row and retires stale controls before ACK", a
       steerButton.focus();
       await act(async () => steerButton.click());
       assert.equal(steerButton.disabled, true);
-      // Chromium can drop focus when this pending control becomes disabled; JSDOM can retain it.
+      // 保留中のコントロールが無効になると、Chromium ではフォーカスが外れる場合があるが、JSDOM では残る場合がある。
       steerButton.blur();
       assert.equal(document.activeElement, document.body);
       history = [...history, { role: "user", text: "extra instruction", historyIndex: 1,
@@ -1544,7 +1544,7 @@ async function mountScrollingConversation(stableAnchor = false) {
     await flush();
   };
   const complete = async (request = requests.at(-1)!) => act(async () => request.resolve({ sessionId: request.id, incarnationId: request.id, startIndex: request.start, totalCount: 600, messages: history(request.start) }));
-  // This hook fixture consumes the restoration request; actual virtualizer geometry is checked separately.
+  // このフックの fixture は復元要求を消費する。仮想リストの実際の位置や寸法は別途確認する。
   const restore = async () => {
     const jump = column().messageJumpRequest;
     assert.ok(jump);
@@ -1786,7 +1786,7 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
         assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "response-1"]);
       }
       live = run(2);
-      await render(); // The live ingress advances before the queue snapshot.
+      await render(); // ライブ入力がキューのスナップショットより先に進む。
       const earlySecondPresentationKey = column().responsePresentationKey;
       assert.notEqual(earlySecondPresentationKey, firstPresentationKey, `${kind}/${firstReceiptState}/terminalFirst=${terminalFirst}: a conflicting live turn cannot inherit the old receipt's response identity`);
       assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "response-1", "response-2"]);
@@ -1824,7 +1824,7 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
       });
       terminals.set("request-3", { ...receipt(3), state: "completed" }); active = [];
       saved = [...saved, { role: "user", text: "prompt-3" }, { role: "assistant", text: "final-3" }];
-      await render(); // No queue notification accompanies this canonical-first delivery.
+      await render(); // この配信では確定履歴が先に届き、キュー通知は伴わない。
       assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "final-1", "prompt-2", "final-2", "prompt-3", "final-3"]);
       assert.equal(store.getSnapshot().length, 0);
       active = [receipt(4)]; live = run(4);
@@ -2346,7 +2346,7 @@ test("Main peers reorder on child unread notifications without moving the select
     target: { kind: "main" as const, sessionId: id, incarnationId: id + "-inc" }, title: id,
     lastActivityAt, hasUnreadResult, isProcessing, messageIndexes: [], inboundTurnIds: [], sentMessageIndexes: [],
   });
-  // The persisted input order can differ from ID order when creation times differ.
+  // 作成時刻が異なると、永続化された入力の並び順は ID 順と異なる場合がある。
   let items = [child("A", 100, true), child("B", 220, false, true), child("D", 300, true), child("C", 300, true), child("E", 500, false)];
   let onTurnUpdated: ((id: string) => void) | undefined;
   Object.defineProperty(dom.window, "withmate", { value: {
@@ -2954,7 +2954,7 @@ test("completed receipt reads converge even when queue notifications arrive befo
     await act(async () => { root.render(<View />); });
     assert.equal(column().responsePending, true);
     assert.equal(replies.length, 1);
-    // Model independent IPC event/reply delivery without allowing an unbounded loop.
+    // 無制限にループさせず、IPC のイベントと応答が独立して配信される状況を再現する。
     for (let batch = 0; batch < 4 && (replies.length || notifications.length); batch += 1) {
       const pendingReplies = replies.splice(0);
       await act(async () => { notifications.splice(0).forEach((notify) => notify()); });
@@ -3132,7 +3132,7 @@ test("conversation column shows accepted sends and preserves the canonical respo
       assert.equal(nextPrompt(), undefined, "a confirmed pre-start cancellation removes only that reservation");
       assert.equal(store.getSnapshot().length, 0);
 
-      // A turn can reach terminal before this column has ever observed an active receipt.
+      // この列が有効な受付記録を一度も観測しないうちに、Turn が終端状態に達する場合がある。
       holdQueue = true;
       await render();
       const fastReceipt = { ...receipt, id: "fast-receipt", requestId: "fast-request", sequence: 3 };

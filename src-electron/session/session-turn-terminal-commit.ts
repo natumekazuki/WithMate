@@ -10,7 +10,7 @@ export type SessionTurnTerminalCommit = {
   completedAt: string;
 };
 
-/** Finalize the exact Turn and its unresolved direct inputs inside the caller's transaction. */
+/** 呼び出し元のトランザクション内で、該当の Turn と未確定の直接入力を終了処理する。 */
 export function writeSessionTurnTerminalCommit(
   db: DatabaseSync,
   commit: SessionTurnTerminalCommit,
@@ -44,8 +44,8 @@ export function writeSessionTurnTerminalCommit(
     throw new Error(`session turn terminal commit target mismatch: ${commit.turnId}`);
   }
   const messageTable = ownerKind === "auxiliary" ? "auxiliary_session_messages" : "session_messages_v6";
-  // The provider may have received a persisted pending input. Once its Turn
-  // ends, only the delivery outcome is unknown; do not rewrite its evidence.
+  // 保存済みで保留中の入力をプロバイダーが受け取っている可能性がある。該当する Turn の終了後、
+  // 不明なのは配信結果だけであり、その根拠となる情報は書き換えない。
   db.prepare(`
     UPDATE ${messageTable}
     SET body = json_set(body, '$.turnInput.state', 'unknown')

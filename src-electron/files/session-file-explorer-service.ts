@@ -502,7 +502,7 @@ export class SessionFileExplorerService {
         return externalTarget;
       }
     } catch {
-      // Local target failures are reported after applying the appropriate preview base.
+      // 対象のローカルパスを解決できなかった場合は、適切なプレビュー基準を適用してから失敗を返す。
     }
 
     if (baseResource && isSessionFileGitCommitResource(baseResource)) {
@@ -555,7 +555,7 @@ export class SessionFileExplorerService {
       try {
         resolvedRoots.push({ root, realPath: await realpath(root.absolutePath) });
       } catch {
-        // A currently unavailable root cannot provide a root-scoped resource.
+        // 現時点で利用できないルートからは、そのルートに限定されたリソースを提供できない。
       }
     }
 
@@ -789,8 +789,8 @@ export class SessionFileExplorerService {
     }
     const opened = await this.openLocalFile(request);
     try {
-      // Electron can hand the OS only a path here; preserving edits to the original file
-      // intentionally accepts the path re-resolution boundary documented in ADR 013.
+      // ここで Electron が OS に渡せるのはパスだけ。元のファイルを編集できるようにするため、
+      // ADR 013 に記載されたパスの再解決が起こり得る境界を意図的に受け入れる。
       return await this.deps.openResolvedPath(opened.targetRealPath, request.reveal === true);
     } finally {
       await opened.handle.close();

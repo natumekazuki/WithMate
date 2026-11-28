@@ -707,8 +707,8 @@ test("旧ownerの遅延失敗は再作成ownerを保留しない", async () => {
     await started.promise;
     guarded = true;
     const accepting = service.enqueue(replacement, captured("new-request"));
-    // A claim holds the short Session lock until its reply; other failure gates
-    // are outside that lock and can complete strictly after new-owner acceptance.
+    // claim は応答まで短時間の Session ロックを保持する。他の失敗箇所の待機は
+    // そのロックの外にあり、新しい所有者での受付が完了した後に終了できる。
     if (stage === "claim") finish.resolve();
     assert.equal((await accepting).incarnationId, replacement.incarnationId);
     if (stage !== "claim") finish.resolve();
@@ -793,7 +793,7 @@ test("稼働中の照合不明は止め、永続したinterruptedの確認後は
     store.recoverInterrupted = async (target) => {
       recoveries.push(target);
       if (fault === "write" && unavailable) throw new Error("Recovery reply lost.");
-      return 0; // No exact Turn can be proven for this interrupted receipt.
+      return 0; // 中断されたこの受付記録に対応する Turn は特定できない。
     };
     const service = new SessionTurnQueueService({ store, isRunInFlight: () => guarded, dispatch: async (receipt) => {
       dispatches.push(receipt.id);

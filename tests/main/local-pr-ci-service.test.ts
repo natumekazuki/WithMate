@@ -14,7 +14,7 @@ import type { LocalPrInput, LocalPrVersion } from "../../src-shared/local-pr/loc
 
 const definition = (commands: string[]) => `version: 1\ncommands:\n${commands.map((command) => `  - ${JSON.stringify(command)}`).join("\n")}\n`;
 
-/** Create a real repository and give CI a linked worktree path rather than assuming a `.git` directory. */
+/** 実際のリポジトリを作り、`.git` ディレクトリを仮定せずリンクされた worktree のパスを CI に渡す。 */
 async function fixture(t: TestContext, minimumDataPathLength = 0) {
   const root = await mkdtemp(join(tmpdir(), "withmate & %CI_TEST_PATH% "));
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 4 }));
@@ -23,7 +23,7 @@ async function fixture(t: TestContext, minimumDataPathLength = 0) {
   const workspace = join(root, "worktree with spaces");
   await mkdir(data);
   await mkdir(original);
-  // Fixture setup must not hit MAX_PATH before the production CI preparation runs.
+  // 本番の CI 準備処理に到達する前に、fixture の準備が `MAX_PATH` に引っかからないようにする。
   const git = (cwd: string, ...args: string[]) => execFileSync("git",
     [...(process.platform === "win32" ? ["-c", "core.longpaths=true"] : []), ...args],
     { cwd, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -57,13 +57,13 @@ async function fixture(t: TestContext, minimumDataPathLength = 0) {
   return { data, workspace, original, git, statuses, service, repository, prId, run, commit, base, makeVersion };
 }
 
-/** Assert operation success and retain its concrete result type. */
+/** 操作の成功を検証し、戻り値の具体的な型を維持する。 */
 function unwrap<T>(result: { ok: true; data: T } | { ok: false; message: string }): T {
   if (!result.ok) assert.fail(result.message);
   return result.data;
 }
 
-/** Poll observable service state without assuming how long Git or the native shell takes to launch. */
+/** Git やネイティブシェルの起動時間を仮定せず、観測可能なサービスの状態を繰り返し確認する。 */
 async function eventually<T>(get: () => Promise<T | undefined>): Promise<T> {
   for (let attempt = 0; attempt < 220; attempt++) {
     const result = await get();
@@ -73,7 +73,7 @@ async function eventually<T>(get: () => Promise<T | undefined>): Promise<T> {
   assert.fail("CI did not reach the expected state");
 }
 
-/** Head-only definition and independent checkout preserve dirty files, refs and index; results stay attached to the exact version and base. */
+/** HEAD のみにある定義を独立したチェックアウトで実行し、未コミットのファイル、ref、インデックスを維持する。結果は正確な比較版とベースにひも付く。 */
 test("CI runs fixed Git content and never reuses results for another version, base, repository or PR", async (t) => {
   const f = await fixture(t);
   await writeFile(join(f.workspace, "verify.cjs"), `const fs = require('node:fs');
@@ -130,7 +130,7 @@ console.log('fixed checkout: 日本語');\n`);
   assert.ok(f.statuses.length >= 6);
 });
 
-/** The safe YAML subset rejects ambiguous/dangerous syntax and does not confuse invalid, absent and successful CI. */
+/** 安全な YAML のサブセットは曖昧な構文や危険な構文を拒否し、無効・未設定・成功の各状態を混同しない。 */
 test("CI validates only an ordinary pinned UTF-8 blob with supported YAML", async (t) => {
   const f = await fixture(t);
   assert.equal(unwrap(await f.run(f.makeVersion(f.base), "pr_ci_validate")).state, "not_configured");
@@ -158,7 +158,7 @@ test("CI validates only an ordinary pinned UTF-8 blob with supported YAML", asyn
   assert.equal(unwrap(await f.run(link, "pr_ci_validate")).state, "invalid");
 });
 
-/** The same fixed CI identity must never select another definition just because a Session is rooted deeper. */
+/** 同じ固定 CI 識別情報なら、Session がより深いディレクトリにあっても別の定義を選んではならない。 */
 test("CI validates, starts and reruns only the repository-root definition from root and worktree subdirectories", async (t) => {
   const f = await fixture(t);
   const sub = join(f.workspace, "sub");
@@ -193,7 +193,7 @@ test("CI validates, starts and reruns only the repository-root definition from r
   }
 });
 
-/** Deep userData must not lengthen the Git object store; checkout still materializes long source paths. */
+/** `userData` が深くても Git オブジェクトストアのパスは長くならず、長いソースパスのファイルもチェックアウトできる。 */
 test("Windows CI runs a fixed submission with deep userData and tracked paths beyond MAX_PATH", { skip: process.platform !== "win32" }, async (t) => {
   const f = await fixture(t, 180);
   const directory = `${"d".repeat(124)}/${"e".repeat(124)}`;
@@ -220,7 +220,7 @@ test("Windows CI runs a fixed submission with deep userData and tracked paths be
   assert.equal(unwrap(await f.run(v, "pr_ci_log", { runId: started.id }, restarted)).log.trim(), checkout);
 });
 
-/** Wait until the native shell actually executes a long-lived child. */
+/** ネイティブシェルが長時間動く子プロセスを実際に実行するまで待つ。 */
 async function runningPid(f: Awaited<ReturnType<typeof fixture>>, v: LocalPrVersion, id: string): Promise<number> {
   return eventually(async () => {
     const match = /owned-child:(\d+)/u.exec(unwrap(await f.run(v, "pr_ci_log", { runId: id })).log);
@@ -228,7 +228,7 @@ async function runningPid(f: Awaited<ReturnType<typeof fixture>>, v: LocalPrVers
   });
 }
 
-/** The cancellation and graceful app-stop paths close the owned child before publishing final states. */
+/** キャンセルとアプリの正常終了は、最終状態を公開する前に管理下の子プロセスを終了する。 */
 test("cancel and application shutdown stop the running command", async (t) => {
   const f = await fixture(t);
   const v = await f.commit(definition([`node -e "console.log('owned-child:'+process.pid);setInterval(()=>{},1000)"`, "echo must-not-run"]));
@@ -246,7 +246,7 @@ test("cancel and application shutdown stop the running command", async (t) => {
   assert.equal(unwrap(await f.run(v, "pr_ci_list", {}, restarted)).runs.find(({ id }) => id === first.id)?.state, "canceled");
 });
 
-/** A delayed mutation must reject expired bindings without reserving or stopping CI; accepted work outlives its creating Turn. */
+/** 遅延した変更操作は、binding が失効していれば CI の予約も停止もせずに拒否する。受理済みの処理は開始元の Turn が終わっても続く。 */
 test("CI rechecks captured runtime Turn admission only before start, rerun and cancellation effects", async (t) => {
   const f = await fixture(t);
   const v = await f.commit(definition([`node -e "console.log('owned-child:'+process.pid);setInterval(()=>{},1000)"`]));
@@ -254,7 +254,7 @@ test("CI rechecks captured runtime Turn admission only before start, rerun and c
   const state = () => new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
   const deactivate = (captured: SharedArrayBuffer) => Atomics.store(new Int32Array(captured), 0, 1);
 
-  // initialize() is already resolved; let the operation resume and start its awaited Git lookup first.
+  // `initialize()` は解決済みなので、先に操作を再開させ、結果を待つ Git の検索を開始させる。
   const staleStart = state();
   const pendingStart = runWithRuntimeTurnAdmission({ state: staleStart }, () => f.run(v, "pr_ci_start"));
   queueMicrotask(() => deactivate(staleStart));
@@ -281,7 +281,7 @@ test("CI rechecks captured runtime Turn admission only before start, rerun and c
   assert.deepEqual(unwrap(await f.run(v, "pr_ci_list")).runs, [canceled]);
 });
 
-/** A successful exit that bypasses later commands is not a successful CI run. */
+/** 後続コマンドを飛ばして正常終了しても、CI 実行の成功とはみなさない。 */
 test("early zero exit does not report success", async (t) => {
   const f = await fixture(t);
   const v = await f.commit(definition(["exit 0", "echo must-not-run"]));
@@ -292,7 +292,7 @@ test("early zero exit does not report success", async (t) => {
   assert.doesNotMatch(unwrap(await f.run(v, "pr_ci_log", { runId: run.id })).log, /must-not-run/u);
 });
 
-/** An actual abrupt exit leaves the running record for recovery, not a fabricated terminal result. */
+/** 実際に強制終了したときは、終端結果を作らず、復旧に使う実行中の記録を残す。 */
 test("startup recovers an interrupted Windows CI process and retains its log", { skip: process.platform !== "win32" }, async (t) => {
   const f = await fixture(t);
   const temp = join(f.data, "temp");

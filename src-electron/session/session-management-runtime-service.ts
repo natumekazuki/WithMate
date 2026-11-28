@@ -26,7 +26,7 @@ type ScopeReaderOwner = {
   storageWorker?: { stores: { session: { readSessionManagementScope: ScopeReader } } };
 };
 
-/** Scope lookup is tied to the store generation that supplied the saved relationships. */
+/** 操作範囲の取得は、保存済みの関係を取得したストアの世代にひも付ける。 */
 export function createSessionManagementScopeReader(getActiveOwner: () => ScopeReaderOwner | null): ScopeReader {
   return async (actor, selection) => {
     const { owner, assertActive } = capturePersistentStoreOwner(getActiveOwner, "Session relationships");
@@ -123,12 +123,12 @@ export class SessionManagementRuntimeService {
     };
     const isInstructions = operation === "get_instructions" || operation === "set_instructions";
     try {
-      // Instructions use both lifetimes at the Worker. Leave the existing admission of other operations unchanged.
+      // 指示の読み書きでは Worker で両方の有効期間を確認する。他の操作の既存の実行許可は変えない。
       const bindingState = isInstructions ? this.deps.bindingRegistry.getBindingRevocationState(binding) : null;
       if (isInstructions && !bindingState) throw new RuntimeTurnInactiveError();
       const isLocalPr = isLocalPrAgentOperation(operation);
       const execute = () =>
-        // Both public adapters enter the PR application only after standard binding and Turn admission.
+        // どちらの公開アダプターも、標準のバインディングと Turn の実行許可を確認してから PR アプリケーションに入る。
         isLocalPr ? executeLocalPrAgentOperation({
           deps: this.deps.localPr,
           operation,
@@ -149,8 +149,8 @@ export class SessionManagementRuntimeService {
             executionOptions: admission.handle.executionOptions,
           },
         });
-      // Reads and scoped writes carry admission into Worker, including instruction replacement.
-      // Coordination detaches its postcommit queue wake from this sender scope.
+      // 読み取りと対象範囲を限定した書き込み（指示の置換を含む）では、Worker に実行許可を引き継ぐ。
+      // Coordination はコミット後にキューを起こす処理を、この送信元のスコープから切り離す。
       const result = await (isLocalPr || SESSION_READ_OPERATIONS.includes(operation) ||
       isSessionOperatingPolicyOperation(operation) || operation.startsWith("coordination_") || operation === "add_directory" || operation === "remove_directory" || operation === "set_instructions"
         ? runWithRuntimeTurnAdmission(
@@ -169,9 +169,9 @@ export class SessionManagementRuntimeService {
             execute,
           )
         : execute());
-      // A committed mutation remains applied even when the initiating provider Turn ends.
+      // 起点のプロバイダー Turn が終わっても、コミット済みの変更は適用済みのまま。
       if (SESSION_READ_OPERATIONS.includes(operation)) assertCurrent();
-      // Workspace/identity mismatches are authentication failures before application dispatch.
+      // ワークスペースや識別情報の不一致は、アプリケーションへの送出前に判定される認証失敗。
       if (!result.ok && isLocalPr && result.code === "SESSION_BINDING_INVALID") return { status: 401, value: result };
       return { status: result.ok ? 200 : 400, value: result };
     } catch (error) {

@@ -74,9 +74,9 @@ const SHORTCUT_SCOPE_LABELS: Record<string, string> = {
   settings: "Settings",
 };
 
-// Message list and file preview are alternate central content surfaces. Their
-// identical standard accelerators are valid only because isContentActive makes
-// these scopes mutually exclusive at runtime.
+// メッセージ一覧とファイルプレビューは、中央の内容領域で切り替えて使う。
+// isContentActive が実行時に両者のスコープを排他的にするため、
+// 同じ標準ショートカットを割り当てられる。
 const EXCLUSIVE_SCOPE_GROUPS: Record<string, string | undefined> = {
   "message-list": "session-content",
   "file-preview": "session-content",
@@ -233,7 +233,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     editingTargetScope: "composer",
     allowRepeat: false,
     showInHelp: true,
-    // This is an existing WithMate assignment retained for compatibility.
+    // 互換性のために、WithMate の既存の割り当てを維持する。
     assignment: "existing",
   },
   {

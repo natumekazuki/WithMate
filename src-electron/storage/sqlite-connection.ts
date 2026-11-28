@@ -13,7 +13,7 @@ type AppDatabaseConnectionOptions = {
 
 let mainThreadMarkedAsNonStorageOwner = false;
 
-/** Mark the current thread as forbidden from opening the synchronous app database. */
+/** 現在のスレッドでは同期版のアプリデータベースを開けないことを記録する。 */
 export function markMainThreadAsNonStorageOwner(): void {
   mainThreadMarkedAsNonStorageOwner = true;
 }
@@ -37,7 +37,7 @@ export function openAppDatabaseReadOnly(dbPath: string): DatabaseSync {
   return new DatabaseSync(dbPath, { readOnly: true });
 }
 
-/** Open a migration database without applying the app connection PRAGMA set. */
+/** アプリ接続用の PRAGMA 一式を適用せず、移行用データベースを開く。 */
 export function openMigrationDatabase(dbPath: string): DatabaseSync {
   assertStorageOwner();
   return new DatabaseSync(dbPath);

@@ -32,10 +32,10 @@ function readRequest(parentSessionId: string): AuxiliaryCreationRequest | null {
 
 function clearRequestHint(request: AuxiliaryCreationRequest): void {
   if (readRequest(request.parentSessionId)?.clientRequestId !== request.clientRequestId) return;
-  try { window.localStorage.removeItem(storageKey(request.parentSessionId)); } catch { /* Reopen hint only. */ }
+  try { window.localStorage.removeItem(storageKey(request.parentSessionId)); } catch { /* 再表示のためのヒントにのみ使う。 */ }
 }
 
-/** Keeps one selected parent's creation request separate from the launch dialog. */
+/** 選択中の親一つに対する作成リクエストを、起動ダイアログとは別に管理する。 */
 export function useAuxiliaryCreation(input: {
   parentSessionId: string | null;
   api: CreationApi | null;
@@ -120,12 +120,12 @@ export function useAuxiliaryCreation(input: {
           latest.current.onFeedback(resolveAuxiliaryLaunchCreationFeedback({ status: "unknown" }));
         }
       }
-      // One query at a time. Keep unknown/committing requests recoverable,
-      // and stop after terminal settlement instead of reapplying every poll.
+      // 問い合わせは一度に一件。結果不明・確定処理中のリクエストは回復可能なまま維持し、
+      // 終了結果が確定したら、ポーリングのたびに同じ結果を適用せずに停止する。
       if (!stopped && isCurrent(request)) timer = setTimeout(() => { void query(); }, 500);
     };
-    // Creation is dispatched in the same task that installs the request;
-    // querying immediately could observe not-found before its admission.
+    // リクエストをセットするのと同じタスクで作成処理を送る。
+    // 直ちに問い合わせると、受付前に未検出の結果を受け取る場合がある。
     timer = setTimeout(() => { void query(); }, 500);
     return () => { stopped = true; clearTimeout(timer); };
   }, [request, input.api]);
@@ -147,7 +147,7 @@ export function useAuxiliaryCreation(input: {
       requestRef.current = ownRequest;
       setRequest(ownRequest);
       setStatus("preparing");
-      try { window.localStorage.setItem(storageKey(parentSessionId), JSON.stringify(ownRequest)); } catch { /* Reopen hint only. */ }
+      try { window.localStorage.setItem(storageKey(parentSessionId), JSON.stringify(ownRequest)); } catch { /* 再表示のためのヒントにのみ使う。 */ }
       latest.current.onDiagnostic?.(ownRequest, "request");
       const saved = await api.createAuxiliarySession(buildCreateAuxiliarySessionInput({
         parentSessionId, provider, runtimeSelection: "latest-session",
@@ -161,8 +161,8 @@ export function useAuxiliaryCreation(input: {
     } catch (error) {
       if (!isAttemptCurrent()) return;
       if (ownRequest) {
-        // A rejected create may already have committed. Query the same ID;
-        // never replace it with another create request automatically.
+        // 作成の呼び出しが拒否されても、作成自体は既に確定している場合がある。同じ ID を問い合わせ、
+        // 自動的に別の作成リクエストに置き換えない。
         setStatus("unknown");
         latest.current.onFeedback(resolveAuxiliaryLaunchCreationFeedback({ status: "unknown" }));
       } else {

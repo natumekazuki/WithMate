@@ -37,7 +37,7 @@ export type SessionManagementScope = {
   page?: RelatedSessionPage;
 };
 
-/** Saved identity is the only source of Crew membership and operation relationships. */
+/** Crew の所属や操作に必要な関係は、保存済みの識別情報だけを根拠に決める。 */
 export function resolveRelatedMain(main: SessionSummary): RelatedSession {
   const relationship = normalizeSessionRelationship(main);
   const incarnationId = getSessionIncarnationId(main);

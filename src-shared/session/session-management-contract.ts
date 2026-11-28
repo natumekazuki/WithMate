@@ -332,7 +332,7 @@ export const sessionOperationSuccessSchemas = {
     })
     .strict(),
 } as const;
-/** MCP requires an object root; both successful and error structured content are public results. */
+/** MCP ではルートがオブジェクトでなければならない。成功時とエラー時の構造化コンテンツはいずれも公開結果となる。 */
 export function sessionOperationOutputSchema(operation: SessionOperation) {
   return z
     .object({ ok: z.boolean() })

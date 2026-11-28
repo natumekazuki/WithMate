@@ -324,7 +324,7 @@ test("live配送は再openとowner lookup失敗でも宛先境界を維持する
     getLiveSessionRunStatusWindows: () => [home.window],
     getLiveSessionRunWindow: () => { if (lookupFailed) throw new Error("owner unavailable"); return target; },
   });
-  // No visibility API: a live registered owner receives state even when hidden.
+  // 可視性を調べる API は使わない。登録済みで有効な所有 Window は非表示でも状態を受け取る。
   service.broadcastLiveSessionRun("aux-1", createLiveState());
   target = reopened.window;
   first.window.isDestroyed = () => true;

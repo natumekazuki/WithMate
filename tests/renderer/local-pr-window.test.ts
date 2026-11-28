@@ -7,7 +7,7 @@ import { createServer } from "vite";
 import type { LocalPrDetail, LocalPrWindowApi } from "../../src-shared/local-pr/local-pr-contract.js";
 import { installIntersectionObserver } from "../support/intersection-observer.js";
 
-/** Both windows preserve reads on failure; owned labels and local dates do not rewrite source content. */
+/** 両 Window とも読み取りに失敗しても取得済みの内容を維持し、各 Window のラベルやローカル日付で元の内容を書き換えない。 */
 test("local PR labels, dates, and independent window refreshes retain their boundaries", async () => {
   const vite = await createServer({
     configFile: false,

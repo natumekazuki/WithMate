@@ -309,7 +309,7 @@ test("Model pickerは背景更新前の候補定義でMainとAuxiliaryの選択�
         const search = dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
         main = { ...main, reasoningEffort: "high" };
         auxiliary = { ...auxiliary, reasoningEffort: "high", composerDraft: "latest draft" };
-        // The displayed definition must not share its mutable variant array with incoming data.
+        // 表示中の定義は、変更可能なバリアント配列を新しい入力データと共有してはならない。
         picked.reasoningEfforts.splice(0, picked.reasoningEfforts.length, "max");
         latest = { ...latest, models: change === "removed" ? [] : [{ ...picked, defaultReasoningEffort: "max" }] };
         await act(async () => { render(); });

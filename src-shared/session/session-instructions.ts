@@ -1,25 +1,25 @@
 import type { SessionTarget } from "./session-target.js";
 
-/** Saved Main or Auxiliary identity; the latter includes its owning Main incarnation. */
+/** 保存済みの Main または Auxiliary の識別情報。Auxiliary の場合は所有元 Main の incarnation も含む。 */
 export type SessionInstructionsTarget = SessionTarget;
 
-/** Maximum UTF-8 byte length of the entire saved body, including whitespace. */
+/** 空白を含む保存本文全体の UTF-8 バイト数上限。 */
 export const SESSION_INSTRUCTIONS_MAX_BYTES = 8192;
 
 const utf8 = new TextEncoder();
 
-/** Measures the unmodified body using the same encoding in the renderer and storage. */
+/** renderer とストレージで同じエンコーディングを用いて、加工していない本文のバイト数を測る。 */
 export function sessionInstructionsByteLength(body: string): number {
   return utf8.encode(body).byteLength;
 }
 
-/** Rejects invalid bodies without truncating or normalizing their content. */
+/** 無効な本文は切り詰めや正規化を行わずに拒否する。 */
 export function validateSessionInstructions(body: unknown): string {
-  // Reject non-text input before encoding it.
+  // テキスト以外の入力はエンコード前に拒否する。
   if (typeof body !== "string") {
     throw new TypeError("Session instructions must be text.");
   }
-  // Count the original text, not its JSON representation or a trimmed value.
+  // JSON 表現や前後の空白を除いた値ではなく、元のテキストのバイト数を数える。
   if (sessionInstructionsByteLength(body) > SESSION_INSTRUCTIONS_MAX_BYTES) {
     throw new RangeError("Session instructions exceed the 8,192-byte limit.");
   }

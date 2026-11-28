@@ -2,7 +2,7 @@ import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import type { LocalPrComment } from "../../src-shared/local-pr/local-pr-contract.js";
 import { parseUnifiedDiff, type UnifiedDiffDisplayRow } from "../../src-shared/file-explorer/unified-diff.js";
 
-/** Pairing helps split diff; a unified diff keeps each changed line in Git's original order. */
+/** 対応行の組は左右分割差分に役立つが、unified diff では各変更行を Git の元の順番に保つ。 */
 export function unifiedReviewRows(patch: string): UnifiedDiffDisplayRow[] {
   const rows = parseUnifiedDiff(patch).rows.flatMap((row): UnifiedDiffDisplayRow[] => row.kind === "modify"
     ? [

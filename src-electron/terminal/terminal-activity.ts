@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { TerminalActivity } from "./terminal-worker-protocol.js";
 
-/** Keep renderer input from racing a shell's read-line notifications. */
+/** renderer からの入力と、シェルの行読み取り通知の競合を防ぐ。 */
 export class TerminalActivityTracker {
   private activity: TerminalActivity = "unknown";
   private awaitingReadLineReturn = false;
@@ -9,8 +9,8 @@ export class TerminalActivityTracker {
   getActivity(): TerminalActivity { return this.activity; }
 
   onInput(data: string): void {
-    // xterm sends these notifications when focus moves, including to the close button.
-    // They are terminal focus events, not shell keyboard input.
+    // 閉じるボタンへの移動も含め、フォーカスが移動すると xterm がこれらの通知を送る。
+    // これは端末のフォーカスイベントであり、シェルへのキー入力ではない。
     if (!data || data === "\x1b[I" || data === "\x1b[O") return;
     this.activity = "unknown";
     this.awaitingReadLineReturn = true;
@@ -22,7 +22,7 @@ export class TerminalActivityTracker {
   }
 }
 
-/** Only the launched shell's read-line hook may report an idle terminal. */
+/** 端末が入力待ちであることを通知できるのは、起動したシェルの行読み取りフックだけ。 */
 export function createPowerShellActivityIntegration() {
   const marker = `633;P;WithMateActivity=${randomUUID()};`;
   const script = `
@@ -77,7 +77,7 @@ namespace WithMateTerminal {
   };
 }
 
-/** Strip only our bounded control records; leave all other terminal output intact. */
+/** アプリ独自の上限付き制御レコードだけを取り除き、その他の端末出力はそのまま残す。 */
 export class TerminalActivityParser {
   private pending = "";
 

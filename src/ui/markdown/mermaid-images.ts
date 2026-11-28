@@ -15,7 +15,7 @@ export type MermaidImageError = {
 };
 export type MermaidImageResolver = MarkdownImageResolver;
 
-// Mermaid's parser/config and render must not overlap with another diagram.
+// Mermaid の解析・設定と描画は、別の図の処理と重ねてはいけない。
 let renderQueue: Promise<unknown> = Promise.resolve();
 function runMermaidTask<T>(task: () => Promise<T>): Promise<T> {
   const result = renderQueue.then(task);
@@ -74,7 +74,7 @@ function imagePlaceholder(
 }
 
 function serializeImageTag(image: HTMLImageElement): string {
-  // Mermaid labels use double quotes. Keep attribute quotes independent of them.
+  // Mermaid のラベルは二重引用符を使う。属性値は別の引用符で囲む。
   const attributes = [...image.attributes].map(({ name, value }) =>
     `${name}='${value.replace(/&/g, "&amp;").replace(/'/g, "&apos;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}'`,
   );
@@ -82,10 +82,10 @@ function serializeImageTag(image: HTMLImageElement): string {
 }
 
 function sizeHtmlImage(image: HTMLImageElement, size: { width: number; height: number }) {
-  // Mermaid may expand a node label image to the label's width.
+  // Mermaid がノードラベル内の画像をラベル幅まで広げる場合がある。
   if (!image.style.objectFit) image.style.objectFit = "contain";
-  // Subgraph titles are measured before their images load. Reserve dimensions
-  // up front, while leaving author-provided CSS sizing to Mermaid/the browser.
+  // サブグラフの見出しは画像の読み込み前に計測されるため、先に寸法を確保する。
+  // 作成者が指定した CSS の寸法設定は Mermaid やブラウザーに任せる。
   if (image.style.width || image.style.height) return;
   const width = Number(image.getAttribute("width"));
   const height = Number(image.getAttribute("height"));
@@ -147,8 +147,8 @@ export async function renderMermaidWithImages(
     };
     const htmlImages = new Map<string, { image: HTMLImageElement; markup: string; target: string; key: string }>();
     const resolvedHtmlMarkers = new Map<string, string>();
-    // Locate literal tags only, then let the HTML parser handle attributes and
-    // entities. This is resource preparation, not an HTML sanitizer.
+    // タグとして書かれた箇所だけを探し、属性と実体参照の解釈は HTML パーサーに任せる。
+    // これはリソースの準備であり、HTML のサニタイズではない。
     let preparedSource = source.replace(/<img\b(?:[^'"<>]|"[^"]*"|'[^']*')*>/gi, (markup) => {
       const template = document.createElement("template");
       template.innerHTML = markup;
@@ -165,8 +165,8 @@ export async function renderMermaidWithImages(
       return preparedMarkup;
     });
     if (source.includes("@{") || htmlImages.size) {
-      // Mermaid exposes parsed flowchart vertices only through mermaidAPI.
-      // Read them without mutation; final rendering still uses the strict public renderer.
+      // Mermaid で解析済みフローチャートの頂点を取得できるのは mermaidAPI だけ。
+      // 頂点は変更せずに読み取り、最終描画には引き続き strict の公開レンダラーを使う。
       const diagram = await runMermaidTask(() => {
         signal.throwIfAborted();
         return mermaid.mermaidAPI.getDiagramFromText(preparedSource);
@@ -177,8 +177,8 @@ export async function renderMermaidWithImages(
         ...(db.getSubGraphs?.() ?? []).map((group) => ({ id: group.id, text: group.title })),
         ...(db.getEdges?.() ?? []).map((edge) => ({ id: edge.id ?? `${edge.start} → ${edge.end}`, text: edge.text })),
       ];
-      // Only resolve img elements present in parsed labels, not comments or
-      // escaped HTML examples. Never restore arbitrary sanitized attributes.
+      // 解析済みラベルにある img 要素だけを解決し、コメントやエスケープ済みの HTML 例は対象にしない。
+      // サニタイズされた任意の属性を復元してはいけない。
       const htmlOwners = new Map<string, string>();
       for (const label of labels) {
         const template = document.createElement("template");
@@ -204,7 +204,7 @@ export async function renderMermaidWithImages(
         vertices.map(async (vertex, index) => {
           const target = String(vertex.img);
           const { placeholder } = await prepareImage(target, vertex.text || vertex.id, vertex.id, `${id}-native-${index}`);
-          // Repeating img without label clears an explicit label equal to the node ID.
+          // ラベルを指定せずに img を再指定すると、ノード ID と同じ値の明示ラベルは消去される。
           let text = vertex.text;
           for (const [marker, placeholder] of resolvedHtmlMarkers) text = text?.replaceAll(marker, placeholder);
           const label = text
@@ -223,11 +223,11 @@ export async function renderMermaidWithImages(
     signal.throwIfAborted();
     if (!images.size) return { svg, imageErrors };
 
-    // Strict strips blob: from SVG href. Keep sanitization intact, then attach only
-    // prevalidated passive image resources to our exact generated placeholders.
-    // Original image bytes never enter Mermaid source or its maxTextSize budget.
-    // Mermaid serializes foreignObject labels as HTML (for example <br>), not
-    // XML. Parse the sanitized output in an inert template like the HTML host.
+    // strict では SVG の href から blob: が除かれる。サニタイズは維持したまま、
+    // 事前検証済みの受動的な画像リソースだけを、生成した対応先のプレースホルダーに取り付ける。
+    // 元の画像バイト列は Mermaid のソースに入らず、maxTextSize の上限にも算入されない。
+    // Mermaid は foreignObject 内のラベルを XML ではなく HTML（<br> など）としてシリアライズする。
+    // HTML ホストと同様に、不活性な template 要素でサニタイズ済みの出力を解析する。
     const template = document.createElement("template");
     template.innerHTML = svg;
     const svgElement = template.content.firstElementChild;

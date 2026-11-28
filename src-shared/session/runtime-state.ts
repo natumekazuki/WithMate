@@ -165,7 +165,7 @@ export type LiveElicitationRequest = {
   textPosition?: number;
   provider: string;
   kind?: "question";
-  /** Generic forms may use the question surface without retaining their answers. */
+  /** 汎用フォームは、回答を保持せずに質問用の画面を使える。 */
   retainQuestionAnswer?: boolean;
   delivery?: "user-message";
   turnId?: string;
@@ -202,9 +202,9 @@ export type LiveSessionRunState = {
   sessionId: string;
   threadId: string;
   runState?: string;
-  /** Persisted WithMate session turn ID, distinct from the provider's turn ID. */
+  /** 保存済みの WithMate Session の Turn ID。Provider の Turn ID とは別。 */
   sessionTurnId?: string;
-  /** Queue receipt and saved input belonging to this live normal turn. */
+  /** 現在実行中の通常 Turn に対応するキューの受付情報と保存済み入力。 */
   queueReceipt?: { id: string; incarnationId: string; userMessageSeq: number };
   turnId?: string;
   inputAvailable?: boolean;
@@ -236,11 +236,11 @@ export type ProviderQuotaSnapshot = {
 
 export type ProviderQuotaTelemetry = {
   provider: string;
-  /** Time of the last successful observation; null until one succeeds. */
+  /** 最後に観測に成功した時刻。一度も成功していなければ null。 */
   updatedAt: string | null;
   snapshots: ProviderQuotaSnapshot[];
   rateLimits?: ProviderRateLimitWindow[];
-  /** Omitted by request-count providers when the snapshot is ready. */
+  /** リクエスト数を使う Provider では、スナップショットの準備ができているときに省略される。 */
   status?: "loading" | "ready" | "error" | "unsupported";
 };
 
@@ -314,7 +314,7 @@ export type ComposerPreview = {
 
 export type RunSessionTurnRequest = {
   replyTo?: import("./session-reply.js").SessionReply;
-  /** Resolved Main GUI display membership only; null is the initial frame. Omitted for other operations. */
+  /** Main の GUI で表示する所属先だけを解決した値。null は初期フレーム。他の操作では省略される。 */
   mainConversationFrame?: import("./session-target.js").MainSessionTarget | null;
   userMessage: string;
   executionOptions: SessionExecutionOptions;

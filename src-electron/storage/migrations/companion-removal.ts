@@ -62,7 +62,7 @@ function isWithin(root: string, candidate: string): boolean {
   return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
-/** Reject links in the complete ancestor chain before opening or deleting managed data. */
+/** 管理対象のデータを開くか削除する前に、祖先をすべて調べ、リンクがあれば拒否する。 */
 async function assertManagedPath(root: string, candidate: string): Promise<void> {
   if (!path.isAbsolute(candidate) || !isWithin(root, candidate)) {
     throw new Error("Companion removal target is outside the managed data directory.");
@@ -146,8 +146,8 @@ async function listDatabasePaths(root: string): Promise<string[]> {
       }
     }
   }
-  // Interrupted older migrations moved sidecars before changing their basename.
-  // Restore SQLite's normal sidecar naming in place, never overwrite another file.
+  // 中断された旧移行処理では、ベース名の変更より先にサイドカーファイルを移動していた。
+  // SQLite の通常のサイドカー名にその場で戻す。別ファイルを上書きしない。
   for (const databasePath of result) {
     const match = /^(.*\.db)(\.migration-backup-\d+-\d+)$/.exec(databasePath);
     if (!match) continue;
@@ -215,9 +215,9 @@ async function collectFileTargets(root: string, data: CompanionRemovalDatabaseTa
     }
   }
   if (hasRemovalDirectory) {
-    // Legacy message previews may omit an attachment reference. Inspect the
-    // surviving full blobs before removing a folder shared by a live message.
-    // If all retired folders are already absent, no attachment can be deleted.
+    // 旧メッセージのプレビューには、添付ファイルへの参照が含まれないことがある。
+    // 存続するメッセージと共有されるフォルダーを削除する前に、残存する完全な blob を検査する。
+    // 廃止対象のフォルダーがすべて既になければ、削除できる添付ファイルはない。
     const preserveReferences = (value: unknown): void => {
       if (typeof value === "string") {
         protectedPaths.push(...collectCompanionRemovalFileReferences(value));
@@ -318,7 +318,7 @@ function parsePlan(value: string, root: string, paths: string[]): RemovalPlan {
   return plan;
 }
 
-/** Runs on the bootstrap storage worker, before any runtime/store can recreate old data. */
+/** 初期化用のストレージ Worker で、ランタイムやストアが古いデータを再作成する前に実行する。 */
 export async function removeCompanionData(
   userDataPath: string,
   onProgress?: (phase: CompanionRemovalPhase) => void,
@@ -342,12 +342,12 @@ export async function removeCompanionData(
       const unfinished = databasePaths.filter((databasePath) => !withDatabase(databasePath, (db) => readSetting(db, COMPLETED_KEY)));
       if (!unfinished.length) return;
       onProgress?.("prepare");
-      // Include completed databases in reference checks: their live owners may
-      // still share files/blobs with a newly discovered migration backup.
+      // 処理済みのデータベースも参照の確認に含める。残存する所有者が、
+      // 新たに見つかった移行バックアップとファイルや blob を共有している場合がある。
       let inventories = databasePaths.map((databasePath) => withDatabase(databasePath,
         (db) => collectCompanionRemovalDatabaseTarget(db, { includeFileReferences: false })));
-      // Shared paths matter only when any managed database has physical removal
-      // candidates. Include all databases then, not just the one owning them.
+      // 共有パスを確認する必要があるのは、いずれかの管理対象データベースに物理削除の候補がある場合だけ。
+      // その場合は、削除候補を所有するものだけでなく、すべてのデータベースを含める。
       if (inventories.some((data) => data.sessions.length || data.auxiliarySessionIds.length
         || data.ownedBlobIds.length || data.ownedProtectedObjectIds.length)) {
         inventories = databasePaths.map((databasePath) => withDatabase(databasePath, collectCompanionRemovalDatabaseTarget));

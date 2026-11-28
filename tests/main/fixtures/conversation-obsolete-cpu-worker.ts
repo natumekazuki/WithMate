@@ -1,6 +1,6 @@
 import { parentPort } from "node:worker_threads";
 import type { ConversationProjectionInput } from "../../../src-electron/storage/conversation-projection-worker.js";
-// A deterministic non-yielding projection stand-in; cancellation must terminate its worker.
+// 決まった条件で実行を譲らない投影処理の代替であり、キャンセルには Worker の終了が必要となる。
 parentPort!.on("message", (input: ConversationProjectionInput) => {
   if (input.query.kind === "search" && input.query.query === "obsolete") {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);

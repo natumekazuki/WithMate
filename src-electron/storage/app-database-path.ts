@@ -47,9 +47,9 @@ function tryEnsureExistingV6DatabaseSchema(dbPath: string): void {
   try {
     ensureV6Schema(db);
   } catch (error) {
-    // A failed retirement must not become a successful replacement from V4.
+    // 廃止処理の失敗を、V4 からの置き換え成功にすり替えてはならない。
     if (mustPreserveExisting) throw error;
-    // Keep the established fallback for unrelated invalid, non-retirement DBs.
+    // 廃止処理とは無関係な無効な DB では、従来のフォールバックを維持する。
   } finally {
     db.close();
   }

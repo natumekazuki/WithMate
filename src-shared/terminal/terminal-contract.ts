@@ -1,4 +1,4 @@
-// node-pty uses signed SHORT coordinates on Windows; use that range on all platforms.
+// node-pty は Windows で符号付き SHORT の座標を使うため、全プラットフォームで同じ範囲を使う。
 export const TERMINAL_MAX_DIMENSION = 32_767;
 
 export type CreateTerminalRequest = {

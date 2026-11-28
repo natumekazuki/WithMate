@@ -22,7 +22,7 @@ export type SessionChatShellFeature = Omit<
   | "skillPickerProps" | "rightPaneProps" | "concurrentChats"
 >;
 
-/** Own dock interaction and project layout controllers into the shared shell. */
+/** ドックの操作を管理し、レイアウトの制御を共有シェルに渡す。 */
 export function useSessionChatShellFeature(input: {
   ownerKey: string | null;
   presentation: ReturnType<typeof useChatLayoutPresentation>;

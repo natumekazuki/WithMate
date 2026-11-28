@@ -34,8 +34,8 @@ export class SessionWindowRestoreService {
   }
 
   async getSnapshot(): Promise<string[]> {
-    // Only an unknown restore set waits for preceding writes before retrying a read.
-    // A successful save may already have repaired the snapshot in that interval.
+    // 復元対象の集合が不明な場合にだけ、先行する書き込みを待って読み取りを再試行する。
+    // その間に保存が成功し、スナップショットが既に修復されている場合がある。
     const loading = this.restoreSetLoaded ??= this.writeTail.then(() => {
       if (!this.restoreSetKnown) return this.loadRestoreSet(true);
     });
@@ -67,7 +67,7 @@ export class SessionWindowRestoreService {
       const sessionIds = await snapshot;
       await this.deps.storage.saveSnapshot(sessionIds);
       if (!this.restoreSetKnown) {
-        // A close requested while this recovery write was pending is newer intent.
+        // 復旧の書き込みを待っている間に出された終了要求のほうが新しい意思を示す。
         this.restoreSet = sessionIds.filter((sessionId) => this.currentSessionIds.includes(sessionId));
         this.restoreSetKnown = true;
         this.restoreSetLoaded = Promise.resolve();
@@ -103,7 +103,7 @@ export class SessionWindowRestoreService {
     const failures: SessionWindowRestoreResult["failures"] = [];
 
     for (const sessionId of candidates) {
-      // A manual open followed by close can consume a not-yet-processed target.
+      // 手動で開いてから閉じると、まだ復元処理していない対象が消費されることがある。
       if (!this.restoreSet.includes(sessionId)) continue;
       requestedSessionIds.push(sessionId);
       const initialWindowState = initialWindowStates.get(sessionId);
@@ -151,7 +151,7 @@ export class SessionWindowRestoreService {
     try {
       this.deps.onRestoreSetChanged?.(this.restoreSet);
     } catch {
-      // The invoke result remains the canonical projection when a renderer notification fails.
+      // renderer への通知に失敗しても、invoke の結果が正規の投影結果であることは変わらない。
     }
   }
 

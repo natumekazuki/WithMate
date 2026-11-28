@@ -68,7 +68,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en", {
   timeStyle: "short",
 });
 
-/** Formats saved timestamps for display without altering their underlying values. */
+/** 保存済みの時刻を表示用に整形し、元の値は変えない。 */
 function formatDateTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date);
@@ -78,7 +78,7 @@ function branchName(ref: string | null): string {
   return ref?.replace(/^refs\/heads\//, "") ?? "Detached Head";
 }
 
-/** Reads retain the last successful value on refresh errors, but never across a changed key. */
+/** 再読み込みに失敗した場合は直近の成功値を保持するが、キーが変わった場合は引き継がない。 */
 function useRead<T>(
   key: string,
   load: () => Promise<{ ok: true; data: T } | ({ ok: false } & Failure)>,
@@ -134,7 +134,7 @@ function useRead<T>(
     : { key, revision, data: null, error: null, loading: true };
 }
 
-/** Displays a read failure independently of previously loaded content. */
+/** 読み込み済みの内容とは独立して、読み取りの失敗を表示する。 */
 function ReadState({
   state,
   retry,
@@ -159,7 +159,7 @@ function ReadState({
   );
 }
 
-/** Keeps the action label's dimensions and identifies the button that started the mutation. */
+/** 操作ラベルの寸法を保ち、変更を開始したボタンを識別する。 */
 function ActionButton({
   children, disabled, onAction, ...props
 }: Omit<ComponentPropsWithRef<"button">, "onClick" | "aria-busy"> & {
@@ -181,7 +181,7 @@ function ActionButton({
   );
 }
 
-/** Dedicated PR workspace; the owning window supplies its repository-bound API. */
+/** PR 専用の作業画面。所有元の Window がリポジトリに紐付いた API を供給する。 */
 export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
@@ -244,7 +244,7 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
     return () => window.removeEventListener("focus", refresh);
   }, [refresh]);
 
-  /** Mutations always re-read the authoritative state, including unknown outcomes. */
+  /** 変更操作の後は、結果が不明な場合も含め、常に正本の状態を読み直す。 */
   const run = useCallback(
     async <T extends LocalPrOperation>(
       operation: T,
@@ -308,7 +308,7 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
     [api, refresh],
   );
 
-  /** Opening a PR selects its latest version without changing the list's visibility. */
+  /** PR を開いたときは最新版を選択し、一覧の表示状態は変えない。 */
   function selectPr(id: string) {
     setCreating(false);
     setSelected(id);
@@ -553,7 +553,7 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
   );
 }
 
-/** Presents a fixed comparison and creates versioned, side-specific draft anchors. */
+/** 固定された比較を表示し、その版と比較側に紐付く下書きアンカーを作成する。 */
 function Changes({
   api,
   pr,
@@ -882,7 +882,7 @@ function Changes({
   );
 }
 
-/** Reads CI definitions, runs and logs for the selected immutable version. */
+/** 選択した変更不能な版の CI 定義、実行履歴、ログを読み取る。 */
 function Checks({
   api,
   prId,
@@ -1018,7 +1018,7 @@ type Run = <T extends LocalPrOperation>(
   input: LocalPrInput<T>,
 ) => Promise<LocalPrData<T> | null>;
 
-/** Creates a PR from explicit branch tips without changing the working tree. */
+/** 明示的に指定したブランチの先端から、作業ツリーを変えずに PR を作成する。 */
 function CreatePr({
   api,
   run,
@@ -1099,7 +1099,7 @@ function CreatePr({
   );
 }
 
-/** The overview keeps comments and actions tied to their recorded versions. */
+/** 概要では、コメントと操作を記録時の版に紐付けたまま扱う。 */
 function Overview({
   api,
   pr,
@@ -1477,7 +1477,7 @@ function Conversation({ pr, version, threads, run, busy, openReview, openAnchor,
   );
 }
 
-/** A send is separate from posting a comment, and never guesses its recipient. */
+/** 送信はコメント投稿とは別の操作であり、宛先は推測しない。 */
 function SendReview({ api, pr, selection, pending, failure, busy, nameAgent, send, onCancel, onSent }: {
   api: LocalPrWindowApi;
   pr: LocalPrDetail;

@@ -23,7 +23,7 @@ function input(): RunSessionTurnInput {
     sessionFolderPath: "C:/session-files/sample", crewFolderPath: "C:/crew-files/sample" };
 }
 
-/** Nonempty fixed instructions stay on the system side without trimming; empty text removes the section. */
+/** 空でない固定指示は前後の空白を除かずシステム側に置き、空文字列の場合はセクション自体を取り除く。 */
 it("composes verbatim Session Instructions or omits the section", () => {
   const base = input();
   const baseline = composeProviderPrompt(base);

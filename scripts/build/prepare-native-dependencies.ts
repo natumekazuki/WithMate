@@ -14,12 +14,12 @@ export const prepareNativePackaging: BeforePackHook = async (context) => {
     platform: { nodeName: context.electronPlatformName },
     arch: Arch[context.arch],
   });
-  // beforeBuild=false also disables dependency collection in electron-builder.
-  // Only skip its rebuild after handling the Windows native dependencies here.
+  // `beforeBuild=false` にすると、electron-builder の依存関係の収集も無効になる。
+  // ここで Windows のネイティブ依存関係を処理した後は、electron-builder の再ビルドだけを省く。
   Object.assign(packager.config, { npmRebuild: useDefaultRebuild });
-  // electron-builder normalizes package.json's files into FileSet objects.
-  // Extend their filters instead of creating an exclusion-only matcher, which
-  // would implicitly include the entire repository.
+  // electron-builder は `package.json` の `files` を `FileSet` オブジェクトに正規化する。
+  // 除外だけのマッチャーを作ると暗黙にリポジトリ全体が対象になるため、
+  // 既存の `FileSet` のフィルターに除外を追加する。
   const exclusion = "!node_modules/node-pty/build/**";
   const fileSets = packager.config.files ?? [];
   for (const fileSet of Array.isArray(fileSets) ? fileSets : [fileSets]) {

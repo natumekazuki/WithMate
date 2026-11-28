@@ -21,7 +21,7 @@ type Dependencies = {
   environment?: NodeJS.ProcessEnv;
 };
 
-/** SDK lists are suggestions, not a migration of saved execution selections. */
+/** SDK の一覧は候補を示すだけで、保存済みの実行時の選択を移行するものではない。 */
 export class ProviderModelDiscoveryService {
   private readonly jobs = new Map<string, { controller: AbortController; completion: Promise<void> }>();
   private readonly states = new Map<string, DiscoveryState>();
@@ -38,7 +38,7 @@ export class ProviderModelDiscoveryService {
     const credentialEnvironment = Object.fromEntries(Object.entries(environment)
       .filter(([key]) => /^(OPENAI_|CODEX_|ANTHROPIC_|CLAUDE_|COPILOT_|GITHUB_|GH_TOKEN$|OPENCODE_)/.test(key))
       .sort(([a], [b]) => a.localeCompare(b)));
-    // This is a credential-isolated cache key, never a persisted credential or integrity ledger.
+    // 認証情報ごとに分離したキャッシュキーであり、永続化する認証情報でも整合性の台帳でもない。
     return createHash("sha256").update(JSON.stringify([
       providerId, process.platform === "win32" ? workspacePath.toLowerCase() : workspacePath,
       getProviderAppSettings(settings, providerId), credentialEnvironment,
@@ -78,7 +78,7 @@ export class ProviderModelDiscoveryService {
     return this.snapshot(workspacePath, settings, cached);
   }
 
-  /** Only a new Session without any selected model waits for its first list. */
+  /** モデルをまだ選んでいない新規 Session だけが、最初の一覧の取得を待つ。 */
   async ensure(providerId: string, workspacePath?: string): Promise<ModelCatalogSnapshot> {
     const request = { providerId, ...(workspacePath ? { workspacePath } : {}) };
     const workspace = this.workspace(request);
@@ -143,7 +143,7 @@ export class ProviderModelDiscoveryService {
         }
       }
     });
-    // A storage-generation shutdown owns and awaits every outstanding discovery.
+    // ストレージ世代の終了処理は未完了の検出ジョブをすべて引き受け、完了を待つ。
     this.jobs.set(key, { controller, completion });
     void completion.catch(() => undefined);
   }

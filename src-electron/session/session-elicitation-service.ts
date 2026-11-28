@@ -117,7 +117,7 @@ export class SessionElicitationService {
     const expire = () => {
       pending.expired = true;
       notificationController.abort();
-      // A dispatched answer must settle before terminal history is persisted.
+      // 送出済みの回答の結果が確定してから、終了時の履歴を保存する。
       if (pending.sending) update("expired");
       else settle({ action: "cancel" }, "expired");
     };

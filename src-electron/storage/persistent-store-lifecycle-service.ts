@@ -121,10 +121,10 @@ export type SessionFilePinStorage = AwaitableStorageMethods<SessionStorageV6,
   "listSessionFilePins" | "pinSessionFile" | "unpinSessionFile">;
 
 /**
- * Public storage boundaries intentionally describe awaitable methods rather than
- * the current synchronous SQLite implementations. This lets the lifecycle
- * bundle be backed by a Worker without making callers depend on a concrete
- * database class.
+ * 公開するストレージ境界では、現在の同期 SQLite 実装をそのまま記述せず、
+ * 意図的に await できるメソッドを定義する。
+ * これにより、呼び出し側を具体的なデータベースクラスに依存させず、
+ * ライフサイクルのバンドルを Worker で実装できる。
  */
 export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   AuxiliarySessionStorage,
@@ -235,9 +235,9 @@ export class PersistentStoreLifecycleService {
   constructor(private readonly deps: PersistentStoreLifecycleDeps) {}
 
   async initialize(dbPath: string, userDataPath?: string): Promise<PersistentStoreBundle> {
-    // V6 ownership is selected by the established filename. Schema validation
-    // and initialization happen inside the storage Worker, so Main does not
-    // open a synchronous V6 connection merely to choose its owner.
+    // V6 の所有者は既定のファイル名で判定する。
+    // スキーマの検証と初期化はストレージ Worker 内で行うため、
+    // Main は所有者の判定だけを目的とする同期 V6 接続を開かない。
     const isV6Database = basename(dbPath) === APP_DATABASE_V6_FILENAME;
     const isV3Database = !isV6Database && isValidV3Database(dbPath);
     const isV2Database = !isV6Database && isValidV2Database(dbPath);

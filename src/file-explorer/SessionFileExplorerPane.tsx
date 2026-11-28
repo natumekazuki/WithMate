@@ -182,8 +182,8 @@ export function SessionFileExplorerPane({
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [revealTarget, setRevealTarget] = useState<string | null>(null);
   const filePins = useSessionFilePins({ api, sessionId, enabled, rootsRevision, active: visible && activeTab === "files", refreshRevision });
-  // A native disabled button loses focus as soon as an asynchronous refresh
-  // disables it, even if the virtualizer keeps the same row mounted.
+  // 標準のボタンを非同期の再読み込みで無効にすると、
+  // 仮想リストが同じ行をマウントしたままでも、無効になった時点でフォーカスを失う。
   const pinAriaDisabled = filePins.canChange ? undefined : true;
   const filesRefreshing = activeTab === "files" && (
     rootsLoadState === "loading" || (!!api && !!sessionId && enabled && filePins.status === "loading")
@@ -311,7 +311,7 @@ export function SessionFileExplorerPane({
         const expanded = Object.fromEntries(Object.entries(expandedDirectoriesRef.current).filter(([key]) => retained.has(key.split("\u0000")[0])));
         expandedDirectoriesRef.current = expanded;
         setExpandedDirectories(expanded);
-        // Only already-open directories are refreshed, parents before descendants.
+        // すでに開いているディレクトリだけを、親から子孫の順に更新する。
         const opened = Object.keys(expanded).filter((key) => expanded[key]).sort((left, right) => left.split("/").length - right.split("/").length);
         for (const key of opened) {
           if (loadRevisionRef.current !== revision || !activeRef.current.visible || !activeRef.current.files) break;

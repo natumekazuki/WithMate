@@ -4,7 +4,7 @@ import type { LocalPrWindowApi } from "../../src-shared/local-pr/local-pr-contra
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { ButtonContent } from "../ui/button-content.js";
 
-/** Insert PR file references without copying existing files or using Session Files. */
+/** 既存ファイルをコピーしたり Session Files を使ったりせず、PR にファイル参照を挿入する。 */
 export function LocalPrAttachmentEditor({ api, text, onChange, disabled, onBusyChange }: {
   api: LocalPrWindowApi; text: string; onChange: (text: string) => void; disabled: boolean; onBusyChange: (busy: boolean) => void;
 }) {
@@ -12,7 +12,7 @@ export function LocalPrAttachmentEditor({ api, text, onChange, disabled, onBusyC
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /** Replace the selected range with Markdown links or image references. */
+  /** 選択範囲を Markdown のリンクまたは画像参照で置き換える。 */
   function insert(paths: string[], start: number, end: number) {
     if (!paths.length) return;
     const links = paths.map((path) => {
@@ -28,7 +28,7 @@ export function LocalPrAttachmentEditor({ api, text, onChange, disabled, onBusyC
     requestAnimationFrame(() => { field.current?.focus(); field.current?.setSelectionRange(start + insertion.length, start + insertion.length); });
   }
 
-  /** Existing files stay at their original path; only clipboard bytes need a new file. */
+  /** 既存ファイルは元のパスのまま使う。クリップボードのバイト列だけが新規ファイルを必要とする。 */
   async function attach(files?: File[]) {
     const start = field.current?.selectionStart ?? text.length;
     const end = field.current?.selectionEnd ?? start;

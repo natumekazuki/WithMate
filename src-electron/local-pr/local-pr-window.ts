@@ -14,7 +14,7 @@ type Repository = { repositoryId: string; workspacePath: string };
 type Source<Repo> = { actor: MainSessionTarget; repository: Repo; generation: object };
 type Entry<Repo> = { window: BrowserWindow; source: Source<Repo>; approvalPending: boolean };
 
-/** Main owns PR Window admission; the renderer cannot choose its repository or actor. */
+/** PR ウィンドウを開く可否は Main が管理する。renderer はリポジトリや実行主体を選べない。 */
 export class LocalPrWindowService<Repo extends Repository> {
   private readonly entries = new Map<number, Entry<Repo>>();
 
@@ -30,7 +30,7 @@ export class LocalPrWindowService<Repo extends Repository> {
     imageReader(): Pick<SessionFileExplorerService, "inspectImage" | "readImageChunk">;
   }) {}
 
-  /** Register only narrow IPC with a separate renderer and explicit main-frame checks. */
+  /** 別の renderer と明示的なメインフレーム確認を使い、必要最小限の IPC だけを登録する。 */
   register(ipc: IpcHandleRegistrar): void {
     ipc.handle(LOCAL_PR_OPEN_WINDOW, (event, raw) => this.open(event, openLocalPrWindowInput.parse(raw)));
     ipc.handle(LOCAL_PR_PICK_ATTACHMENT, async (event) => {
@@ -77,7 +77,7 @@ export class LocalPrWindowService<Repo extends Repository> {
       catch { return failure("PR_FORBIDDEN", "Use the owning Pull Requests window."); }
       const { entry, assertCurrent } = owner;
 
-      // Approval is made in an app-owned native confirmation, and rechecked in the common PR service.
+      // 承認はアプリが所有するネイティブ確認画面で行い、共通 PR サービスでも再確認する。
       if (operation === "approve") return this.approve(entry, input, assertCurrent);
       try {
         return await this.deps.application.execute(entry.source.repository, entry.source.actor, "gui", operation as LocalPrOperation, input, assertCurrent);
@@ -114,16 +114,16 @@ export class LocalPrWindowService<Repo extends Repository> {
     return { entry, assertCurrent };
   }
 
-  /** Broadcast invalidation only; each open Window still reads its authorized repository. */
+  /** 再取得が必要になったことだけを一斉通知する。開いている各ウィンドウは引き続き認可されたリポジトリを読み取る。 */
   notify(repositoryId: string): void {
     for (const { window, source } of this.entries.values()) {
       if (source.repository.repositoryId !== repositoryId || window.isDestroyed() || window.webContents.isDestroyed() || window.webContents.isCrashed()) continue;
       try { window.webContents.send(LOCAL_PR_CHANGED); }
-      catch { /* A renderer closing during notification can reload from the source of truth. */ }
+      catch { /* 通知中に renderer が閉じても、正本から再読み込みできる。 */ }
     }
   }
 
-  /** Close a removed Session's view, or all views on storage-generation changes. */
+  /** 削除した Session のビューを閉じる。ストレージ世代が変わった場合は全ビューを閉じる。 */
   close(sessionId?: string): void {
     for (const [id, { window, source }] of this.entries) {
       if (sessionId && source.actor.sessionId !== sessionId) continue;
@@ -132,7 +132,7 @@ export class LocalPrWindowService<Repo extends Repository> {
     }
   }
 
-  /** Resolve the owning saved Session before opening a repository view. */
+  /** リポジトリのビューを開く前に、それを所有する保存済みの Session を解決する。 */
   private async open(event: IpcMainInvokeEvent, actor: MainSessionTarget): Promise<void> {
     const senderWindow = this.mainFrameWindow(event);
     const frame = event.senderFrame;
@@ -142,7 +142,7 @@ export class LocalPrWindowService<Repo extends Repository> {
       throw new Error("The Session's Git repository is unavailable.");
     }
 
-    // Reuse only an exact source; another Session in the same repo can have its own review position.
+    // 送信元が完全一致する場合だけ再利用する。同じリポジトリでも別の Session は独自のレビュー位置を持てる。
     for (const entry of this.entries.values()) {
       if (!entry.window.isDestroyed() && entry.source.generation === source.generation && isDeepStrictEqual(entry.source.actor, actor)
         && entry.source.repository.repositoryId === source.repository.repositoryId && entry.source.repository.workspacePath === source.repository.workspacePath) {
@@ -168,7 +168,7 @@ export class LocalPrWindowService<Repo extends Repository> {
     }
   }
 
-  /** Only this native interaction can create the GUI approval for the displayed pair. */
+  /** 表示中の組への GUI 承認を作成できるのは、このネイティブ操作だけ。 */
   private async approve(entry: Entry<Repo>, raw: unknown, assertCurrent: () => Promise<void>): Promise<LocalPrResult<"approve">> {
     const parsed = localPrGuiInput.approve.safeParse(raw);
     if (!parsed.success) return failure("PR_INVALID_REQUEST", "Select the submission and target to approve.");
@@ -202,7 +202,7 @@ export class LocalPrWindowService<Repo extends Repository> {
     }
   }
 
-  /** Top-level app sender only, not a subframe or an HTML preview guest. */
+  /** アプリのトップレベルの送信元だけを受け付け、サブフレームや HTML プレビューのゲストは除外する。 */
   private mainFrameWindow(event: IpcMainInvokeEvent): BrowserWindow {
     assertNotHtmlPreviewSender(event);
     const wnd = BrowserWindow.fromWebContents(event.sender);
@@ -210,7 +210,7 @@ export class LocalPrWindowService<Repo extends Repository> {
     return wnd;
   }
 
-  /** The locked dedicated Window loads only the packaged or development PR document. */
+  /** 制限された専用ウィンドウは、配布版または開発用の PR 文書だけを読み込む。 */
   private isPrDocument(value: string): boolean {
     const url = URL.parse(value);
     return !!url && ["file:", "http:"].includes(url.protocol) && url.pathname.endsWith("/local-pr.html");

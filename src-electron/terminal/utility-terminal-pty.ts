@@ -91,7 +91,7 @@ export async function createUtilityTerminalPty(file: string, cwd: string, cols: 
       }
     });
     host.on("error", () => {
-      // Electron also emits exit. That event is the single failure signal.
+      // Electron は exit も発行する。失敗を知らせるイベントは exit に一本化する。
     });
     host.on("exit", (code) => {
       if (forceStopTimer) clearTimeout(forceStopTimer);

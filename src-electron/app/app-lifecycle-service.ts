@@ -83,27 +83,27 @@ export class AppLifecycleService {
             await this.deps.prepareSessionWindowSnapshotForQuit();
           }
         } catch {
-          // Remaining cleanup must still run if the best-effort snapshot fails.
+          // ベストエフォートのスナップショット保存が失敗しても、残りの後処理を続ける。
         }
         try {
           await this.deps.invalidateAllProviderSessionThreads?.();
         } catch {
-          // Remaining cleanup must still run if provider cleanup fails.
+          // プロバイダーの後処理が失敗しても、残りの後処理を続ける。
         }
         try {
           this.deps.revokeAllAgentRuntimeBindings?.();
         } catch {
-          // Runtime cleanup and application shutdown must still complete if revocation fails.
+          // 失効処理が失敗しても、ランタイムの後処理とアプリの終了を完了させる。
         }
         try {
           await this.deps.stopAgentRuntime?.();
         } catch {
-          // Persistent stores and application shutdown must still complete if runtime cleanup fails.
+          // ランタイムの後処理が失敗しても、永続ストアを閉じてアプリを終了する。
         }
         try {
           await this.deps.closePersistentStores();
         } catch {
-          // Electron quit must still settle if persistent store close fails.
+          // 永続ストアを閉じられなくても、Electron の終了処理を完了させる。
         } finally {
           this.quitCleanupCompleted = true;
           this.deps.quitApp();

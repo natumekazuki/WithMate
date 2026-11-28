@@ -66,7 +66,7 @@ export async function createOrVerifyV6FreshDatabase(
         try {
           db.exec("ROLLBACK;");
         } catch {
-          // Best-effort rollback before closing and deleting the temporary database.
+          // 一時データベースを閉じて削除する前に、可能な範囲でロールバックする。
         }
       }
       throw error;

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** Text is stored once in Message.text; output units refer to its UTF-16 ranges. */
+/** テキストは Message.text に一度だけ保存し、出力単位はその UTF-16 範囲を参照する。 */
 export const providerOutputSchema = z.object({
   units: z.array(z.object({
     id: z.string(), messageId: z.string().optional(), blockIndex: z.number().int().nonnegative().optional(),

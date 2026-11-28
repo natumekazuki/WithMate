@@ -24,8 +24,8 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const canonicalRef = useRef(new Set(canonicalUserSeqs));
   canonicalRef.current = new Set(canonicalUserSeqs);
   const canonicalSignature = canonicalUserSeqs.join(",");
-  // A peer's page can ask for reconciliation but cannot retire a receipt
-  // needed while the Session-wide tail is still catching up.
+  // 相手別ページは整合処理を要求できるが、Session 全体の履歴末尾が追いつくまで
+  // 必要な受付情報を破棄することはできない。
   const reconciliationSignature = reconciliationUserSeqs.join(",");
   const submissionsRef = useRef(submissions);
   submissionsRef.current = submissions;
@@ -44,8 +44,8 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const startedTurnId = startedId ? liveRun?.sessionTurnId : undefined;
   useLayoutEffect(() => {
     if (!enabled || !startedId || startedSeq === undefined || !startedTurnId) return;
-    // The live start is committed. Discard reads begun before it and retain the
-    // identity until a fresh canonical read replaces the queue snapshot.
+    // 実行開始は確定済み。開始前に始まった読み取りは破棄する。
+    // 新しい正本の読み取りでキューのスナップショットが置き換わるまでは、この識別情報を保持する。
     ++generation.current;
     setState((current) => {
       if (current.owner !== owner) return current;
@@ -65,7 +65,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     observedCanonical.current = { owner, signature: reconciliationSignature };
     if (!enabled || previous.owner !== owner || previous.signature === reconciliationSignature) return;
     const known = stateRef.current.owner === owner ? [...stateRef.current.active, ...stateRef.current.bridges] : [];
-    // Canonical-first delivery must still resolve a local request whose receipt has not bound its user seq.
+    // 正本が先に届く場合でも、受付情報にユーザー入力の seq がまだ紐付いていないローカルリクエストを解決する必要がある。
     if (submissionsRef.current.some((submission) => reconciliationUserSeqs.some((seq) => seq >= submission.historyMessageCount)
       && submission.receipt?.userMessageSeq == null && !known.some((receipt) => receipt.requestId === submission.requestId && receipt.userMessageSeq !== null))) reload();
   }, [owner, enabled, reconciliationSignature, reload]);
@@ -81,7 +81,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     if (!enabled || !api?.listSessionTurnQueue) return;
     const request = ++generation.current;
     const previous = stateRef.current.owner === owner ? stateRef.current : null;
-    // A receipt read can reconcile only the history/submissions observed before it began.
+    // 受付情報の読み取りで整合を取れるのは、読み取り開始前に観測した履歴と送信だけ。
     const reconciledHistory = { canonicalSignature: reconciliationSignature, submissionSignature };
     const requestedSubmissions = submissionsRef.current;
     setState((current) => current.owner === owner ? { ...current, error: "", loading: !current.ready }
@@ -90,7 +90,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
       const active = (await api.listSessionTurnQueue!(sessionId)).filter((receipt) => receipt.sessionId === sessionId && receipt.incarnationId === incarnationId);
       const bridges = [...(previous?.bridges ?? [])];
       let canReconcileHistory = true;
-      // Local sends may finish before the first active-queue snapshot reaches this column.
+      // 処理中のキューの最初のスナップショットがこの列に届く前に、ローカル送信が完了する場合がある。
       for (const submission of requestedSubmissions) {
         if (active.some((receipt) => receipt.requestId === submission.requestId)) continue;
         if (!api.getSessionTurnQueueReceipt) { canReconcileHistory = false; continue; }
@@ -134,7 +134,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
         if (!order || !api?.reorderQueuedSessionTurns) throw new Error("Queue reordering is unavailable.");
         const result = await api.reorderQueuedSessionTurns(sessionId, { incarnationId, ...order });
         if (currentOwner.current === owner) {
-          // A pre-mutation read must not replace the confirmed order.
+          // 変更前に始まった読み取りで、確定済みの順序を上書きしない。
           ++generation.current;
           const positions = new Map(result.receipts.filter((item) => item.state === "queued").map((item) => [item.id, item.queuePosition]));
           setState((current) => current.owner !== owner ? current : {

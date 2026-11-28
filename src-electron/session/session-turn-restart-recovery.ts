@@ -37,7 +37,7 @@ const mainWasRunning = `CASE WHEN json_valid(s.runtime_policy_json)
 const mainWasInterrupted = `CASE WHEN json_valid(s.runtime_policy_json)
   THEN COALESCE(json_extract(s.runtime_policy_json, '$.runState') = 'interrupted', 0) ELSE 0 END`;
 
-/** Called in the storage worker's startup transaction, before the queue can claim work. */
+/** ストレージ Worker の起動時トランザクション内で、キューが実行権を取得できるようになる前に呼び出す。 */
 export function recoverSessionTurnsAfterRestart(db: DatabaseSync, now: string): number {
   const owners = db.prepare(`
     SELECT s.id AS sessionId, NULL AS auxiliaryId, s.incarnation_id AS incarnationId,
@@ -60,7 +60,7 @@ export function recoverSessionTurnsAfterRestart(db: DatabaseSync, now: string): 
   return changed;
 }
 
-/** Only after the live runtime guard was released. Never reconcile another receipt or Turn. */
+/** 実行中のランタイムを保護するガードの解放後に限る。他の受付レコードや Turn の整合は取らない。 */
 export function recoverReleasedSessionTurn(db: DatabaseSync, owner: SessionTurnQueueOwner, receiptId: string, now: string) {
   const row = db.prepare(`
     SELECT s.id AS sessionId, a.id AS auxiliaryId, q.incarnation_id AS incarnationId,
@@ -107,8 +107,8 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string, recei
     : !receiptId && (wasRunning || wasInterrupted));
   let failedLatest = false;
   if (latest?.phase === "running" && latestOwnsInput && exactStart) {
-    // A linked assistant message may contain saved partial text and Details. Never replace it.
-    // When none exists, the ordinary Failed representation has an empty answer body and a separate failure reason.
+    // 関連付け済みのアシスタントメッセージには、保存された途中の本文や詳細が含まれることがある。置き換えない。
+    // 該当のメッセージがなければ、通常の失敗表現として回答本文を空にし、失敗理由を別に保存する。
     let seq = latest.assistantMessageSeq;
     if (seq === null || !isSavedResponse(latest)) {
       const next = db.prepare(`SELECT COALESCE(MAX(seq) + 1, 0) AS seq FROM ${messageTable} WHERE ${ownerColumn} = ?`)
@@ -117,8 +117,8 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string, recei
       db.prepare(`INSERT INTO ${messageTable} (${ownerColumn}, seq, role, body, created_at)
         VALUES (?, ?, 'assistant', ?, ?)`).run(id, seq, JSON.stringify({ role: "assistant", text: "", runFailure: reasonForAbandonedTurn, accent: true }), now);
     } else {
-      // An explicit structured reason also bypasses the legacy inline-notice parser:
-      // an answer ending in the same words is still the provider's answer.
+      // 構造化された理由を明示すると、従来の本文内の通知を読み取る処理も適用されない。
+      // 回答が同じ文言で終わっていても、それはプロバイダーが返した回答本文の一部。
       db.prepare(`UPDATE ${messageTable} SET body = json_set(body, '$.runFailure', ?)
         WHERE ${ownerColumn} = ? AND seq = ? AND role = 'assistant'
           AND CASE WHEN json_valid(body) THEN json_type(body, '$.runFailure') IS NOT 'text' ELSE 0 END`)
@@ -131,8 +131,8 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string, recei
     failedLatest = true;
   }
 
-  // The released receipt can still identify stale running metadata without
-  // proving its input sequence. Clear that busy hint, not the Turn outcome.
+  // 解放済みの受付レコードから、入力のシーケンス番号を確定できなくても、古い実行中メタデータは特定できる。
+  // 解除するのは実行中を示す情報だけで、Turn の結果は変更しない。
   const releasesLatestMetadata = receiptId && wasRunning && latestOwnsInput && referencingStarts.length === 1;
   let metadataChanged = false;
   if (failedLatest || releasesLatestMetadata || (!receiptId && (wasRunning || wasInterrupted))) {
@@ -157,7 +157,7 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string, recei
     let state: SavedTurn["phase"] | "interrupted" = "interrupted";
     let reason: string | null = null;
     if (receipt.inputTurnId !== null) {
-      // A queued input's append and completed receipt are atomic. A lone input claim is not proof of delivery or non-delivery.
+      // キュー経由の入力の追記と受付レコードの完了はアトミックに行う。入力の実行権だけでは、配信済みとも未配信とも証明できない。
       reason = inputUnknownReason;
     } else if (receipt.turnId !== null && receipt.userMessageSeq !== null) {
       const turn = resolveTurn.get(id, receipt.turnId, receipt.userMessageSeq) as SavedTurn | undefined;
@@ -168,8 +168,8 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string, recei
       }
     } else if (!receiptId && receipt.state === "starting"
       && receipt.turnId === null && receipt.userMessageSeq === null && !receipt.coordination) {
-      // An untouched startup claim never reached the atomic start record.
-      // Do not infer this from an already-interrupted receipt's missing fields.
+      // 未処理の開始用実行権は、開始をアトミックに記録する段階に達していない。
+      // 中断済みの受付レコードのフィールドが欠けているだけで、同じことを推定しない。
       state = "failed";
       reason = reasonForAbandonedTurn;
     }

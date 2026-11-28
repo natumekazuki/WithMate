@@ -5,7 +5,7 @@ import { resolveOpenPathFeedback, showOpenPathFeedback } from "../file-explorer/
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
 import { useMarkdownImageResolver, type MarkdownImageApi } from "../ui/markdown/image-resource-loader.js";
 
-// The PR preload ignores renderer Session identity; Main reads in the owning Session.
+// PR の preload は renderer が渡した Session の識別情報を無視し、Main は所有元の Session で読み取る。
 const imageContext = { sessionId: "" };
 
 export function LocalPrDescription({ api, text, revision }: {

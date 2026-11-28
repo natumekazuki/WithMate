@@ -62,7 +62,7 @@ async function repositoryId(workspacePath: string): Promise<string> {
   }
 }
 
-/** Guidance and destination lookup only; never selects options or creates Git Worktrees. */
+/** 方針の案内と配置先の照会のみを行う。実行設定の選択や Git Worktree の作成は行わない。 */
 export class SessionOperatingPolicyService {
   constructor(private readonly deps: {
     getStore(): PolicyStore;
@@ -100,7 +100,7 @@ export class SessionOperatingPolicyService {
         const policy = await store.getWorktreePolicy();
         const rule = policy.repositories[id] ?? null;
         if (operation === "get_worktree_policy") return { ok: true, repositoryId: id, rootPath: policy.rootPath, rule };
-        // Reject shorthand such as @{-1}; it is not the caller's literal branch name.
+        // @{-1} などの省略記法は拒否する。呼び出し元が指定するのはブランチ名そのもの。
         if (request.branch.startsWith("-") || request.branch.includes("@{")) invalid("A literal branch name is required.");
         try { await git(workspacePath, ["check-ref-format", "--branch", request.branch]); }
         catch { invalid("Invalid Git branch name."); }

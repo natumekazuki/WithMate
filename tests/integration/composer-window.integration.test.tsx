@@ -159,7 +159,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
       rejectAdmission = false;
       return { state: "rejected", reason: "Auxiliary admission failed" };
     }
-    // Admission atomically commits the receipt and captured Auxiliary consume.
+    // 受付では、受付記録の確定と取得済みの Auxiliary 下書きの消費を原子的に行う。
     if (current) drafts.set(id, { ...current, text: "", durableRevision: current.durableRevision + 1 });
     const session = await api.getSession(id);
     assert.ok(session);
@@ -430,8 +430,8 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     await target("Auxiliary");
     assert.equal(textarea().value, "", "a consumed draft must not reappear after switching back");
 
-    // An edit after capture stays pending until the admission consume revision
-    // is available; quit must persist that edit before acknowledging shutdown.
+    // 取得後の編集は、受付に伴う下書き消費のリビジョンが得られるまで保留される。
+    // 終了処理では、終了要求に応答する前にその編集を永続化する必要がある。
     heldAdmission = new Promise<void>((resolve) => { releaseAdmission = resolve; });
     const frozenAdmissionStarted = new Promise<void>((resolve) => { notifyAdmissionStarted = resolve; });
     await input("captured before quit");

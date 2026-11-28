@@ -11,7 +11,7 @@ export function readHomeCrewCloseRunIdentities(sessionId: string, deps: {
   const mainRun = deps.mainRuntime?.getCloseRunIdentity(sessionId);
   if (mainRun) runs.push(mainRun);
   for (const run of deps.directAuxiliaryRuns.values()) {
-    // The direct Auxiliary request owns its claim across draft admission and provider execution.
+    // 直接実行された Auxiliary のリクエストは、ドラフトの受付からプロバイダーの実行まで実行権を保持する。
     if (run.parentSessionId === sessionId) runs.push(run);
   }
   for (const id of deps.liveAuxiliaryParents.pendingRunIdsForParent(sessionId)) {

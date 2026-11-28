@@ -30,7 +30,7 @@ export function projectSessionRunControls(state: LiveState) {
     hasApprovalRequest: Boolean(state?.approvalRequest),
     hasElicitationRequest: elicitations.length > 0,
     hasBlockingElicitationRequest: elicitations.some((request) => request.blocking !== false),
-    // Request identities as stable strings so equal snapshots keep the same controls.
+    // 等しいスナップショットが同じ操作要素を保てるよう、リクエストの識別情報は安定した文字列にする。
     approvalRequestId: state?.approvalRequest?.requestId ?? "",
     blockingElicitationRequestIds: elicitations.filter((request) => request.blocking !== false).map((request) => request.requestId).join("\n"),
     optionalElicitationRequestIds: elicitations.filter((request) => request.blocking === false).map((request) => request.requestId).join("\n"),
@@ -56,7 +56,7 @@ function getIngress(api: SessionLiveIngressApi): Ingress {
 
 function publish(owner: Owner, state: LiveState): void {
   ++owner.revision;
-  // Action updaters need identity and pending requests, not conversation detail.
+  // 操作の更新に必要なのは識別情報と保留中のリクエストであり、会話の詳細ではない。
   owner.actionState = state ? { ...state, assistantText: "", reasoningText: "", steps: [], backgroundTasks: [], usage: null } : null;
   owner.controls = projectSessionRunControls(state);
   owner.fullState = [...owner.selections].some((selection) => selection.detail) ? state : undefined;
@@ -90,7 +90,7 @@ function loadOwner(api: SessionLiveIngressApi, ingress: Ingress, id: string, own
     }
   }).finally(() => {
     owner.pending = false;
-    // A detail surface may join after an event invalidates a controls-only get.
+    // 操作要素だけの読み取りがイベントで無効になった後から、詳細を表示する画面が購読に加わる場合がある。
     if (ingress.owners.get(id) === owner && owner.revision !== revision
       && owner.fullState === undefined && [...owner.selections].some((selection) => selection.detail)) {
       loadOwner(api, ingress, id, owner);
@@ -156,7 +156,7 @@ export function subscribeSessionRunControls(input: {
   }, (owner) => owner.controls);
 }
 
-/** Event observers do not retain payloads or create snapshot owners. */
+/** イベント監視側はペイロードを保持せず、スナップショットの所有者も作らない。 */
 export function subscribeSessionLiveEvents(api: SessionLiveIngressApi, listener: (id: string, state: LiveState) => void): () => void {
   const ingress = getIngress(api);
   ingress.events.add(listener);

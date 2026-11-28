@@ -106,7 +106,7 @@ export class HomeCrewContextMenuService<TWindow extends SessionWindowLike, TOwne
       if (!window) continue;
       const windowIncarnation = this.deps.bridge.getWindowIncarnation(window);
       const session = sessions.get(id);
-      // An open Window without a saved relationship cannot be safely classified.
+      // 保存済みの関係がない場合、開いている Window を安全に分類できない。
       if (!session) {
         if (windowIncarnation) throw new Error(windowsChanged);
         continue;
@@ -135,7 +135,7 @@ export class HomeCrewContextMenuService<TWindow extends SessionWindowLike, TOwne
     readSelection: () => Promise<CrewSession | null>,
     isCurrent: () => boolean,
   ): Promise<SessionMonitorContextMenuResult> {
-    // Capture in the native menu's click callback, before a storage read or modal wait.
+    // ストレージの読み取りやモーダルの待機に入る前に、ネイティブメニューのクリックコールバックで対象を取得する。
     const targets = this.listDescendantWindows(selection);
     if (!targets.length) return { status: "failed", message: "No descendant Windows are open." };
     const batch = new Map(targets.map((target) => [target.sessionId, {
@@ -199,7 +199,7 @@ export class HomeCrewContextMenuService<TWindow extends SessionWindowLike, TOwne
         if (conflict) return failure(conflict);
         attempted.add(target.window);
         const outcome = await this.deps.bridge.closeHomeCrewDescendantWindow(target.sessionId, target.window, () => {
-          // The bridge uses this again in the same synchronous interval as the final close/destroy.
+          // ブリッジは最終的な close/destroy と同じ同期処理内で、このチェックをもう一度実行する。
           conflict = checkBatch(target);
           return !conflict;
         });

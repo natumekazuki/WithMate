@@ -182,7 +182,7 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
       while (visible[index]?.disabled) index += direction;
       if (index >= 0 && index < visible.length) setActive(index);
     } else if (event.key === "Tab") {
-      // The portal is outside the composer tab order; resume from its trigger.
+      // ポータルはコンポーザーの Tab 順序の外にあるため、開くボタンから移動を再開する。
       triggerRef.current?.focus();
       close();
     }

@@ -16,7 +16,7 @@ export function createKatexProjectionPlugin(): Plugin<[], Root> {
     const current = new Map<string, RootContent[]>();
     tree.children = tree.children.flatMap((node) => {
       if (!containsMath(node)) return [node];
-      // Include positions and properties: compiled blocks keep the current source offsets.
+      // 位置とプロパティをキーに含める。コンパイル済みブロックには現在のソースオフセットが残る。
       const key = JSON.stringify(node);
       let compiled = retained.get(key) ?? current.get(key);
       if (!compiled) {
@@ -25,7 +25,7 @@ export function createKatexProjectionPlugin(): Plugin<[], Root> {
         compiled = structuredClone(block.children);
       }
       current.set(key, compiled);
-      // Annotation and URL transforms own their mutable projection, not the cached one.
+      // 注釈と URL の変換は、キャッシュではなく自身の変更可能な投影を使う。
       return structuredClone(compiled);
     });
     retained = current;

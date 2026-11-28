@@ -10,7 +10,7 @@ import {
 const operationPaths = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD", "rebase-merge", "rebase-apply", "sequencer", "BISECT_START"];
 const statusArgs = ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=dirty"];
 
-/** Uses the existing checkout of the exact target ref; never switches or creates one. */
+/** 対象 ref の既存チェックアウトを使う。切り替えたり作成したりしない。 */
 async function targetWorktree(repository: LocalPrRepository, branch: string): Promise<string> {
   const listing = gitUtf8(await localPrGit(repository.root, ["worktree", "list", "--porcelain", "-z"]));
   const attached = listing.split("\0\0").map((record) => record.split("\0")).filter((fields) =>
@@ -25,24 +25,24 @@ async function targetWorktree(repository: LocalPrRepository, branch: string): Pr
   try {
     checkout = await resolveLocalPrRepository(attached[0][0].slice(9));
   } catch {
-    // A listed checkout may be missing or unavailable; do not fall back to the caller's worktree.
+    // 一覧にあるチェックアウトが存在しないか使えない場合も、呼び出し元の worktree で代用しない。
     throw new LocalPrError("WORKTREE_UNAVAILABLE", "Git could not open the target checkout.");
   }
-  // A stale worktree entry must not redirect a merge to a different repository or into its parent.
+  // 古い worktree の情報によって、マージ先が別のリポジトリや親ディレクトリに変わってはならない。
   if (checkout.repositoryId !== repository.repositoryId || checkout.root !== checkout.workspacePath) {
     throw new LocalPrError("WORKTREE_UNAVAILABLE", "The target checkout no longer belongs to this repository.");
   }
   return checkout.root;
 }
 
-/** Leaves any existing Git operation available for the user to finish in Git. */
+/** 進行中の Git 操作には手を加えず、ユーザーが Git で完了できるようにする。 */
 async function requireNoOperation(root: string): Promise<void> {
   const gitDir = gitLine(await localPrGit(root, ["rev-parse", "--path-format=absolute", "--git-dir"]));
   for (const name of operationPaths) {
     try {
       await lstat(path.join(gitDir, name));
     } catch (error) {
-      // Missing state files are normal; inaccessible metadata is not.
+      // 状態ファイルが存在しないのは正常だが、メタデータにアクセスできない場合は別。
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       throw error;
     }
@@ -50,7 +50,7 @@ async function requireNoOperation(root: string): Promise<void> {
   }
 }
 
-/** Inspects actual HEAD and the direct target ref independently. */
+/** 実際の HEAD と、マージ先を直接指す ref を個別に確認する。 */
 async function checkoutState(root: string, branch: string) {
   const [symbolic, head, target] = await Promise.all([
     runLocalPrGit(root, ["symbolic-ref", "--quiet", "HEAD"]),
@@ -61,7 +61,7 @@ async function checkoutState(root: string, branch: string) {
   return { branch: symbolic.code === 0 ? gitLine(symbolic.stdout) : null, head: gitObjectId(gitLine(head)), target };
 }
 
-/** Confirms the expected merge, or reports Git's observed state without changing it. */
+/** 想定どおりのマージを確認するか、Git の状態を変更せず観測結果を報告する。 */
 async function mergeOutcome(
   root: string, branch: string, old: string, source: string,
   result: Awaited<ReturnType<typeof runLocalPrGit>> | undefined, reason: string,
@@ -74,7 +74,7 @@ async function mergeOutcome(
     if (mergeHead.code > 1) throw new Error("Git could not read MERGE_HEAD.");
     merging = mergeHead.code === 0;
   } catch {
-    // A command failure after launch is not proof that Git made no changes.
+    // 起動後にコマンドが失敗しても、Git が何も変更しなかったとは限らない。
     throw new LocalPrError("MERGE_EFFECT_UNKNOWN", `${reason} Git state could not be verified in ${root}.`, "unknown");
   }
 
@@ -82,7 +82,7 @@ async function mergeOutcome(
   const unchanged = sameTarget && state.head === old;
   const manual = merging ? ` Git left a merge in progress in ${root}.` : ` Inspect ${root} before retrying.`;
   if (result?.code === 1 && unchanged && merging) {
-    // MERGE_HEAD by itself can also be left by a failed commit; verify unmerged entries.
+    // コミットが失敗しただけでも MERGE_HEAD は残り得るため、未マージのエントリを確認する。
     const unmerged = await runLocalPrGit(root, ["ls-files", "--unmerged", "-z"]).catch(() => null);
     if (unmerged?.code === 0 && unmerged.stdout.length) {
       throw new LocalPrError("MERGE_CONFLICT", `Git reported merge conflicts.${manual}`, "unknown");
@@ -92,7 +92,7 @@ async function mergeOutcome(
   const clean = status?.length === 0;
   if (result?.code === 0 && clean) {
     if (unchanged) {
-      // Confirm Git's no-op without depending on the wording of its output.
+      // Git の出力文言に依存せず、変更がなかったことを確認する。
       const included = await runLocalPrGit(root, ["merge-base", "--is-ancestor", source, old]).catch(() => null);
       if (included?.code === 0) {
         throw new LocalPrError("ALREADY_UP_TO_DATE", "The target already contains the submitted commit. No merge commit was created.");
@@ -110,7 +110,7 @@ async function mergeOutcome(
   throw new LocalPrError("MERGE_EFFECT_UNKNOWN", `${reason} ${target}${checkout}${manual}`, "unknown");
 }
 
-/** Lets Git merge the fixed source into the checked-out, approved target. */
+/** 固定したマージ元を、チェックアウト済みで承認されたマージ先に Git でマージする。 */
 export async function mergeLocalPr(
   repository: LocalPrRepository, branch: string, version: LocalPrVersion, guard: () => void,
 ): Promise<string> {
@@ -123,12 +123,12 @@ export async function mergeLocalPr(
   if (flags.some((entry) => !entry.startsWith("H "))) {
     throw new LocalPrError("UNSUPPORTED_WORKTREE", "The target index has sparse, ignored, or unmerged entries.");
   }
-  // Git may run a configured clean filter while checking the approved checkout.
+  // 承認済みのチェックアウトを確認する際、Git が設定済みの clean フィルターを起動することがある。
   guard();
   try {
     return await mergeCheckedOutVersion(root, branch, old, source, guard);
   } catch (error) {
-    // A refusal can follow a Git status or merge that already ran configured programs.
+    // Git の status や merge が設定済みプログラムを実行した後で、操作を拒否する場合がある。
     if (error instanceof LocalPrError && error.effect === "unknown") throw error;
     const code = error instanceof LocalPrError ? error.code : error instanceof RuntimeTurnInactiveError
       ? "RUNTIME_TURN_INACTIVE" : "MERGE_EFFECT_UNKNOWN";
@@ -138,7 +138,7 @@ export async function mergeLocalPr(
   }
 }
 
-/** Checks the approved checkout and runs Git, both with the checkout's configured filters. */
+/** 承認済みチェックアウトの検査と Git の実行は、いずれもそのチェックアウトのフィルター設定を使う。 */
 async function mergeCheckedOutVersion(
   root: string, branch: string, old: string, source: string, guard: () => void,
 ): Promise<string> {
@@ -146,8 +146,8 @@ async function mergeCheckedOutVersion(
     throw new LocalPrError("WORKTREE_DIRTY", "Commit or move work in the target checkout, then retry the merge.");
   }
 
-  // Git's normal merge uses the actual checkout. This last comparison is not atomic
-  // with process launch or with changes made by another Git process or editor.
+  // Git の通常のマージは実際のチェックアウトを使う。この最終照合は、プロセスの起動や、
+  // 別の Git プロセスやエディターによる変更に対してアトミックではない。
   await verifyLocalPrCommit(root, source);
   const before = await checkoutState(root, branch);
   if (before.branch !== branch || before.head !== old || before.target !== old) {
@@ -157,18 +157,18 @@ async function mergeCheckedOutVersion(
   let result: Awaited<ReturnType<typeof runLocalPrGit>> | undefined;
   let reason: string;
   try {
-    // Git 2.49's true merge may overwrite an existing ignored file at the same path.
-    // --no-overwrite-ignore is not a protection guarantee for this Git path.
+    // Git 2.49 でマージコミットを作るマージは、同じパスにある既存の無視対象ファイルを上書きする場合がある。
+    // この実行経路では、--no-overwrite-ignore を指定しても保護は保証されない。
     result = await runLocalPrGit(root, [
       "-c", "submodule.recurse=false",
-      // Git appends branch.mergeOptions even with -s. --config-env also handles '=' in the branch name.
+      // Git は -s の指定があっても branch.mergeOptions を追加する。--config-env ならブランチ名に '=' がある場合も扱える。
       `--config-env=branch.${branch.slice("refs/heads/".length)}.mergeOptions=${localPrEmptyGitConfigEnv}`,
       "merge", "-s", "ort", "--no-ff", "--no-squash", "--commit", "--no-edit", "--no-autostash",
       "--no-gpg-sign", "--no-stat", "--no-overwrite-ignore", "--", source,
     ]);
     reason = result.code === 0 ? "Git did not confirm the expected merge." : (result.stderr || result.stdout.toString("utf8").trimEnd() || `Git merge exited with code ${result.code}.`);
   } catch (error) {
-    // Process interruption and a negative exit status have different effect guarantees.
+    // プロセスの中断と負の終了ステータスでは、副作用について保証できることが異なる。
     reason = error instanceof Error ? error.message : "Git merge did not complete.";
   }
   return mergeOutcome(root, branch, old, source, result, reason);

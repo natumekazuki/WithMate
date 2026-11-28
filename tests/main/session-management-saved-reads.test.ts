@@ -65,7 +65,7 @@ function fixture(t: TestContext) {
       sql.prepare("UPDATE auxiliary_session_drafts SET durable_revision = 1, draft_text = ?, updated_at = ? WHERE auxiliary_session_id = ?")
         .run(`draft for ${id}`, timestamp(draftTime), id);
     } else {
-      // Preserve the older ordering behavior for a saved Auxiliary without a draft row.
+      // 下書き行を持たない保存済み Auxiliary では、従来の並び順を維持する。
       sql.prepare("DELETE FROM auxiliary_session_drafts WHERE auxiliary_session_id = ?").run(id);
     }
     return { kind: "auxiliary" as const, sessionId: id, incarnationId: date, mainSessionId: parent.id, mainIncarnationId: getSessionIncarnationId(parent) };

@@ -154,7 +154,7 @@ describe("companion removal database", () => {
   it("classifies provider blobs without materializing provider payloads", () => {
     const db = database();
     let payloadReads = 0;
-    // A virtual column makes payload materialization observable without a multi-GB fixture.
+    // 仮想列を使い、数 GB の fixture なしでペイロードの実体化を観測する。
     db.function("provider_payload", { deterministic: true }, () => {
       payloadReads++;
       return '{"text":"provider response"}';

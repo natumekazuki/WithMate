@@ -18,7 +18,7 @@ type CatalogueItem = { card: SentInstructionCard; read: SentBodyReader; revision
 type Catalogue = { owner: string; scope: string; items: CatalogueItem[] };
 const recipientIds = ({ target }: SentInstructionCard) => target.kind === "auxiliary" ? [target.sessionId, target.mainSessionId] : [target.sessionId];
 
-/** Positioning uses a bounded catalogue. Text belongs to the individual rendered cards. */
+/** 表示位置の決定には件数を絞った一覧を使う。本文は描画された個々のカードが持つ。 */
 export function useSentDeliveries(context: TurnInputReadContext | undefined, messages: readonly Message[], liveTurnId: string | null | undefined, enabled: boolean,
   savedSeqs?: readonly (number | undefined)[], responseTurnIds?: readonly (string | undefined)[]) {
   const messageSeqs = [...new Set((savedSeqs ?? messages.map((message) => message.historyIndex)).filter((seq) => seq !== undefined))].slice(0, 180);
@@ -35,8 +35,8 @@ export function useSentDeliveries(context: TurnInputReadContext | undefined, mes
   const [busy, setBusy] = useState(false);
   const generation = useRef(0);
   const retry = useRef<() => void>(undefined);
-  // A source Turn can still have a row before its saved response sequence reaches this column.
-  // Keep only cards with a current placement, and only for the same source incarnation.
+  // 送信元 Turn の保存済み応答のシーケンスがこの列に届く前でも、その Turn の行がある場合がある。
+  // 現時点で表示位置があり、送信元の incarnation が同じカードだけを残す。
   const visibleSeqs = new Set(messageSeqs);
   const visibleTurns = new Set([...(responseTurnIds ?? []), ...liveTurnIds]);
   const hasPlacement = (item: SentInstructionCard) => visibleTurns.has(item.sourceTurnId)
@@ -92,7 +92,7 @@ export function useSentDeliveries(context: TurnInputReadContext | undefined, mes
             visible.set(key, item);
           }
           if (response.cursors.receipts === null && response.cursors.steers === null) {
-            // A read without a saved source coordinate cannot invalidate a card on a bridged Turn.
+            // 保存済みの送信元位置を含まない読み取りでは、一時表示中の Turn 上のカードを無効にはできない。
             for (const item of previous) {
               const { card } = item;
               const key = sentInstructionKey(card);
@@ -104,7 +104,7 @@ export function useSentDeliveries(context: TurnInputReadContext | undefined, mes
             publish(read.values());
             return;
           }
-          // An absent card is not deleted until a complete sweep in this scope succeeds.
+          // この範囲の全件走査が成功するまでは、見つからないカードを削除済みとして扱わない。
           publish(visible.values());
           cursors = response.cursors;
         } while (active);
@@ -127,7 +127,7 @@ export function useSentDeliveries(context: TurnInputReadContext | undefined, mes
     const sourceChanged = (id: string) => { if (id === scope.target.sessionId) invalidate(); };
     const subscriptions = [
       api.onSessionSentDeliveriesChanged?.(sourceChanged),
-      // Existing source-position verification uses the source's queue event.
+      // 既存の送信元位置の確認には、送信元のキューイベントを使う。
       api.onSessionTurnQueueChanged?.(sourceChanged),
       api.subscribeSessionInvalidation?.((event) => {
         if (event.detailChanged === false) return;

@@ -109,7 +109,7 @@ function TerminalCloseError({ error, onRetry }: { error: TerminalCloseFailure; o
   );
 }
 
-/** Each mounted pane owns its xterm, subscriptions and PTY, including while hidden. */
+/** マウント済みの各ペインは、非表示の間も自身の xterm、購読、PTY を所有する。 */
 function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
   api: TerminalApi;
   tab: TerminalTab;
@@ -282,7 +282,7 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
       terminalRef.current = null;
       fitRef.current = null;
       if (createRequested) void api.releaseTerminal(tab.id).catch(() => {
-        // Window destruction independently releases all owned PTYs in Main.
+        // Window の破棄時には、Main 側でも独立して所有するすべての PTY を解放する。
       });
     };
   }, [api, tab.id]);

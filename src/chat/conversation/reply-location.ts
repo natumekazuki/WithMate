@@ -30,7 +30,7 @@ export function replyLocationIsProjected(scope: ReplyLocationScope, location: Re
   return (location.sentKey ? frame?.sentMessageIndexes : frame?.messageIndexes)?.includes(location.seq) ?? false;
 }
 
-/** A rendered item already comes from the authorized, batched source read. */
+/** 描画済みの項目は、許可された送信元の一括読み取りから取得済みである。 */
 export function locateSentInstruction(scope: ReplyLocationScope, source: SessionTarget, item: SentInstructionCard): ReplyLocation | null {
   const { main } = scope;
   const { origin, target, sourceMessageSeq: seq } = item;
@@ -46,7 +46,7 @@ export function locateSentInstruction(scope: ReplyLocationScope, source: Session
   return replyLocationIsProjected(scope, location) ? location : null;
 }
 
-/** Only saved targets represented in this Window can become navigation actions. */
+/** この Window に表示される保存済みの対象だけを移動先にできる。 */
 export async function locateReply(api: ReadApi, ownerId: string, scope: ReplyLocationScope, quote: ResolvedReply): Promise<ReplyLocation | null> {
   const { reference, origin } = quote;
   const targetKey = conversationPeerKey(reference.target);
@@ -64,13 +64,13 @@ export async function locateReply(api: ReadApi, ownerId: string, scope: ReplyLoc
     } else return null;
     const page = await api.getConversationPage(reference.target.sessionId, { messageIndexes: [seq] });
     const source = page?.messages.find((message) => message.historyIndex === seq);
-    // Confirm this is an independently rendered message, not an answer folded into a question.
+    // 質問に折り込まれた回答ではなく、独立して描画されるメッセージであることを確認する。
     return page?.sessionId === reference.target.sessionId && page.incarnationId === reference.target.incarnationId
       && source && !(source.turnInput?.state === "confirmed" && source.turnInput.questionRequestId) ? location : null;
   }
 
-  // The receipt is addressed to the child, but its visible card belongs to the sending Main.
-  // The receiving Turn or a neighbouring sender message cannot substitute for that card.
+  // 受付の宛先は子だが、画面に表示するカードは送信した Main に属する。
+  // 受信側の Turn や近くにある別の送信者メッセージを、そのカードの代わりには使えない。
   const main = scope.main;
   const child = scope.threads?.children.find((frame) => conversationPeerKey(frame.target) === targetKey);
   if (!main || !mainKey || !child || origin?.kind !== "session" || origin.operation !== "send" || origin.actorKind !== "main"

@@ -57,8 +57,8 @@ export function serializeStorageWorkerError(
   } else if (normalized instanceof StorageWorkerCommandNotAllowedError) {
     code = normalized.code;
   }
-  // Domain rejections are known outcomes (and may persist rejection telemetry).
-  // An arbitrary exception after a mutation remains an unknown write outcome.
+  // 業務上の拒否は結果が確定しており、拒否のテレメトリが保存される場合もある。
+  // 変更後の任意の例外は、引き続き書き込み結果が不明とみなす。
   if (normalized instanceof StorageWorkerCommandNotAllowedError || normalized instanceof RuntimeTurnInactiveError) outcome = "not-executed";
   else if (code !== "STORAGE_WORKER_COMMAND_FAILED") outcome = "rejected";
   return {

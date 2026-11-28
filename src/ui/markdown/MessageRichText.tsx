@@ -97,7 +97,7 @@ function createInlineContentPlugin(contents: readonly MessageInlineContent[]): P
     }).sort((a, b) => b.index - a.index || b.contentIndex - a.contentIndex);
     for (const { index, contentIndex } of insertions) tree.children.splice(index, 0, {
       type: "paragraph", children: [],
-      // Give stateful content a separate ReactMarkdown sibling key from ordinary cards.
+      // 状態を持つ内容には、通常のカードと異なる ReactMarkdown の兄弟要素キーを割り当てる。
       data: { hName: contents[contentIndex].stableOwner ? "withmate-stable-inline" : "div", hProperties: { className: ["message-inline-content", `message-inline-content-${contentIndex}`] } },
     });
   };
@@ -134,7 +134,7 @@ function useStreamingMarkdownText(text: string, isStreaming: boolean, forceFullR
       timer.current = null;
       if (snapshot !== text) setSnapshot(text);
     } else if (text !== snapshot && timer.current === null) {
-      // Keep the current full rendering while continuous input advances the next snapshot.
+      // 入力が続いて次のスナップショットが更新される間も、現在の完全な描画を維持する。
       timer.current = window.setTimeout(() => {
         timer.current = null;
         setSnapshot(latestText.current);

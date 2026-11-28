@@ -347,7 +347,7 @@ test("declared lengths never bypass body caps or runtime credentials", async () 
         request.flushHeaders();
       });
       assert.equal(dispatches, before);
-      // The real client first completes status preflight on this same listener.
+      // 実クライアントは、この同じリスナーで先に状態の事前確認を完了する。
       assert.equal((await runtime.call("/v1/session/self")).status, 200);
       assert.equal((await runtime.call("/v1/glossary/get")).status, 200);
       assert.equal(dispatches, before + 2);

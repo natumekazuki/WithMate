@@ -149,7 +149,7 @@ test("Coordination answers survive withdrawal and atomic queue acceptance", asyn
       const target = { kind: "main" as const, sessionId: source.id, incarnationId: actor.incarnationId };
       const get = () => executionOperationResultSchemas.get_execution.parse(executions.execute({ target, operation: "get_execution", request: { target, messageSeq: 0 } }));
       assert.deepEqual(get().coordination, { id: original.id, text: "A is correct", consultation: "Which?" });
-      // Reproduce a released saved input, not a migration of the user's database.
+      // リリース済みの保存入力を再現するもので、ユーザーのデータベースを移行するものではない。
       const legacy = structuredClone(beforeRun.dispatched!);
       legacy.request.userMessage = JSON.stringify(legacy.coordination!.notification);
       delete legacy.coordination!.notification;
@@ -209,7 +209,7 @@ test("Coordination escalation retains original initiator and exact saved caller"
     assert.equal(created.receipt.captured.request.userMessage, "Question");
     assert.equal(created.receipt.captured.coordination?.notification?.coordinationId, created.record.id);
     assert.equal(created.receipt.captured.coordination?.notification?.operation, "create");
-    // Released preview histories stored the complete notification as userMessage.
+    // リリース済みプレビューの履歴では、通知全体を `userMessage` として保存していた。
     const legacy = structuredClone(created.receipt.captured);
     const legacyNotification = legacy.coordination!.notification!;
     legacy.request.userMessage = JSON.stringify(legacyNotification);

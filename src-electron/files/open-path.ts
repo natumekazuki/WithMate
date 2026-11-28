@@ -89,7 +89,7 @@ function isForwardSlashUncPath(target: string): boolean {
   return /^\/\/[^/?#]+\/[^/?#]+(?:\/|$)/.test(target);
 }
 
-// Inputs that already look like protocol-relative URLs must not trigger UNC network probes.
+// すでにプロトコル相対 URL の形をしている入力では、UNC のネットワーク照会を行わない。
 export function resolveForwardSlashUncPathCandidate(target: string): string | null {
   const trimmed = target.trim();
   if (isProtocolRelativeExternalUrl(trimmed)) {
@@ -345,7 +345,7 @@ export async function openLocalPathWithDefaultApp(
   return openExistingLocalPathWithDefaultApp(inspected.targetPath, deps.openWithDefaultApp);
 }
 
-// Only Main-resolved directory links enter here. Do not parse the canonical path as a URL again.
+// Main が解決したディレクトリへのリンクだけを受け付ける。正規パスを URL として再解釈しない。
 export async function openResolvedDirectoryInFileManager(
   targetPath: string,
   deps: OpenResolvedDirectoryDeps,
@@ -376,7 +376,7 @@ export async function openResolvedDirectoryInFileManager(
   }
   if ((deps.platform ?? process.platform) === "darwin") {
     try {
-      // Bundles are directories too. Reveal in Finder without default-app dispatch.
+      // バンドルもディレクトリなので、既定のアプリに渡さず Finder で表示する。
       await (deps.execFile ?? execFileAsync)("/usr/bin/open", ["-R", targetPath]);
       return { status: "opened", targetType: "local-path", target: targetPath };
     } catch (error) {

@@ -65,7 +65,7 @@ test("Crew deletion keeps remaining queue blockers after Coordination resolves",
     try {
       await act(async () => render());
       assert.equal(action("Open Coordination").disabled, false);
-      // Status can resolve before the focus task: even then, prefer Cancel over the recovery control.
+      // 状態の取得がフォーカス処理より先に完了しても、復旧操作よりキャンセルを優先する。
       zeroDelayCallbacks.forEach((callback) => callback());
     } finally {
       dom.window.setTimeout = originalSetTimeout;

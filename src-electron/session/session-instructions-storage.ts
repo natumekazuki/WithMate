@@ -8,11 +8,11 @@ import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-tu
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 
 /**
- * Locates the exact saved owner. The Auxiliary condition includes the owning
- * Main incarnation so a recreated Main cannot inherit access to old rows.
+ * 保存先の所有者を厳密に特定する。Auxiliary の条件には所属 Main の incarnation も含め、
+ * 再作成された Main が以前の行へのアクセスを引き継がないようにする。
  */
 function ownerRow(target: SessionInstructionsTarget): { table: string; where: string; params: string[] } {
-  // Main and Auxiliary use separate tables, even when they share a Session Window.
+  // Main と Auxiliary は、同じ Session Window を共有していても別のテーブルを使う。
   if (target.kind === "main") {
     return { table: "sessions_v6", where: "id = ? AND incarnation_id = ?", params: [target.sessionId, target.incarnationId] };
   }
@@ -23,7 +23,7 @@ function ownerRow(target: SessionInstructionsTarget): { table: string; where: st
   };
 }
 
-/** Accesses only the instruction column, independently of normal Session and history projections. */
+/** 指示の列だけにアクセスし、通常の Session や履歴の表示用データとは独立して扱う。 */
 export class SessionInstructionsStorage {
   private readonly db: DatabaseSync;
 
@@ -31,12 +31,12 @@ export class SessionInstructionsStorage {
     this.db = openAppDatabase(dbPath);
   }
 
-  /** Releases the worker-owned SQLite connection. */
+  /** Worker が所有する SQLite 接続を閉じる。 */
   close(): void {
     this.db.close();
   }
 
-  /** Returns the saved text, or null when the exact owner is no longer present. */
+  /** 保存済みの本文を返す。指定された所有者が存在しなくなっていれば null を返す。 */
   get(target: SessionInstructionsTarget): string | null {
     const owner = ownerRow(target);
     assertRuntimeTurnAdmission();
@@ -44,14 +44,14 @@ export class SessionInstructionsStorage {
     return row ? validateSessionInstructions(JSON.parse(String(row.instructions_json))) : null;
   }
 
-  /** Validates and replaces the entire body in one write; a missing owner changes nothing. */
+  /** 本文全体を検証し、1 回の書き込みで置き換える。所有者が存在しなければ何も変更しない。 */
   set(target: SessionInstructionsTarget, input: unknown): { byteLength: number } | null {
-    // JSON preserves the input verbatim at the JS/SQLite boundary, including escaped code units.
+    // JS と SQLite の境界では JSON を使い、エスケープされるコードユニットも含めて入力をそのまま保持する。
     const body = validateSessionInstructions(input);
     const byteLength = sessionInstructionsByteLength(body);
     const owner = ownerRow(target);
     const encoded = JSON.stringify(body);
-    // Check admission after acquiring the write lock; waiting for SQLite does not keep a grant active.
+    // 書き込みロックの取得後に実行許可を確認する。SQLite の待機中に許可が失効することがある。
     this.db.exec("BEGIN IMMEDIATE");
     try {
       assertRuntimeTurnAdmission();
@@ -61,7 +61,7 @@ export class SessionInstructionsStorage {
       this.db.exec("COMMIT");
       return Number(changes) === 1 ? { byteLength } : null;
     } catch (error) {
-      // Reject an unapplied or rolled-back change without replacing the previous body.
+      // 適用されなかった変更やロールバックした変更は拒否し、以前の本文は置き換えない。
       if (this.db.isTransaction) this.db.exec("ROLLBACK");
       throw error;
     }

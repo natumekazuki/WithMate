@@ -6,7 +6,7 @@ function hasRenderedSourceContent(element: HTMLElement): boolean {
   return Boolean(element.textContent?.trim() || element.matches(nonTextContent) || element.querySelector(nonTextContent));
 }
 
-/** Find the smallest rendered owner of a raw Markdown occurrence, not a similar label. */
+/** 似たラベルを探すのではなく、元の Markdown の一致箇所に対応する最小の描画要素を探す。 */
 export function resolveMessageSourceMatchTarget(body: HTMLElement, match: TextSearchMatch): HTMLElement | null {
   let target: HTMLElement | null = null;
   let definitionTarget: HTMLElement | null = null;
@@ -29,9 +29,9 @@ export function resolveMessageSourceMatchTarget(body: HTMLElement, match: TextSe
       }
     }
   }
-  // An explicit reference identifies its definition more precisely than a containing ancestor.
+  // 明示的な参照があれば、範囲を含む祖先要素よりも正確に参照先の定義を特定できる。
   if (definitionTarget) return definitionTarget;
-  // A paragraph or an empty ancestor does not identify hidden content such as an omitted image.
+  // 段落や空の祖先要素だけでは、省かれた画像などの非表示の内容を特定できない。
   return target && !target.matches("p") && hasRenderedSourceContent(target) ? target : null;
 }
 

@@ -1,6 +1,6 @@
 import type { Message } from "./session-state.js";
 
-/** Separate a stored application notice only when the terminal turn identifies this response. */
+/** 終了した Turn がこの応答を指す場合に限り、保存済みのアプリケーション通知を分離する。 */
 export function withMessageRunFailure(message: Message, reason: string | null | undefined): Message {
   if (message.role !== "assistant" || message.runFailure !== undefined || reason == null) return message;
   const notices = [`The run failed.\n${reason}`, reason];

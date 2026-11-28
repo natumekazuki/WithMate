@@ -1449,7 +1449,7 @@ it("同scopeのitem再開だけでretry diagnosticを解除しterminal failure�
 // impact = "長い履歴の不要な一括返送による有限受信上限超過で再開が失敗する、または会話継続・履歴・権限が失われる"
 // distinction = "型検査やtransport単体では検出できないadapterの新規/再開request選択とparamsを、既存の軽量mockで検証する"
 // @end-test-value
-/** Resume keeps the thread while sending this Turn's saved instructions in the composed input. */
+/** 再開時はスレッドを維持しつつ、この Turn に保存された指示を組み立て済みの入力に含めて送る。 */
 it("foregroundは保存thread resumeとnative設定、履歴結果を維持する", async () => workspace(async (directory) => {
   const fresh = new FakeTransport();
   fresh.events = [completed([message("answer", "fresh")])];

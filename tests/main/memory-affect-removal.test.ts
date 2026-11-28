@@ -11,8 +11,8 @@ import { CREATE_V4_SCHEMA_SQL, isValidV4Database } from "../../src-electron/stor
 import { isValidV6Database, REQUIRED_V6_TABLES } from "../../src-electron/storage/database-schema-v6.js";
 import { RELEASED_V6_SCHEMA_SQL } from "./fixtures/released-v6-schema.js";
 
-// Independent retirement contract: the 15 private tables captured in the released
-// fixture, plus the former settlement queue. Do not derive this oracle from the SUT.
+// 廃止対象を独立に定義する。リリース済み fixture に記録された非公開テーブル 15 個に、
+// 旧精算キューを加える。この期待値はテスト対象の実装から導出しない。
 const EXPECTED_RETIRED_TABLES = [
   "memory_entries_v6", "memory_entry_tags_v6", "memory_entry_relations_v6",
   "memory_tag_catalog_v6", "memory_target_tag_stats_v6", "memory_mutation_events_v6",
@@ -88,7 +88,7 @@ async function fixture(t: TestContext) {
 // distinction = "新規schemaや型検査では既存行と暗号化fileの破棄境界・再起動・共有行保持を検出できず、短いsynthetic起動を継続検証する"
 // risk_tags = ["irreversible-data-loss", "privacy"]
 // @end-test-value
-/** A release upgrade preserves the old shared values and initializes additive Reviewer and Instructions columns on both boots. */
+/** リリース版からの更新では、既存の共有値を維持し、追加された Reviewer と Instructions の列をどちらの起動でも初期化する。 */
 test("released data retirement preserves shared storage across repeated bootstrap", async (t) => {
   const f = await fixture(t);
   const object = path.join(f.userData, "memory-objects", "v6", "aa", "a".repeat(32) + ".bin");
@@ -115,7 +115,7 @@ test("released data retirement preserves shared storage across repeated bootstra
         ["companion_removal_completed_at", "session_selection_policy_json", "v4_to_v6_release_data_migrated_at"]);
       for (const [table, rows] of Object.entries(f.shared)) {
         const actual = db.prepare(`SELECT * FROM ${table}`).all();
-        // Compare every old value as before, plus the exact default of each added column.
+        // 従来と同じく既存の値をすべて比較し、追加された各列の既定値も厳密に比較する。
         const additions = table === "auxiliary_sessions" ? { withmate_reviewer_explicit: 0, instructions_json: '""' }
           : table === "sessions_v6" ? { instructions_json: '""' } : {};
         assert.deepEqual(actual, rows.map((row) => Object.assign(Object.create(null), row, additions)), table);
@@ -155,7 +155,7 @@ test("failed retirement rolls back and rejects bootstrap instead of replacing th
   } finally { source.close(); }
   assert.equal(isValidV4Database(v4Path), true);
   const db = new DatabaseSync(f.dbPath);
-  // Isolate retirement from the independent Companion cleanup; keep V4 eligible for fallback.
+  // この廃止処理を別の Companion 後処理から切り分け、V4 をフォールバック候補に残す。
   db.exec(`INSERT INTO app_settings VALUES ('companion_removal_completed_at','now','now');
     INSERT INTO app_settings VALUES ('launch_at_login_enabled','true','now');`);
   db.exec("CREATE TRIGGER reject_retirement BEFORE DELETE ON app_settings WHEN OLD.setting_key = 'memory_file_quota_bytes' BEGIN SELECT RAISE(ABORT, 'retirement denied'); END;");

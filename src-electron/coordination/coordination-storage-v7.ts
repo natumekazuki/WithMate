@@ -31,7 +31,7 @@ export class CoordinationStorageV7 {
       | (Omit<CoordinationStatus, "hasAnswer"> & CoordinationIdentity & { hasAnswer: number })
       | undefined;
     if (!row) throw new CoordinationDeletedError("Coordination was deleted or does not exist.");
-    // Match the detailed read's exact Auxiliary initiator check without loading its navigation payload.
+    // 画面遷移用のデータは読み込まず、詳細取得と同じ厳密な Auxiliary 起票者の確認を行う。
     if (row.kind === "auxiliary") this.identity(row);
     return { state: row.state, respondentKind: row.respondentKind, hasAnswer: Boolean(row.hasAnswer) };
   }
@@ -163,7 +163,7 @@ export class CoordinationStorageV7 {
       return { record, initiatorTarget: { ...identity, kind: "auxiliary", mainSessionId: mainId, mainIncarnationId: main.incarnation_id } };
     }
     const now = new Date().toISOString();
-    // Retry identity lives with the record's required operation history, not a second execution ledger.
+    // 再試行の識別情報は、別の実行台帳ではなく、レコードに必須の操作履歴に保持する。
     const existing = this.db.prepare("SELECT payload_json FROM coordination_records_v7 WHERE EXISTS(SELECT 1 FROM json_each(payload_json,'$.history') AS history WHERE json_extract(history.value,'$.operationId')=?)").all(request.operationId) as Saved[];
     for (const row of existing) {
       const record = JSON.parse(row.payload_json) as StoredCoordinationRecord;

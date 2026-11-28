@@ -172,7 +172,7 @@ test("取消graceと保持liveの配送後に終端nullで親関連を解除す�
   const terminating = live(id, { runState: "idle", cancellationState: "terminating" });
   f.observability.setLiveSessionRun(id, terminating);
   assert.equal(f.parents.get(id), "parent-a");
-  // A null while real termination is still pending must not drop its route.
+  // 実際の終了処理が保留中に `null` が来ても、その通知経路を失ってはならない。
   f.observability.setLiveSessionRun(id, null);
   assert.equal(f.parents.get(id), "parent-a");
   const retained = live(id, { runState: "idle", reasoningText: "retained reasoning" });

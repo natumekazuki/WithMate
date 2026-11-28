@@ -1,7 +1,7 @@
 export type SessionHistorySource = Readonly<{
   sessionId: string;
   incarnationId: string;
-  /** Captured from the storage owner's existing conversation-query snapshot. */
+  /** ストレージの所有者が持つ既存の会話クエリのスナップショットから取得する。 */
   ownerIdentity: string;
 }> & (
   | Readonly<{ kind: "main" }>
@@ -11,7 +11,7 @@ export type SessionHistorySource = Readonly<{
     }>
 );
 
-/** Read authority, independent of the consumer's generation purpose or progress. */
+/** 読み取り権限は、利用側の生成目的や進捗とは独立している。 */
 export type SessionHistoryReadScope = Readonly<{
   source: SessionHistorySource;
   fromMessageSeq: number;
@@ -28,7 +28,7 @@ export function assertSessionHistoryReadScope(scope: SessionHistoryReadScope): v
   }
 }
 
-/** Call inside the same storage read boundary as the requested history data. */
+/** 対象の履歴データと同じストレージ読み取り境界の中で呼び出す。 */
 export function matchesSessionHistorySource(
   source: SessionHistorySource,
   current: { ownerIdentity: string; incarnationId: string } | null,

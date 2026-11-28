@@ -95,7 +95,7 @@ test("Main acceptance consumes only the originating frame and draft revision", a
     assert.equal(registry.get(peerDraft).draft, "Peer draft @peer.txt");
     assert.equal(registry.get(all).reply, quote);
     const edited = { key: "zero", reference: { target: main, seq: 0 } };
-    if (scenario === "reply-edited") registry.setReply(all, edited); // Only the reply changed; the text is identical.
+    if (scenario === "reply-edited") registry.setReply(all, edited); // 変わったのは返信先だけで、本文は同じ。
     if (scenario === "attachment-edited") registry.setDraft(all, "Follow-up @new.txt");
     acknowledge(scenario === "rejected" ? { state: "rejected", reason: "Queue rejected" }
       : receipt({ accepted: { ...receipt().captured, request: input } }));

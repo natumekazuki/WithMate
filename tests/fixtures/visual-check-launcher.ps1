@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory = $true)][string]$LauncherPath,
   [Parameter(Mandatory = $true)][string]$RepositoryPath,
   [Parameter(Mandatory = $true)][string]$DataRoot,
@@ -14,7 +14,7 @@ $env:APPDATA = $DataRoot
 $global:visualCheckTestEvents = [System.Collections.Generic.List[string]]::new()
 $global:visualCheckTestLaunch = $null
 
-# Run the real launcher and filesystem operations, isolating build and OS process control.
+# 実際の起動スクリプトとファイルシステム操作を実行し、ビルドと OS のプロセス制御だけを切り離す。
 function git.exe {
   "worktree $RepositoryPath"
   $global:LASTEXITCODE = 0

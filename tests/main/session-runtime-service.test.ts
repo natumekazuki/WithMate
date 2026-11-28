@@ -201,7 +201,7 @@ function createWindowCancelFixture(kind: "main" | "auxiliary", session: Session,
   const windowDeps = { resolveEventWindow: () => options.authorize() ? window : otherWindow, resolveSessionWindow: (id: string) => id === "main" ? window : null };
   const stop = (request: CancelSessionRunRequest, authorize: () => void) => stopWindowSessionRun(request, runtime, queue, authorize, options.onApply);
   if (kind === "main") {
-    // The registrar captures unrelated handlers without invoking their dependencies.
+    // 登録処理は無関係なハンドラーも取得するが、それらの依存先は呼び出さない。
     registerSessionRuntimeHandlers(ipc, { ...windowDeps, cancelSessionRun: stop } as unknown as MainIpcSessionRuntimeDeps);
   } else {
     registerAuxiliaryHandlers(ipc, {
@@ -285,8 +285,8 @@ it("GUI Cancel IPC leaves the next Main and Auxiliary turns and their requests i
     try {
       await waitForCondition(() => currentLive()?.sessionTurnId === "1", "A has started");
       const aStop: CancelSessionRunRequest = { sessionId: session.id, incarnationId: getSessionIncarnationId(session), execution: { kind: "turn", id: currentLive()!.sessionTurnId! } };
-      // Main waits on the exact runtime stop's Session read; Aux waits earlier
-      // on the owning Window lookup in its registered IPC handler.
+      // Main は対象ランタイムの停止処理による Session の読み取りで待つ。Auxiliary はそれより前に、
+      // 登録済み IPC ハンドラーで所有 Window の検索を待つ。
       pauseMainLookup = kind === "main";
       const stale = stop(aStop);
       finishA();
@@ -555,7 +555,7 @@ it("直接Steerは未送信と不明結果を保存しACK喪失でも自動再�
   }
 });
 
-/** Assembles the production owner-specific runtime around test callbacks. */
+/** テスト用コールバックを使い、所有者ごとの本番ランタイムを組み立てる。 */
 function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: SessionRuntimeServiceDeps, parent: Session,
   readSessionInstructions: (target: SessionInstructionsTarget) => Promise<string> = async () => "",
 ): ProductionSessionRuntimeService {
@@ -604,7 +604,7 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
   });
 }
 
-/** A write while the adapter is running cannot alter the captured body, and the next Turn reads its own owner again. */
+/** アダプターの実行中に書き込んでも取得済みの本文は変わらず、次の Turn は自身の所有者に対応する本文を読み直す。 */
 it("snapshots the exact Main or Auxiliary instructions for each new Turn", async () => {
   const parent = createSession({ id: "instructions-main", incarnationId: "main-inc" });
   for (const kind of ["main", "auxiliary"] as const) {
@@ -771,7 +771,7 @@ it("GUI Cancel IPC accepts only the owned starting receipt or current Turn", asy
       assert.equal(state, "starting");
       if (phase === "claim") {
         const ack = stop(request);
-        // Let the owner lookup finish before releasing the production dispatch slot.
+        // 本番の送出枠を解放する前に、所有者の検索を完了させる。
         await new Promise<void>((resolve) => setImmediate(resolve));
         dispatch.resolve();
         await ack;
@@ -1085,7 +1085,7 @@ it("変更progressをMainの完全snapshotへ統合しcontrolでも保持する"
     assert.equal(snapshot.reasoningText, "reasoning");
     assert.deepEqual(snapshot.usage, frame.usage);
     assert.equal(snapshot.inputAvailable, false);
-    // Snapshot-bearing providers still replace collections, including an explicit empty snapshot.
+    // スナップショットを返すプロバイダーでは、明示的な空のスナップショットも含め、引き続きコレクション全体が置き換わる。
     await progress({ ...frame, steps: [step("snapshot")] }, { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
     assert.deepEqual(owner.getLiveSessionRun(session.id)?.steps.map(item => item.id), ["snapshot"]);
     await progress(frame, { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
@@ -3973,8 +3973,8 @@ resolveComposer!({ attachments: [], errors: [] });
     if (!observedAbortSignal) {
       throw new Error("provider setup が開始されていないよ。");
     }
-    // A previously closed Window has no renderer ACK; Main must still cancel
-    // and wait for the send lifecycle before AppLifecycle closes persistence.
+    // すでに閉じた Window からはレンダラーの ACK が来ない。それでも Main は、
+    // `AppLifecycle` が永続化層を閉じる前に、送信をキャンセルしてそのライフサイクルの完了を待つ必要がある。
     const bridge = new SessionWindowBridge({
       createWindow() { throw new Error("no Window should be created"); },
       async loadChatEntry() {},

@@ -88,7 +88,7 @@
   width: 100%;
 }
 
-/* Attention keeps the warm notice color and adds a ring so it does not rely on hue alone. */
+/* 注意が必要な状態には通知の暖色を保ちつつ輪郭線を加え、色相だけに頼らず区別できるようにする。 */
 .session-page .composer-icon-button.conversation-attention-button {
   border-color: rgba(251, 191, 36, 0.55);
   background: rgba(251, 191, 36, 0.16);
@@ -1403,7 +1403,7 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
 
 .message-text-wrapper:is(:hover, :focus-within) > .message-collapse-control,
 .message-collapse-control:has(> .reply-toggle[aria-pressed="true"]),
-/* A saved failure can have neither body lines to hover nor a Reply button. */
+/* 保存済みの失敗では、ホバーできる本文行も返信ボタンもない場合がある。 */
 .message-card:is(:hover, :focus-within) .message-text-wrapper:has(
   > [data-message-body]:empty,
   > [data-message-body] > .rich-text:only-child:empty

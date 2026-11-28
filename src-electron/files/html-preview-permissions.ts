@@ -34,7 +34,7 @@ function origin(url: string): string {
   } catch { return "null"; }
 }
 
-/** Installs permission UI only on the mount's isolated, in-memory Session. */
+/** 権限確認 UI は、マウント専用に隔離されたインメモリの Session にだけ設定する。 */
 export function installHtmlPreviewPermissions(session: Session, options: PermissionOptions) {
   let disposed = false;
   const attachments = new Map<WebContents, { generation: number; cleanup: () => void }>();
@@ -92,19 +92,19 @@ export function installHtmlPreviewPermissions(session: Session, options: Permiss
       let requester: string;
       try {
         const parsed = new URL(requested);
-        // Only our registered standard scheme has a nonopaque custom-scheme origin.
+        // カスタムスキームのうち、不透明でないオリジンを持つのはアプリが標準スキームとして登録したものだけ。
         if (parsed.origin === "null" && (parsed.protocol !== `${HTML_PREVIEW_SCHEME}:` || !parsed.host)) return false;
         requester = origin(requested);
       } catch { return false; }
-      // Native device grants still decide access to explicitly selected devices.
-      // This origin-only native check enables a chooser for a live page in this mount.
+      // 明示的に選ばれたデバイスへのアクセスは、引き続きネイティブ側の許可で決まる。
+      // ここではオリジンだけを確認し、このマウント内で有効なページが選択画面を開けるようにする。
       return [...attachments.keys()].some((page) => active(page)
         && page.mainFrame.framesInSubtree.some((frame) => !frame.detached && origin(frame.url) === requester));
     }
     if (!contents) return false;
     const frame = findFrame(contents, details.requestingUrl, details.isMainFrame, details.securityOrigin ?? requestingOrigin);
     if (!frame) return false;
-    // These checks enable a chooser, not device access. Chromium retains only explicitly selected devices.
+    // ここで許可するのは選択画面であり、デバイスへのアクセスではない。Chromium が保持するのは明示的に選ばれたデバイスだけ。
     if (permission === "usb" || permission === "hid" || permission === "serial") return true;
     const key = permission === "media" ? `media:${details.mediaType ?? "unknown"}` : permission;
     return grants.get(frame)?.has(key) ?? false;
@@ -155,8 +155,8 @@ export function installHtmlPreviewPermissions(session: Session, options: Permiss
 
   function selectDevice(frame: WebFrameMain | null, title: string, devices: { id: string; name: string }[], callback: (id: string) => void, page?: WebContents) {
     const finish = complete<string>(callback, "");
-    // Serial and Bluetooth events omit the requesting frame. Identify the whole page,
-    // including its embedded origins, rather than misattribute a request to its focused frame.
+    // Serial と Bluetooth のイベントには要求元のフレームが含まれない。
+    // フォーカス中のフレームの要求と決めつけず、埋め込みオリジンも含めてページ全体を特定する。
     const embeddedOrigins = page ? [...new Set(page.mainFrame.framesInSubtree
       .filter((child) => child !== page.mainFrame && !child.detached).map((child) => origin(child.url)))] : [];
     const detail = page ? `Electron does not identify which frame requested this device.${embeddedOrigins.length

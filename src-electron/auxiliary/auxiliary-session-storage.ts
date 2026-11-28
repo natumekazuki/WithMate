@@ -511,7 +511,7 @@ export class AuxiliarySessionStorage {
     });
   }
 
-  /** Read only the selected Auxiliary's View, preserving the saved summary list's last-entry order. */
+  /** 保存済みの概要一覧と同じ順序で最後に該当する Auxiliary を選び、その View だけを読み取る。 */
   getLatestAuxiliarySessionView(parentSessionId: string): AuxiliarySession | null {
     const id = parentSessionId.trim();
     if (!id) return null;

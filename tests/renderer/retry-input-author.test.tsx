@@ -223,7 +223,7 @@ test("Retry cards preserve the original sender route and theme only for an exact
     const staleSource = save(staleOriginal, "failed");
     const staleRetrySource = { ...retrySource, receiptId: staleSource.receiptId, turnId: staleSource.turnId, origin: staleOriginal };
     const stale = save(savedOrigin, "completed", staleRetrySource);
-    // Earlier saved executions may retain only the fixed snapshot, not its comparison baseline.
+    // 以前に保存された実行には、固定スナップショットだけがあり、比較元が残っていない場合がある。
     const fixture = new DatabaseSync(database);
     try { fixture.prepare("UPDATE session_turn_queue_v6 SET accepted_json=NULL WHERE id=?").run(unknown.receiptId); }
     finally { fixture.close(); }

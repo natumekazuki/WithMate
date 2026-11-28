@@ -119,7 +119,7 @@ test("Sessionは基本情報から描画し会話の失敗と空状態を独立�
     assert.equal(container.querySelector('#session-main-chat-pane [role="alert"]'), null);
     assert.ok(container.querySelector('#session-main-chat-pane .conversation-message-column'));
     assert.equal(changes.getAttribute("aria-selected"), "true");
-    // A refresh failure retains the successfully loaded conversation surface.
+    // 再取得に失敗しても、読み込み済みの会話表示は維持される。
     conversationRead = deferred<Session | null>();
     await act(async () => { invalidate({ scope: "ids", sessionIds: [session.id] }); });
     await act(async () => { conversationRead.reject(new Error("refresh unavailable")); });

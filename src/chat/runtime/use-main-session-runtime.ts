@@ -85,7 +85,7 @@ export function useMainSessionRuntime({
   const refetchRevisionRef = useRef(new LatestRequestRevision());
   const submitCoordinatorRef = useRef(new SessionSubmitCoordinator());
   const acceptanceRef = useRef(new SessionTurnAcceptance());
-  // The leases are independent: switching conversations must not hide another owner's pending submit.
+  // 使用権は所有者ごとに独立している。会話を切り替えても、別の所有者の保留中の送信を隠してはいけない。
   const [, notifySubmitState] = useState(0);
   const submitStateChanged = useCallback(() => notifySubmitState((current) => current + 1), []);
   const observeTurnReceipts = useCallback((receipts: readonly SessionTurnQueueReceipt[]) => {

@@ -14,7 +14,7 @@ export type SessionTurnSubmission = {
   receipt?: SessionTurnQueueReceipt;
 };
 
-/** Window-local presentation only; receipts and runtime remain authoritative. */
+/** Window 内の表示専用。受付情報と実行時状態が引き続き正本となる。 */
 export class SessionTurnSubmissions {
   private snapshot: readonly SessionTurnSubmission[] = [];
   private readonly listeners = new Set<() => void>();

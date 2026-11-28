@@ -43,7 +43,7 @@ function createCopilotReadRuntime(options: {
   const reviewing = Promise.withResolvers<string>();
   const reviewerDone = Promise.withResolvers<void>();
   const emit = <E extends SessionEvent["type"]>(type: E, data: Extract<SessionEvent, { type: E }>["data"]) => {
-    // Deliver a server notification through the fixed SDK's real event dispatcher.
+    // バージョンを固定した SDK の実際のイベントディスパッチャーを通じて、サーバー通知を配信する。
     Reflect.get(session, "_dispatchEvent").call(session, { type, data, id: `event-${++eventId}`, parentId: null, timestamp: "2026-01-01T00:00:00Z" });
   };
   const wire = {
@@ -60,8 +60,8 @@ function createCopilotReadRuntime(options: {
     },
   };
   const createSession = async (config: SessionConfig) => {
-    // The package's constructor and config registration are internal methods
-    // normally called by CopilotClient; no transport or process is initialized.
+    // パッケージのコンストラクターと設定登録は、通常 `CopilotClient` が呼ぶ内部メソッドである。
+    // ここでは通信経路もプロセスも初期化しない。
     session = Reflect.construct(CopilotSession, ["synthetic-native-session", wire]);
     Reflect.get(session, "registerPermissionHandler").call(session, config.onPermissionRequest);
     return session;

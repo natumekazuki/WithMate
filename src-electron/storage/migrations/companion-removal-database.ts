@@ -31,7 +31,7 @@ export interface CompanionRemovalDatabaseTarget {
 
 type Row = Record<string, unknown>;
 
-/** Local attachments and ordinary Markdown links both remain usable by live conversations. */
+/** 稼働中の会話では、ローカル添付ファイルと通常の Markdown リンクの両方を引き続き利用できる。 */
 export function collectCompanionRemovalFileReferences(value: string): string[] {
   const result = extractComposerAttachmentReferenceCandidates(value).map((reference) => reference.path);
   const visit = (node: { url?: string; children?: unknown[] }): void => {
@@ -39,7 +39,7 @@ export function collectCompanionRemovalFileReferences(value: string): string[] {
       try {
         const target = node.url.startsWith("file:") ? fileURLToPath(node.url) : decodeURIComponent(node.url);
         if (path.isAbsolute(target)) result.push(target.replace(/:\d+(?::\d+)?$/, ""));
-      } catch { /* An invalid URL cannot resolve to a local attachment. */ }
+      } catch { /* 無効な URL からローカル添付ファイルは解決できない。 */ }
     }
     for (const child of node.children ?? []) visit(child as Parameters<typeof visit>[0]);
   };
@@ -65,8 +65,8 @@ function* rows(db: DatabaseSync, table: string, requestedColumns: string[]): Gen
   const availableColumns = columns(db, table);
   const selectedColumns = [...new Set(requestedColumns)].filter((column) => availableColumns.has(column));
   if (selectedColumns.length === 0) return;
-  // Project only removal metadata. Provider payloads can exceed the JS heap,
-  // and conversation text needed for attachment protection is read one row at a time.
+  // 削除に必要なメタデータだけを射影する。プロバイダーのペイロードは JS ヒープの上限を超え得る。
+  // 添付ファイルの保護に必要な会話本文は一行ずつ読み取る。
   yield* db.prepare(`SELECT ${selectedColumns.map(identifier).join(", ")} FROM ${identifier(table)}`).iterate();
 }
 
@@ -139,7 +139,7 @@ function collectBlobReferences(db: DatabaseSync, names: Set<string>, deletedSess
   return { owned, surviving };
 }
 
-/** Read removal metadata while the existing storage owner still has the database open. */
+/** 既存のストレージ所有者がデータベースを開いている間に、削除用のメタデータを読み取る。 */
 export interface CollectCompanionRemovalDatabaseTargetOptions {
   includeFileReferences?: boolean;
 }
@@ -286,8 +286,8 @@ export function collectCompanionRemovalDatabaseTarget(
     survivingMemoryEntryIds: unique(survivingMemorySet),
     ownedProtectedObjectIds: unique(ownedProtectedObjectIds),
     survivingProtectedObjectIds: unique(survivingProtectedObjectIds),
-    // Drop dependants first so existing V3/V6 foreign-key enforcement cannot
-    // reject removal of the companion group/session roots.
+    // 既存の V3・V6 の外部キー制約により Companion のグループや Session のルートの削除が拒否されないよう、
+    // 従属するテーブルから先に削除する。
     dropTables: [...COMPANION_TABLES].filter((name) => names.has(name)),
   };
 }
@@ -298,7 +298,7 @@ function deleteByIds(db: DatabaseSync, table: string, column: string, ids: Set<s
   db.prepare(`DELETE FROM ${identifier(table)} WHERE ${identifier(column)} IN (${placeholders})`).run(...ids);
 }
 
-/** Apply only after filesystem/Git removal has succeeded. The transaction contains DB work only. */
+/** ファイルシステムと Git での削除が成功してから適用する。このトランザクションは DB 操作だけを含む。 */
 export function applyCompanionRemovalDatabaseTarget(
   db: DatabaseSync,
   target: Pick<CompanionRemovalDatabaseTarget,
@@ -313,11 +313,11 @@ export function applyCompanionRemovalDatabaseTarget(
   const survive = new Set(survivingBlobIds);
   db.exec("BEGIN IMMEDIATE");
   try {
-    // Owned supersession chains can reference another entry removed by this
-    // same transaction. Enforce every FK at commit, without disabling it.
+    // 対象の置換関係の連鎖には、同じトランザクションで削除する別のエントリへの参照があり得る。
+    // 外部キー制約は無効にせず、コミット時にすべて検証する。
     db.exec("PRAGMA defer_foreign_keys = ON");
-    // Remove audit rows before deleting their owner: legacy audit events use SET
-    // NULL rather than CASCADE, which would otherwise erase ownership evidence.
+    // 旧監査イベントの外部キーは CASCADE ではなく SET NULL のため、所有者を先に削除すると所有の根拠が失われる。
+    // 監査行は所有者より先に削除する。
     for (const table of ["audit_logs", "audit_events_v6", "character_affect_events_v6", "character_affect_resets_v6", "character_affect_mutations_v6", "character_affect_observations_v6", "character_affect_turn_settlements", "session_memories", "memory_mutation_events_v6"]) {
       if (!names.has(table)) continue;
       const tableColumns = columns(db, table);
@@ -381,7 +381,7 @@ export function applyCompanionRemovalDatabaseTarget(
       db.prepare(`DELETE FROM memory_move_events_v6 WHERE (from_scope_type = 'session' AND from_scope_id IN (${placeholders})) OR (to_scope_type = 'session' AND to_scope_id IN (${placeholders}))`)
         .run(...deletedIds, ...deletedIds);
     }
-    // Shared Memory and relationship Affect bodies remain; only source linkage is removed.
+    // 共有 Memory と関係 Affect の本文は残し、出所への紐付けだけを削除する。
     if (deletedIds.size) {
       const placeholders = [...deletedIds].map(() => "?").join(",");
       for (const table of ["memory_entries_v6", "project_memory_entries", "character_memory_entries", "character_affect_events_v6", "character_affect_mutations_v6"]) {
@@ -401,8 +401,8 @@ export function applyCompanionRemovalDatabaseTarget(
           .run(...deletedIds);
       }
     }
-    // Older Character growth output is independent Memory. Preserve its content
-    // while removing the retired source linkage and its execution-only records.
+    // 旧来の Character の成長出力は独立した Memory として扱う。
+    // 内容は維持し、廃止した出所への紐付けと実行専用の記録だけを削除する。
     if (names.has("mate_growth_runs")) db.exec("DELETE FROM mate_growth_runs WHERE source_type = 'companion'");
     if (names.has("mate_growth_cursors")) db.exec("DELETE FROM mate_growth_cursors WHERE scope_type = 'companion'");
     if (names.has("mate_growth_events")) db.exec("UPDATE mate_growth_events SET source_type = 'session', source_session_id = NULL, source_audit_log_id = NULL WHERE source_type = 'companion'");

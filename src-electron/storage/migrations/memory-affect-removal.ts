@@ -3,8 +3,8 @@ import { lstat, readdir, realpath, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
-// Child tables precede their parents. The supersession FK in entries is
-// deferred for the enclosing schema transaction, never disabled.
+// 親テーブルより先に子テーブルを並べる。エントリの置換関係に使う外部キー制約は、
+// 外側のスキーマトランザクションの終了まで検証を遅延するが、無効にはしない。
 export const RETIRED_MEMORY_AFFECT_TABLES = [
   "character_affect_turn_settlements",
   "character_affect_observations_v6",
@@ -34,7 +34,7 @@ const RETIRED_SETTING_KEYS = [
   "background_execution_settings_json",
 ] as const;
 
-/** Called only inside the existing schema savepoint on the storage owner. */
+/** ストレージ所有者が実行する既存のスキーマセーブポイント内でだけ呼び出す。 */
 export function removeRetiredMemoryAffectDatabaseData(db: DatabaseSync): void {
   const existing = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all()
     .map((row) => String(row.name)));
@@ -64,7 +64,7 @@ function isMissing(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
 
-/** Reject linked DBs/ancestors before an existing database can be mutated. */
+/** 既存データベースに変更を加える前に、DB 自体やその祖先がリンクなら拒否する。 */
 export function assertRetiredMemoryAffectDatabasePath(dbPath: string): void {
   const absolute = path.resolve(dbPath);
   const root = path.dirname(absolute);
@@ -111,7 +111,7 @@ async function visit(root: string, candidate: string, remove: boolean): Promise<
   }
 }
 
-/** Only owned V6 payload/staging and the wrapped key are removed; no external registrations. */
+/** 所有範囲にある V6 のペイロードとステージングデータ、およびラップ済み鍵だけを削除する。外部の登録は削除しない。 */
 export async function removeRetiredMemoryAffectFiles(userDataPath: string): Promise<void> {
   const root = path.resolve(userDataPath);
   let stats;
@@ -124,7 +124,7 @@ export async function removeRetiredMemoryAffectFiles(userDataPath: string): Prom
   }
   const objects = path.join(root, "memory-objects", "v6");
   const keyring = path.join(root, "memory-keys", "v6-keyring.json");
-  // Inspect both targets before deleting either. Never follow links while recursing.
+  // どちらかを削除する前に両方の対象を検査する。再帰処理中にリンクをたどらない。
   await visit(root, objects, false);
   const key = await inspect(root, keyring);
   if (key && !key.isFile()) throw new Error("Retired Memory keyring is not a regular file.");

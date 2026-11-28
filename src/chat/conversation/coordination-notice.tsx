@@ -64,7 +64,7 @@ export function CoordinationNotice({ id, consultation, target }: {
 }
 
 export function ReceivedCoordinationContent({ children, text, consultation }: { children: ReactNode; text: string; consultation?: string }) {
-  // Compare only to avoid displaying the same authored question twice, not to infer delivery state.
+  // 文面を比較するのは、作成者が書いた同じ質問を二重に表示しないためだけであり、配送状態の推定には使わない。
   return consultation === undefined || text !== consultation
     ? <section className="received-coordination-content" aria-label="Received Content">{children}</section>
     : null;

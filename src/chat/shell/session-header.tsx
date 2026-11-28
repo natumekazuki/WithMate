@@ -375,7 +375,7 @@ export function SessionChatScreen({
     const opacity = content && sidePaneAnimationRef.current ? view?.getComputedStyle(content).opacity : "0";
     sidePaneAnimationRef.current?.cancel();
     sidePaneAnimationRef.current = null;
-    // Only discrete horizontal pane changes reflow text. Dragging and vertical resizing stay direct.
+    // テキストを再配置するのは、離散的な横方向のペイン変更だけ。ドラッグと縦方向のサイズ変更は直接反映する。
     if (!layout || !view || !content || view.innerWidth < 1400) return;
     const media = view.matchMedia("(prefers-reduced-motion: reduce)");
     if (media.matches) return;

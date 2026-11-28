@@ -77,8 +77,8 @@ type IdentifierClass =
 let graphemeSegmenter: Intl.Segmenter | undefined;
 
 function* createGraphemeSegments(value: string): Iterable<{ segment: string; index: number }> {
-  // ASCII graphemes are single units except CRLF. No marks, Prepend, Hangul
-  // or emoji context can occur in an entirely ASCII node/suffix.
+  // ASCII の書記素は CRLF を除き一単位。ノードや接尾部がすべて ASCII なら、
+  // 結合マーク、Prepend、ハングル、絵文字に関わる文脈は現れない。
   if (/^[\x00-\x7F]*$/u.test(value)) {
     for (let index = 0; index < value.length;) {
       const length = value[index] === "\r" && value[index + 1] === "\n" ? 2 : 1;
@@ -116,9 +116,9 @@ function* createGraphemeSegments(value: string): Iterable<{ segment: string; ind
 }
 
 function normalizeTextWithOffsets(value: string, previous?: NormalizedTextProjection): NormalizedTextProjection {
-  // Reuse only append-only prefixes ending before an observed grapheme that
-  // starts with ASCII whitespace. The retained whitespace blocks NFKC/casing
-  // context; the entire last grapheme and casing-sensitive tail are rebuilt.
+  // 追記のみの場合に、観測済みで ASCII 空白から始まる書記素の直前までの接頭部だけを再利用する。
+  // 残した空白が NFKC 正規化と大文字・小文字変換の文脈を分断する。
+  // 最後の書記素全体と、大文字・小文字変換の影響を受ける末尾は再構築する。
   const resume = previous && typeof Intl.Segmenter === "function" && value.startsWith(previous.text)
     ? previous.resumeOriginalIndex : 0;
   const normalizedPrefixLength = resume ? previous!.resumeNormalizedIndex : 0;
@@ -433,8 +433,8 @@ export function createGlossaryAnnotationMatcher(
     createMessageBudget,
     matchText: (text, budget) => matchProjectedText(text, budget),
     createMessageProjection: () => {
-      // Only the current message's eligible text nodes survive a pass. This
-      // owner is replaced on matcher/scope change and released on unmount.
+      // 処理を一巡した後に残すのは、現在のメッセージで対象となるテキストノードだけ。
+      // 照合器や対象範囲が変わればこの所有単位を置き換え、アンマウント時に解放する。
       const nodes: Array<CachedText | undefined> = [];
       let cursor = 0;
       return {

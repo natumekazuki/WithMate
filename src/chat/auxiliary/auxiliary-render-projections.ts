@@ -32,8 +32,8 @@ function toAuxiliaryRuntimeProjectionInput(session: AuxiliarySession): Auxiliary
   };
 }
 
-// Draft persistence changes composerDraft and updatedAt without changing rendered runtime content.
-// Relevant content fields rebuild this input and capture the latest timestamp; draft-only saves reuse it.
+// 下書きを保存すると composerDraft と updatedAt は変わるが、表示する実行時の内容は変わらない。
+// 内容に関わるフィールドが変わると入力を再構築して最新の時刻を取り込み、下書きだけの保存では既存の入力を再利用する。
 function useRuntimeProjectionSession(
   activeSession: AuxiliarySession | null,
 ): AuxiliaryRuntimeProjectionInput | null {

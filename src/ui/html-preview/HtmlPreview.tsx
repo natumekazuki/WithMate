@@ -120,7 +120,7 @@ export function HtmlPreview({ html, source, title, className = "", onFind }: {
       canceled = true;
       if (previewId.current === id) previewId.current = null;
       unsubscribe();
-      void api.disposeHtmlPreview(id).catch(() => { /* Owner navigation can dispose the document first. */ });
+      void api.disposeHtmlPreview(id).catch(() => { /* 所有元での画面遷移のほうが先に文書を破棄する場合がある。 */ });
     };
   }, [html, stableSource, intersects, reload]);
 

@@ -134,8 +134,8 @@ export type MemoryFileUsageResponse = {
   quotaBytes: number;
   usedBytes: number;
   /**
-   * DB metadata で active / delete_pending として把握している encrypted object size.
-   * DB reference を持たない orphan object files は GC dry-run の orphanFiles で確認する。
+   * DB メタデータ上で active / delete_pending として把握している暗号化オブジェクトのサイズ。
+   * DB から参照されていないオブジェクトファイルは、GC の dry-run の orphanFiles で確認する。
    */
   physicalBytes: number;
   pendingDeleteBytes: number;
@@ -159,8 +159,8 @@ export type MemoryAppendResponse = {
   schemaVersion: MemoryV6SchemaVersion;
   entry: MemoryEntrySummary;
   /**
-   * True when the original idempotent append operation created this entry.
-   * Idempotent replays return the same value after current access and state checks.
+   * 最初の冪等な append 操作でこのエントリーを作成した場合に true。
+   * 冪等な再実行では、現在のアクセス権と状態を検査した後に同じ値を返す。
    */
   created: boolean;
   replayed?: true;

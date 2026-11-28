@@ -706,7 +706,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
     );
     assert.equal(invalid.exit, 2);
     assert.equal(calls.length, Object.keys(inputs).length * 4 + 2);
-    // A lost replacement response may have applied; only the dedicated body read can clarify it.
+    // 置換の応答が失われても反映済みの場合があり、本文の専用読み取りでしか確かめられない。
     const lostInstructions = await cli("set-instructions", inputs.set_instructions, runtimeCall);
     assert.equal(lostInstructions.exit, 3);
     assert.equal(lostInstructions.value.effect, "unknown");

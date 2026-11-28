@@ -183,7 +183,7 @@ export function listIdentityBoundDirectory(
       try {
         options.onWorkerSettled?.();
       } catch {
-        // Test diagnostics must not change worker settlement.
+        // テスト用の診断が Worker の決着に影響してはならない。
       }
       if (error) {
         reject(error);
@@ -239,7 +239,7 @@ export function listIdentityBoundDirectory(
       try {
         options.onWorkerStarted?.();
       } catch {
-        // Test diagnostics must not change worker settlement.
+        // テスト用の診断が Worker の決着に影響してはならない。
       }
     });
     child.once("error", (error) => {

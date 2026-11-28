@@ -1,6 +1,6 @@
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
 
-/** Durable draft state exchanged between the renderer and Main process. */
+/** renderer と Main プロセスの間で受け渡す永続化済みの下書き状態。 */
 export type AuxiliaryDraftRecord = {
   auxiliarySessionId: string;
   parentSessionId: string;

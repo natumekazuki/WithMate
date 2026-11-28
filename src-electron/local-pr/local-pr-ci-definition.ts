@@ -16,7 +16,7 @@ const definitionSchema = z.strictObject({
   commands: z.array(z.string().max(4096).refine((value) => !!value.trim() && !/[\u0000-\u0008\u000a-\u001f\u007f\u0085\u2028\u2029]/u.test(value))).min(1).max(100),
 });
 
-/** A validated definition comes exclusively from the submitted commit's ordinary file blob. */
+/** 検証する定義は、提出されたコミットの通常ファイルの blob からだけ取得する。 */
 export async function readLocalPrCiDefinition(workspacePath: string, headCommit: string): Promise<{
   definition: LocalPrData<"pr_ci_validate">;
   commands: string[] | null;
@@ -26,11 +26,11 @@ export async function readLocalPrCiDefinition(workspacePath: string, headCommit:
     definition: { ...identity, state: "invalid" as const, source, error }, commands: null,
   });
 
-  // A missing path is not configured; a missing commit is a Git error, not an empty tree.
+  // パスがなければ未設定。コミットがなければ空のツリーではなく Git エラーとして扱う。
   if ((await git(workspacePath, ["cat-file", "-t", headCommit])).toString().trim() !== "commit") {
     throw new Error("The pinned CI head is not a Git commit.");
   }
-  // The Session can start in a subdirectory; CI always names a path from the commit's root.
+  // Session はサブディレクトリで始まることがあるが、CI は常にコミットのルートからのパスを使う。
   const entry = (await git(workspacePath, ["ls-tree", "--full-tree", "-z", headCommit, "--", definitionPath])).toString();
   if (!entry) return { definition: { ...identity, state: "not_configured", source: null, error: null }, commands: null };
   const object = /^100(?:644|755) blob ([0-9a-f]{40}|[0-9a-f]{64})\t\.withmate\/ci\.yml\0$/u.exec(entry)?.[1];
@@ -46,7 +46,7 @@ export async function readLocalPrCiDefinition(workspacePath: string, headCommit:
     return invalid("The CI definition is not UTF-8.");
   }
   try {
-    // Never materialize aliases, tags, duplicate keys, or YAML merge keys as JavaScript values.
+    // エイリアス、タグ、重複キー、YAML のマージキーを JavaScript の値に変換しない。
     const document = parseDocument(source, { version: "1.2", schema: "core", uniqueKeys: true, merge: false });
     if (document.errors.length || document.warnings.length) return invalid("Invalid CI YAML.", source);
     visit(document, (_key, node) => {
@@ -62,17 +62,17 @@ export async function readLocalPrCiDefinition(workspacePath: string, headCommit:
   }
 }
 
-/** Copy only objects reachable from the pinned head into a new Git repository. */
+/** 固定した head から到達可能なオブジェクトだけを新規 Git リポジトリにコピーする。 */
 export async function prepareLocalPrCiCheckout(workspacePath: string, checkout: string, headCommit: string, signal: AbortSignal): Promise<void> {
   const step = (cwd: string, args: string[]) => {
-    // Let the in-flight local Git command close before treating cancellation as confirmed.
+    // 実行中のローカル Git コマンドが閉じるまで、キャンセルを確定しない。
     signal.throwIfAborted();
     return git(cwd, args);
   };
   const common = (await step(workspacePath, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).toString().replace(/\r?\n$/u, "");
   const localSource = pathToFileURL(await realpath(common)).href;
 
-  // File transport copies Git objects; unlike a worktree or local clone, it shares no metadata, links, or alternates.
+  // ファイル転送は Git オブジェクトをコピーする。worktree やローカル clone と違い、メタデータ、リンク、alternates を共有しない。
   await mkdir(checkout, { mode: 0o700 });
   await step(checkout, ["init", "--quiet", "--template=", `--object-format=${headCommit.length === 64 ? "sha256" : "sha1"}`]);
   await step(checkout, ["fetch", "--no-tags", "--no-recurse-submodules", "--no-auto-maintenance", "--no-write-fetch-head", "--", localSource, headCommit]);
@@ -81,12 +81,12 @@ export async function prepareLocalPrCiCheckout(workspacePath: string, checkout: 
   if (checkedOut !== headCommit) throw new Error("The CI checkout did not reach the pinned commit.");
 }
 
-/** Don't inherit Git redirects, worktree overrides, helpers, templates, or global/system config. */
+/** Git の参照先変更、worktree の上書き設定、ヘルパー、テンプレート、グローバル・システム設定を引き継がない。 */
 async function git(cwd: string, args: string[]): Promise<Buffer> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^git_/iu.test(name)));
   const windows = process.platform === "win32";
   const nullDevice = windows ? "NUL" : "/dev/null";
-  // Opt in for these Git invocations only: neither the original repo nor the OS configuration is changed.
+  // これらの Git 呼び出しだけに適用し、元のリポジトリや OS の設定は変更しない。
   const config = ["-c", `core.hooksPath=${nullDevice}`, ...(windows ? ["-c", "core.longpaths=true"] : [])];
   try {
     const { stdout } = await exec(await getDefaultGitExecutablePath(), ["--no-replace-objects", ...config, ...args], {

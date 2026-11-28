@@ -86,7 +86,7 @@ export type RuntimeDiscoveryRegistryLayoutOptions = {
   security: RuntimePathSecurity;
   limits?: Partial<RuntimeDiscoveryRegistryLimits>;
   clock?: RuntimeDiscoveryClock;
-  /** Test-only observation point; it runs after the cross-process lock is held. */
+  /** テスト専用の観測点。プロセス間ロックを取得してから実行する。 */
   mutationObserver?: RegistryMutationObserver;
 };
 
@@ -102,11 +102,11 @@ export type PublishRuntimeDiscoveryEntryOptions =
     challenge: RuntimeDiscoveryRegistryChallenge;
     timers?: RuntimeDiscoveryTimers;
     onHeartbeatError?: (error: unknown) => void;
-    /** Runs under the cross-process mutation lock immediately before entry publication. */
+    /** プロセス間の変更ロックを保持したまま、エントリを公開する直前に実行する。 */
     beforePublicationCommit?: () => Promise<void>;
-    /** Test-only observation point immediately before waiting for the publication lock. */
+    /** テスト専用の観測点。公開ロックの取得を待ち始める直前に実行する。 */
     beforePublicationLock?: () => Promise<void>;
-    /** Restores adapter-owned projection state after this publication is fully rolled back. */
+    /** 今回の公開を完全にロールバックした後、アダプターが所有する表示用の状態を復元する。 */
     afterPublicationRollback?: () => Promise<void>;
   };
 
@@ -522,9 +522,9 @@ async function prepareEntryReplacement(
     `entry-${randomUUID()}.tmp`,
   );
   try {
-    // The slot directory was secured and read back before publication. Files
-    // created inside it inherit that ACL, so heartbeat does not launch the
-    // platform ACL helper while holding the OS-user mutation lock.
+    // 公開前にスロットディレクトリのアクセスを制限し、設定を読み戻して確認済み。
+    // 内部に作成したファイルはその ACL を継承するため、ハートビート処理は
+    // OS ユーザー単位の変更ロックを保持中に、プラットフォームの ACL ヘルパーを起動しない。
     await writeExclusiveFileWithReadBack(
       temporaryFilePath,
       serializeEntry(entry),
@@ -1275,10 +1275,10 @@ export async function publishRuntimeDiscoveryEntry(
         }
       },
       async () => {
-        // proper-lockfile stops refreshing ownership before removing its lock
-        // directory. If that removal fails, the remaining directory still
-        // excludes other processes until stale recovery, so reconcile the
-        // committed publication before reporting failure to the caller.
+        // proper-lockfile は、ロックディレクトリを削除する前に所有権の更新を停止する。
+        // 削除に失敗するとロックディレクトリが残り、
+        // 期限切れからの復旧まで他のプロセスを排除し続ける。
+        // そのため、確定済みの公開状態を整合させてから呼び出し元に失敗を返す。
         await rollbackPreparedPublication();
       },
     );

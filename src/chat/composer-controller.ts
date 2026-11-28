@@ -158,11 +158,11 @@ export class ComposerControllerRegistry {
 
   clearIfRevision(owner: ComposerOwner, expectedRevision: number): number | null {
     if (this.get(owner).revision !== expectedRevision) return null;
-    // Accepted sends still consume their captured revision during shutdown.
+    // 終了処理中も、受付済みの送信は取得時のリビジョンを消費する。
     return this.setDraftInternal(owner, "", { start: 0, end: 0 }, true, true);
   }
 
-  /** An explicit reply edit is part of the draft version, just like an inline attachment reference. */
+  /** 返信先を明示的に編集すると、インラインの添付参照と同じく下書きの版に反映される。 */
   setReply(owner: ComposerOwner, reply: ComposerDraftReply | undefined): void {
     if (this.frozen || this.get(owner).reply === reply) return;
     this.update(owner, (entry) => { entry.reply = reply; entry.revision += 1; });
@@ -180,8 +180,8 @@ export class ComposerControllerRegistry {
   ): number | null {
     const current = this.get(owner);
     if (current.revision !== expectedRevision) return null;
-    // Failure recovery is an internal mutation: it must still restore the
-    // captured draft when shutdown has frozen user edits.
+    // 失敗からの復元は内部更新であり、終了処理でユーザーの編集を凍結した後も
+    // 取得済みの下書きを復元できなければならない。
     return this.setDraftInternal(owner, update(current.draft), current.selection, true);
   }
 

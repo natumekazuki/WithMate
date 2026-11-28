@@ -36,7 +36,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
   const waiting: SessionTurnQueueReceipt[] = [];
   const addInput = (receipt: SessionTurnQueueReceipt, index: number) => {
     const key = `turn-submission-${receipt.incarnationId}-${receipt.requestId}`;
-    // Before dispatch, captured contains any committed queue edits; accepted is immutable provenance.
+    // 配送前の captured には確定済みのキュー編集が反映される。accepted は変更されない受付時の来歴。
     const input = receipt.dispatched ?? receipt.captured;
     projection.messages.splice(index, 0, { role: "user", text: coordinationDeliveryText(input), ...(input.request.replyTo ? { replyTo: input.request.replyTo } : {}) });
     projection.keys.splice(index, 0, key);
@@ -47,13 +47,13 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
   const sessionQueue = options?.sessionQueue?.receipts.filter(isOwned) ?? owned;
   const sessionBusy = (options?.sessionQueue?.hasActiveRun ?? options?.hasActiveRun) || sessionQueue.some((receipt) =>
     receipt.state === "starting" || receipt.state === "running");
-  // Select the next dispatchable receipt before restricting the presentation to a frame.
+  // 表示をフレーム単位に絞り込む前に、次に配送可能な受付情報を選ぶ。
   const queueHead = options && !sessionBusy ? sessionQueue.reduce<SessionTurnQueueReceipt | undefined>((head, receipt) =>
     receipt.state === "queued" && getQueuedSourceWaitState(receipt) === null
       && (!head || receipt.queuePosition < head.queuePosition || receipt.queuePosition === head.queuePosition && receipt.sequence < head.sequence)
       ? receipt : head, undefined) : undefined;
   const activeReceipt = options ? owned.find((receipt) => !receipt.inputTurnId && (receipt.state === "starting" || receipt.state === "running"))
-    // Retain the existing local request surface while its live start and receipt are joined.
+    // 実行開始と受付情報の対応付けが済むまでは、既存のローカルのリクエスト表示を維持する。
     ?? owned.find((receipt) => receipt.state === "queued" && receipt.requestId === options.bindingRequestId)
     ?? (!options.hasActiveRun ? owned.find((receipt) => !receipt.inputTurnId && receipt.state === "completed" && receipt.userMessageSeq !== null
         && options.submissions.some((submission) => submission.requestId === receipt.requestId)
@@ -82,7 +82,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
       continue;
     }
     if (receipt.state === "canceled" && receipt.userMessageSeq === null) continue;
-    // A terminal notification must not drop the accepted prompt before its saved row arrives.
+    // 終了通知を受けても、保存済みの行が届くまでは受付済みのプロンプトを表示から落とさない。
     const followingIndex = projection.sources.findIndex((source, index) => {
       if (source.kind === "live-assistant") {
         const seq = projection.messages[index].historyIndex;
@@ -96,7 +96,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     });
     addInput(receipt, followingIndex < 0 ? projection.messages.length : followingIndex);
   }
-  // Keep an earlier, failed reservation before the next response, even if it never acquired a saved user row.
+  // 先行する失敗済みの予約行は、保存済みのユーザー行が作られなかった場合でも次の応答より前に残す。
   const activeUserIndex = activeReceipt
     ? projection.keys.indexOf(`turn-submission-${activeReceipt.incarnationId}-${activeReceipt.requestId}`) : -1;
   if (activeUserIndex >= 0 && activeReceipt) {
@@ -112,7 +112,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
       index++;
     }
   }
-  // Keep the terminal notification visible while its canonical response is being loaded.
+  // 正本の応答を読み取っている間は、終了通知を表示したままにする。
   for (const [key, receipt] of metadata) {
     if (!isFailedTurnReceipt(receipt)) continue;
     const userIndex = projection.keys.indexOf(key);
@@ -122,7 +122,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     const belongsToResponse = (index: number) => !receipt.inputTurnId && index > userIndex && (nextPrompt < 0 || index < nextPrompt);
     if (projection.sources.some((source, index) => belongsToResponse(index) && projection.messages[index].role === "assistant"
       && (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId))) continue;
-    // A later live response can arrive before its saved prompt or receipt.
+    // 後続のライブ応答が、対応する保存済みプロンプトや受付情報より先に届く場合がある。
     const liveIndex = projection.sources.findIndex((source) => !receipt.inputTurnId && source.kind === "live-assistant"
       && source.sessionId === receipt.sessionId && receipt.turnId !== null && source.withMateTurnId === receipt.turnId);
     if (liveIndex >= 0) {
@@ -137,7 +137,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     projection.sources.splice(responseIndex, 0, { kind: "turn-queue", receipt });
     projection.groups.splice(responseIndex, 0, projection.groups[userIndex]);
   }
-  // A following turn may already be running while this terminal turn's canonical body is in flight.
+  // 終了した Turn の正本の本文を取得中に、後続の Turn が始まっている場合がある。
   for (const receipt of owned) {
     const responseKey = options?.responseKeys?.get(receipt.requestId);
     if (!responseKey || (receipt.state !== "completed" && receipt.state !== "canceled") || receipt.inputTurnId || receipt.userMessageSeq === null) continue;
@@ -182,7 +182,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     projection.sources.splice(index, 0, { kind: "turn-submission", requestId: submission.requestId });
     projection.groups.splice(index, 0, null);
   }
-  // Reservations stay the same virtual row when they become the active input.
+  // 予約行が処理中の入力になっても、仮想リスト上では同じ行を使う。
   const waitingStart = waiting.length ? projection.messages.length : undefined;
   for (const receipt of waiting) addInput(receipt, projection.messages.length);
   return { projection, metadata, tail, localTail, pendingSubmission, activeReceipt, waitingStart };

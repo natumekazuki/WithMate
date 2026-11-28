@@ -98,12 +98,12 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
       WITHMATE_LIVE_SESSION_RUN_STATUS_EVENT,
       { sessionId, status: projectLiveSessionRunStatus(state) },
     );
-    // Resolve from Main-owned execution identity, never from renderer selection.
+    // renderer の選択状態ではなく、Main が所有する実行識別情報から解決する。
     try {
       const window = this.options.getLiveSessionRunWindow(sessionId);
       if (window) this.broadcastTo([window], WITHMATE_LIVE_SESSION_RUN_EVENT, { sessionId, state });
     } catch {
-      try { this.options.onSendFailed?.(); } catch { /* Diagnostics cannot interrupt publication. */ }
+      try { this.options.onSendFailed?.(); } catch { /* 診断によって通知処理を中断しない。 */ }
     }
   }
 
@@ -148,8 +148,8 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
         if (this.options.canSendToWindow && !this.options.canSendToWindow(window)) continue;
         window.webContents.send(channel, payload);
       } catch {
-        // Renderer delivery is not the owner of provider output or durable persistence.
-        try { this.options.onSendFailed?.(); } catch { /* Diagnostics cannot interrupt publication. */ }
+        // renderer への配送は、プロバイダーの出力や永続化を所有しない。
+        try { this.options.onSendFailed?.(); } catch { /* 診断によって通知処理を中断しない。 */ }
       }
     }
   }

@@ -370,7 +370,7 @@ export class AppSettingsStorage {
     const normalized = normalizeAppSettings(nextSettings);
     const updatedAt = new Date().toISOString();
 
-    // Chat layout preferences have their own write path so stale full-settings snapshots cannot overwrite them.
+    // 古い設定全体のスナップショットで上書きされないよう、チャットのレイアウト設定は専用の経路で保存する。
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.db

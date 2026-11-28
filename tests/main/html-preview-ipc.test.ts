@@ -119,7 +119,7 @@ test("HTML link IPC は読込中にowner・base・window・frameが変わると�
     harness.state.onRead = () => {
       if (mutation === "owner") harness.state.ownerSessionId = null;
       if (mutation === "base") harness.state.currentBase = { ...harness.baseResource, absolutePath: "/changed.md" };
-      // A newly resolving, otherwise-authorized window must still fail the same-window check.
+      // 解決先が別の Window に変わった場合、他の認可条件を満たしていても、同じ Window かどうかの検査で拒否する。
       if (mutation === "window") harness.state.window = harness.previewWindow;
       if (mutation === "frame") harness.event.sender.mainFrame = { id: "new-main-frame" };
     };

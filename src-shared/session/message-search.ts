@@ -160,7 +160,7 @@ function normalizeMessagePlainText(text: string): string {
   return `${codePoints.slice(0, MESSAGE_COLLAPSE_PREVIEW_MAX_LENGTH - 1).join("")}…`;
 }
 
-/** Returns a bounded preview of the rendered text, or an empty string when no text is available. */
+/** 描画後のテキストを上限付きのプレビューとして返す。テキストがない場合は空文字列を返す。 */
 export function projectMessagePlainText(markdown: string, responseProvider?: string): string {
   return normalizeMessagePlainText(projectMessageRenderedSearchText(markdown.replace(/\r\n?|\n/gu, " "), responseProvider));
 }

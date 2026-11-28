@@ -476,8 +476,8 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
       .map((element) => element.textContent ?? "");
   try {
     await act(async () => { root.render(<App />); });
-    // The direct-input shortcut and the ordinary Send button can run before
-    // React has committed the busy state from the first operation.
+    // 直接入力のショートカットと通常の送信ボタンは、先に開始した操作の
+    // 処理中状態が React に反映される前に実行される場合がある。
     main = { ...main, status: "running", runState: "running" };
     const directResult = deferred<{ turnId: string }>();
     const directCalls: string[] = [];

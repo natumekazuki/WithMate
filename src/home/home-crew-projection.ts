@@ -23,7 +23,7 @@ function compareMembers(left: HomeCrewMember, right: HomeCrewMember): number {
   return Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.id.localeCompare(right.id, "en");
 }
 
-/** Project the complete saved hierarchy. Window presence decides root membership, not branch membership. */
+/** 保存済みの階層全体を表示用に構成する。Window の有無はルートに含めるかを決めるもので、枝の所属は変えない。 */
 export function buildHomeCrewTree(
   members: readonly HomeCrewMember[],
   auxiliaries: readonly AuxiliarySessionSummary[],
@@ -80,7 +80,7 @@ export function buildHomeCrewTree(
   return roots.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) || left.id.localeCompare(right.id, "en")).map(buildNode);
 }
 
-/** Keep matching paths and all descendants of a match without changing the complete-tree totals. */
+/** 一致したノードまでの経路とそのノードの子孫すべてを残し、ツリー全体の集計値は変えない。 */
 export function filterHomeCrewTree(roots: readonly HomeCrewNode[], query: string): HomeCrewBranch[] {
   const visit = (nodes: readonly HomeCrewNode[], includeAll: boolean): HomeCrewBranch[] => nodes.flatMap((node) => {
     const matches = includeAll || [node.member.taskTitle, node.member.character]

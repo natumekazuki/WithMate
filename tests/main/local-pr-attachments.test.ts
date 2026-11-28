@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { saveLocalPrClipboardImage } from "../../src-electron/local-pr/local-pr-attachments.js";
 
-/** Clipboard images survive independently of Session Files and never overwrite earlier bytes. */
+/** クリップボード画像は Session Files と独立して保持され、先に保存されたデータを上書きしない。 */
 test("PR clipboard images are stored in the PR attachment directory", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-pr-attachment-"));
   t.after(() => rm(root, { recursive: true, force: true }));

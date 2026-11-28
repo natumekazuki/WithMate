@@ -31,8 +31,8 @@ export type ProviderAgentRuntimeBindingRedactor = {
 };
 
 /**
- * Sanitizes projection copies only. Raw provider events must remain untouched
- * until lifecycle/control handling has completed.
+ * 表示に反映するためのコピーだけを秘匿化する。ライフサイクル管理・制御の処理が終わるまでは、
+ * プロバイダーの生イベントを変更しない。
  */
 export function createProviderAgentRuntimeBindingRedactor(
   projection: ProviderAgentRuntimeBindingProjection | null | undefined,
@@ -57,8 +57,8 @@ export function createProviderAgentRuntimeBindingRedactor(
     }
     const limit = Math.max(0, previewLimit);
     if (!secretPattern || limit === 0) return value.slice(0, limit);
-    // Look beyond the raw preview boundary only far enough to recognize a
-    // complete secret whose prefix would otherwise survive truncation.
+    // 切り詰めると機密値の先頭部分が残るおそれがあるため、
+    // 機密値全体を照合するのに必要な範囲だけ、プレビューの境界より先を確認する。
     const bounded = value.slice(0, limit + maxSecretLength - 1);
     const parts: string[] = [];
     let cursor = 0;

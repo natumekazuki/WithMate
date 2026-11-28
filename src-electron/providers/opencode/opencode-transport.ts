@@ -20,7 +20,7 @@ export type OpenCodeTransportOptions = {
   closeTimeoutMs?: number;
 };
 
-// Main owns these runtimes. Serialize native database bootstrap, not turns or HTTP requests.
+// これらのランタイムは Main が管理する。直列化するのはネイティブデータベースの初期化であり、Turn や HTTP リクエストではない。
 const databases = new Map<string, { tail: Promise<void>; version: string; active: number }>();
 
 export class OpenCodeTransport {
@@ -123,7 +123,7 @@ export class OpenCodeTransport {
       await this.close();
       throw error;
     } finally {
-      // A cancelled waiter must not allow the next opener to overtake the current bootstrap.
+      // 待機がキャンセルされても、次の開始処理が現在の初期化を追い越さないようにする。
       void previous.then(() => this.#closing ? this.#closed.then(unlock) : unlock());
     }
   }
@@ -139,7 +139,7 @@ export class OpenCodeTransport {
     child?.once("close", () => { void this.close().catch(() => {}); });
   }
 
-  // This promise is not the bounded close attempt: it confirms ownership release and actual exit.
+  // この Promise は時間制限付きの close 試行とは異なり、所有権の解放と実際の終了を確認する。
   whenClosed(): Promise<void> { return this.#closed; }
 
   close(): Promise<void> {
@@ -157,7 +157,7 @@ export class OpenCodeTransport {
     const timeout = this.#options.closeTimeoutMs ?? 5_000;
     if (owner?.child) {
       owner.child.stdin.end();
-      // Give stdio mode a bounded opportunity to shut down normally, then terminate the entire owned scope.
+      // stdio モードには時間を限って通常終了する機会を与え、その後に管理下のスコープ全体を停止する。
       await Promise.race([this.#exit, new Promise<void>(resolve => { const timer = setTimeout(resolve, Math.min(250, timeout)); timer.unref(); })]);
     }
     try { owner?.terminate(); } catch (error) { errors.push(error); }

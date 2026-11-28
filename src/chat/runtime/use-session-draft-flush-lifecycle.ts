@@ -28,7 +28,7 @@ export function useSessionDraftFlushLifecycle(input: {
         setIsComposerFrozen(true);
         void (async () => {
           if (request.reason === "quit") {
-            // A failed send can enqueue recovery after the current save queue is empty.
+            // 現在の保存キューが空になった後でも、送信失敗によって復元処理がキューに入ることがある。
             await persistence.waitForPendingSends();
           }
           await persistence.flushAll();

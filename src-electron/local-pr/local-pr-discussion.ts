@@ -3,7 +3,7 @@ import { parseUnifiedDiff } from "../../src-shared/file-explorer/unified-diff.js
 
 type ReadPatch = (request: LocalPrInput<"pr_diff">) => Promise<LocalPrData<"pr_diff">>;
 
-/** Build a regular Turn message from saved PR identities and the exact reviewed Git context. */
+/** 保存済みの PR 識別情報と実際にレビューした Git の比較情報から、通常の Turn メッセージを組み立てる。 */
 export async function buildLocalPrDiscussionMessage(
   pr: LocalPrDetail,
   input: LocalPrInput<"discuss">,
@@ -12,7 +12,7 @@ export async function buildLocalPrDiscussionMessage(
   const submitted = pr.versions.find((entry) => entry.version === input.version);
   if (!submitted) throw new Error("The selected submission no longer exists.");
 
-  // Resolve replies by identity, not by current selection or by the latest submission.
+  // 返信先は識別情報で解決し、現在の選択や最新の提出版では決めない。
   const comments = new Map(pr.comments.map((comment) => [comment.id, comment]));
   const selected = [...new Set(input.commentIds)].map((id) => {
     const comment = comments.get(id);
@@ -26,7 +26,7 @@ export async function buildLocalPrDiscussionMessage(
     review?: { anchor: LocalPrComment["anchor"]; beforeCommit: string; afterCommit: string; lines: Array<{ line: number; text: string }>; omitted: boolean };
   }> = [];
 
-  // Include the original comparison even when the selected note is a reply or belongs to an older version.
+  // 選択したコメントが返信でも旧版のものでも、元の比較情報を含める。
   for (const comment of selected) {
     let anchorOwner = comment;
     const visited = new Set<string>();
@@ -51,7 +51,7 @@ export async function buildLocalPrDiscussionMessage(
       const code: Array<{ line: number; text: string }> = [];
       let omitted = false;
 
-      // Keep the actual selected side and endpoints; trim only the excerpt, not its identity.
+      // 実際に選ばれた比較側と端点は保持し、短縮するのは抜粋だけにする。
       for (const row of rows) {
         if (!("leftNumber" in row || "rightNumber" in row)) continue;
         const line = anchor.side === "before" ? row.leftNumber : row.rightNumber;
@@ -71,7 +71,7 @@ export async function buildLocalPrDiscussionMessage(
     context.push(entry);
   }
 
-  // Match normal Session fields: quote scalar values so data cannot create new sections.
+  // 通常の Session 項目に合わせ、データから新しい節が作られないようスカラー値を引用符で囲む。
   const value = (item: string | number | boolean | null) => JSON.stringify(item).replaceAll("@", "\\u0040").replaceAll("!", "\\u0021");
   const field = (key: string, item: string | number | boolean | null) => `${key}: ${value(item)}`;
   const data = [
@@ -79,7 +79,7 @@ export async function buildLocalPrDiscussionMessage(
     field("sourceBranch", pr.sourceBranch), field("targetBranch", pr.targetBranch), field("version", input.version),
     field("headCommit", submitted.headCommit), field("targetCommit", submitted.targetCommit),
   ];
-  // Keep each comment and its original comparison grouped without a structured-data serializer.
+  // 構造化データのシリアライザーは使わず、各コメントと元の比較情報をひとまとまりにする。
   for (const comment of context) {
     data.push("", "## Comment", "", field("id", comment.id), field("version", comment.version), field("note", comment.note), field("replyTo", comment.replyTo));
     if (comment.review?.anchor) {

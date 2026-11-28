@@ -191,9 +191,9 @@ export type SessionComposerFeatureSurface = {
 export type SessionComposerFeature = ReturnType<typeof useSessionComposerFeature>;
 
 /**
- * Own the per-target composer state. The root supplies only the selected
- * owner and the existing persistence service; picker state, selection refs,
- * preview state, and the close-time flush lifecycle stay with the composer.
+ * 対象ごとのコンポーザー状態を管理する。ルートが渡すのは選択中の所有者と
+ * 既存の永続化サービスだけ。ピッカーの状態、選択範囲の ref、プレビュー状態、
+ * 閉じるときに保存を完了させる処理はコンポーザーが担う。
  */
 export function useSessionComposerFeature(input: {
   api: WithMateWindowApi | null;

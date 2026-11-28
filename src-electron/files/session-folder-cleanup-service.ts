@@ -131,7 +131,7 @@ export class SessionFolderCleanupService {
     this.latest = null;
     const startedAt = performance.now();
     const diagnostics = {
-      // Only conditions and aggregate counts belong in logs, never Session/file data.
+      // ログには条件と集計件数だけを記録し、Session やファイルのデータは出さない。
       fromDate: request.fromDate,
       toDate: request.toDate,
       minimumFileSizeMiB: request.minimumFileSizeMiB,
@@ -349,7 +349,7 @@ export class SessionFolderCleanupService {
           },
         });
       } catch {
-        // Diagnostic output must not change scan results or mask the original failure.
+        // 診断出力が走査結果を変えたり、元のエラーを覆い隠したりしてはならない。
       }
     }
   }
