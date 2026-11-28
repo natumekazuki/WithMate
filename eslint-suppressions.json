@@ -1574,21 +1574,6 @@
       "count": 2
     }
   },
-  "src-shared/coordination/coordination-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 16
-    }
-  },
-  "src-shared/coordination/coordination-delivery.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "src-shared/coordination/coordination-window-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 15
-    }
-  },
   "src-shared/file-explorer/file-content-detection.ts": {
     "jsdoc/require-jsdoc": {
       "count": 5
@@ -1757,11 +1742,6 @@
   "src-shared/session/session-child-creation.ts": {
     "jsdoc/require-jsdoc": {
       "count": 1
-    }
-  },
-  "src-shared/session/session-coordination-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
     }
   },
   "src-shared/session/session-crew-deletion.ts": {

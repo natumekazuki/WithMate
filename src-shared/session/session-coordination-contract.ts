@@ -5,6 +5,7 @@ import {
   type CoordinationRequest,
 } from "../coordination/coordination-contract.js";
 
+/** 共通スキーマから操作名を取り除き、コマンドごとの本文だけを検証する。 */
 function request(operation: CoordinationRequest["operation"]) {
   const schema = coordinationRequestSchema.options.find(
     (option) => option.shape.operation.value === operation,
@@ -13,6 +14,7 @@ function request(operation: CoordinationRequest["operation"]) {
   const { operation: _operation, ...shape } = schema.shape;
   return z.object(shape).strict();
 }
+/** Session操作名に対応する、相談操作の本文スキーマ。 */
 export const sessionCoordinationRequestSchemas = {
   coordination_list: request("list"),
   coordination_get: request("get"),
@@ -25,6 +27,7 @@ export const sessionCoordinationRequestSchemas = {
   coordination_consume: request("consume"),
   coordination_correct: request("correct"),
 } as const;
+/** Session経由で呼べる相談コマンド名。 */
 export type SessionCoordinationOperation =
   keyof typeof sessionCoordinationRequestSchemas;
 const record = z
@@ -45,6 +48,7 @@ const result = z
       .optional(),
   })
   .strict();
+/** 一覧のページ、単一レコード、取得時の開始者参照を区別する成功応答スキーマ。 */
 export const sessionCoordinationSuccessSchemas = {
   coordination_list: z
     .object({
@@ -64,6 +68,7 @@ export const sessionCoordinationSuccessSchemas = {
   coordination_consume: result,
   coordination_correct: result,
 } as const;
+/** CLIやMCPで公開する相談操作の説明。配信や回答が成立する条件も示す。 */
 export const SESSION_COORDINATION_DESCRIPTIONS: Record<
   SessionCoordinationOperation,
   string
