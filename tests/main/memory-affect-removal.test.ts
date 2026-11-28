@@ -80,7 +80,7 @@ async function fixture(t: TestContext) {
 // claim = "更新起動は廃止専用データだけを退避せず破棄し、通常履歴・Character・Coordination・Projectを保持して再起動できる"
 // oracle = { type = "contract", ref = "docs/design/database-schema.md: Memory/Affect廃止と共有保存データの継続" }
 // fault = "起動更新が専用table/設定/暗号添付を残す、再作成する、または共有データを削除する"
-// observable = "廃止tableの不在、本番bootstrap後と再実行後の共有列の値と追加Reviewer列の既定値、設定とfileの存否/内容"
+// observable = "廃止tableの不在、本番bootstrap後と再実行後の共有列の値と追加Reviewer/Instructions列の既定値、設定とfileの存否/内容"
 // observation_boundary = "public-boundary"
 // scope = "preview.6相当のsynthetic DBとuserDataから起動するstorage更新"
 // lifecycle = "permanent"
@@ -88,6 +88,7 @@ async function fixture(t: TestContext) {
 // distinction = "新規schemaや型検査では既存行と暗号化fileの破棄境界・再起動・共有行保持を検出できず、短いsynthetic起動を継続検証する"
 // risk_tags = ["irreversible-data-loss", "privacy"]
 // @end-test-value
+/** A release upgrade preserves the old shared values and initializes additive Reviewer and Instructions columns on both boots. */
 test("released data retirement preserves shared storage across repeated bootstrap", async (t) => {
   const f = await fixture(t);
   const object = path.join(f.userData, "memory-objects", "v6", "aa", "a".repeat(32) + ".bin");
@@ -114,9 +115,10 @@ test("released data retirement preserves shared storage across repeated bootstra
         ["companion_removal_completed_at", "session_selection_policy_json", "v4_to_v6_release_data_migrated_at"]);
       for (const [table, rows] of Object.entries(f.shared)) {
         const actual = db.prepare(`SELECT * FROM ${table}`).all();
-        assert.deepEqual(actual, table === "auxiliary_sessions"
-          ? rows.map((row) => Object.assign(Object.create(null), row, { withmate_reviewer_explicit: 0 }))
-          : rows, table);
+        // Compare every old value as before, plus the exact default of each added column.
+        const additions = table === "auxiliary_sessions" ? { withmate_reviewer_explicit: 0, instructions_json: '""' }
+          : table === "sessions_v6" ? { instructions_json: '""' } : {};
+        assert.deepEqual(actual, rows.map((row) => Object.assign(Object.create(null), row, additions)), table);
       }
       assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
     } finally { db.close(); }
