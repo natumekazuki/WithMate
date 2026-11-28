@@ -197,9 +197,7 @@ export type LocalPrCiRun = z.infer<typeof localPrCiRunSchema>;
 /** Renderer calls have a fixed repository/source Session on the Main-owned Window. */
 export type LocalPrWindowApi = {
   execute<T extends LocalPrOperation>(operation: T, input: LocalPrInput<T>): Promise<LocalPrResult<T>>;
-  pickAttachment(kind: "file" | "folder" | "image" | "session-copy" | "session-file" | "session-folder" | "session-image"): Promise<string[]>;
-  savePastedFile(request: Omit<import("../window/withmate-window-types.js").SavePastedSessionFileRequest, "sessionId">): Promise<import("../window/withmate-window-types.js").SavePastedSessionFileResult>;
-  isClipboardFileBacked(file: File): boolean;
+  pickAttachment(): Promise<string[]>;
   inspectImage(target: string): Promise<SessionFileDescriptor>;
   readImageChunk(request: Omit<SessionImageChunkRequest, "sessionId" | "baseResource">): Promise<SessionFileChunkResult>;
   subscribeChanged(listener: () => void): () => void;

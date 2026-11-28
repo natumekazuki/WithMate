@@ -68,7 +68,7 @@ test("local PR labels, dates, and independent window refreshes retain their boun
   let fail = false;
   let reads = 0;
   const merges: unknown[] = [];
-  const picked: string[] = [];
+  let picked = 0;
   let finishMerge: (() => void) | undefined;
   let finishLog: (() => void) | undefined;
   const execute = async (operation: string, input: unknown) => {
@@ -157,9 +157,7 @@ test("local PR labels, dates, and independent window refreshes retain their boun
   };
   const api: LocalPrWindowApi = {
     execute: execute as unknown as LocalPrWindowApi["execute"],
-    pickAttachment: async (kind) => { picked.push(kind); return ["C:/fixture/review.png"]; },
-    savePastedFile: async () => "C:/fixture.png",
-    isClipboardFileBacked: () => false,
+    pickAttachment: async () => { picked += 1; return ["C:/fixture/review.png", "C:/fixture/notes.txt"]; },
     inspectImage: async () => { throw new Error("No image in this fixture."); },
     readImageChunk: async () => { throw new Error("No image in this fixture."); },
     subscribeChanged(callback) {
@@ -347,18 +345,16 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     assert.match(first.textContent ?? "", /Merged/);
     assert.doesNotMatch(first.textContent ?? "", /Target Branch Has Changed/);
     await act(async () => button("New PR").click());
-    const attach = first.querySelector<HTMLButtonElement>("button[aria-label='Attach']");
+    const attach = first.querySelector<HTMLButtonElement>("button[aria-label='Attach Files']");
     assert.ok(attach);
-    await act(async () => attach.click());
-    assert.equal(dom.window.document.querySelectorAll("[role='menuitem']").length, 7);
-    const image = dom.window.document.querySelector<HTMLButtonElement>("[aria-label='Attach the original image as a reference']");
-    assert.ok(image);
     const previousAnimationFrame = globalThis.requestAnimationFrame;
     globalThis.requestAnimationFrame = (callback) => { callback(0); return 0; };
     try {
-      await act(async () => image.click());
-      assert.deepEqual(picked, ["image"]);
-      assert.match(first.querySelector<HTMLTextAreaElement>("textarea[aria-labelledby='local-pr-description-label']")?.value ?? "", /review\.png/);
+      await act(async () => attach.click());
+      assert.equal(picked, 1);
+      const value = first.querySelector<HTMLTextAreaElement>("textarea[aria-labelledby='local-pr-description-label']")?.value ?? "";
+      assert.match(value, /!\[review\.png\]\(C:\/fixture\/review\.png\)/);
+      assert.match(value, /@C:\/fixture\/notes\.txt/);
     } finally {
       globalThis.requestAnimationFrame = previousAnimationFrame;
     }

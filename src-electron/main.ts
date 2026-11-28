@@ -877,21 +877,7 @@ const localPrWindowService: LocalPrWindowService<LocalPrRepository> = new LocalP
   }),
   loadWindow: (window) => requireWindowEntryLoader().loadLocalPrEntry(window),
   application: localPrApplication,
-  savePastedFile: savePastedSessionFile,
-  pickAttachment: async (window, workspacePath, sessionId, kind, assertCurrent) => {
-    if (kind === "session-file") return pickSessionFiles(window, sessionId);
-    if (kind === "session-folder") { const path = await pickSessionFolder(window, sessionId); return path ? [path] : []; }
-    if (kind === "session-image") { const path = await pickSessionImageFile(window, sessionId); return path ? [path] : []; }
-    if (kind === "session-copy") {
-      const paths = await requireWindowDialogService().pickFiles(window, workspacePath);
-      await assertCurrent();
-      return paths.length ? copyFilesToSessionFiles(sessionId, paths) : [];
-    }
-    const path = kind === "folder" ? await requireWindowDialogService().pickDirectory(window, workspacePath)
-      : kind === "image" ? await requireWindowDialogService().pickImageFile(window, workspacePath)
-      : await requireWindowDialogService().pickFile(window, workspacePath);
-    return path ? [path] : [];
-  },
+  pickAttachment: (window, workspacePath) => requireWindowDialogService().pickFiles(window, workspacePath),
   imageReader: createSessionFileExplorerService,
 });
 
