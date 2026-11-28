@@ -9,6 +9,7 @@ import {
 import { LaunchDialogShell } from "../../launch/launch-dialog-shell.js";
 import { useDialogA11y } from "../../ui/a11y.js";
 import { ButtonContent } from "../../ui/button-content.js";
+import { LoadingIndicator } from "../../ui/loading-indicator.js";
 
 type InstructionsControlProps = {
   api: Pick<WithMateWindowApi, "getSessionInstructions" | "setSessionInstructions">;
@@ -43,7 +44,6 @@ function SessionInstructionsDialog({ api, target, title, onClose }: Instructions
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const headingId = useId();
   const counterId = useId();
-  const timingId = useId();
   const limitErrorId = useId();
 
   useLayoutEffect(() => {
@@ -130,7 +130,7 @@ function SessionInstructionsDialog({ api, target, title, onClose }: Instructions
           ref={inputRef}
           className="session-instructions-body"
           aria-label="Instructions"
-          aria-describedby={`${counterId} ${timingId}${overLimit ? ` ${limitErrorId}` : ""}`}
+          aria-describedby={overLimit ? `${counterId} ${limitErrorId}` : counterId}
           aria-invalid={overLimit || undefined}
           aria-busy={read.status === "loading" || undefined}
           readOnly={read.status !== "loaded" || saving}
@@ -142,21 +142,20 @@ function SessionInstructionsDialog({ api, target, title, onClose }: Instructions
           spellCheck={false}
         />
         <div className="session-instructions-meta">
-          <span id={timingId}>Changes apply from the next turn.</span>
-          <span id={counterId}>{bytes?.toLocaleString("en-US") ?? "—"} / {SESSION_INSTRUCTIONS_MAX_BYTES.toLocaleString("en-US")} bytes</span>
-        </div>
-        <div className="session-instructions-feedback">
-          {read.status === "loading" ? <span role="status">Loading Instructions…</span> : null}
-          {read.status === "failed" ? <>
-            <span role="alert">Could not load instructions.</span>
-            <button type="button" className="drawer-toggle compact secondary" onClick={() => {
-              inputRef.current?.focus();
-              setRead({ status: "loading" });
-              setReadAttempt((attempt) => attempt + 1);
-            }}>Retry</button>
-          </> : null}
-          {overLimit ? <span id={limitErrorId} role="alert">Instructions exceed the byte limit.</span> : null}
-          {saveFailed ? <span role="alert">Could not save instructions. Your draft is still here.</span> : null}
+          <div className="session-instructions-feedback">
+            {read.status === "loading" ? <LoadingIndicator label="Loading Instructions" inline /> : null}
+            {read.status === "failed" ? <>
+              <span role="alert">Load Failed</span>
+              <button type="button" className="drawer-toggle compact secondary" onClick={() => {
+                inputRef.current?.focus();
+                setRead({ status: "loading" });
+                setReadAttempt((attempt) => attempt + 1);
+              }}>Retry</button>
+            </> : null}
+            {overLimit ? <span id={limitErrorId} role="alert">Byte Limit Exceeded</span> : null}
+            {saveFailed ? <span role="alert">Save Failed</span> : null}
+          </div>
+          <span id={counterId} className="session-instructions-counter">{bytes?.toLocaleString("en-US") ?? "—"} / {SESSION_INSTRUCTIONS_MAX_BYTES.toLocaleString("en-US")} bytes</span>
         </div>
       </div>
     </LaunchDialogShell>

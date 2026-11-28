@@ -71,16 +71,14 @@
 }
 
 .session-instructions-meta {
-  justify-content: space-between;
+  min-height: 34px;
   color: var(--muted);
 }
 
-.session-instructions-meta > :last-child {
+.session-instructions-counter {
+  margin-inline-start: auto;
   font-variant-numeric: tabular-nums;
-}
-
-.session-instructions-feedback {
-  min-height: 34px;
+  white-space: nowrap;
 }
 
 .session-instructions-feedback [role="alert"] {
