@@ -13,11 +13,9 @@ const declarations = {
     "TSInterfaceDeclaration",
     "TSMethodSignature",
     "TSEnumDeclaration",
-    "ExportNamedDeclaration > VariableDeclaration",
-    "VariableDeclaration:has(VariableDeclarator[init.type=/^(ArrowFunctionExpression|FunctionExpression)$/])",
-    "VariableDeclaration:has(VariableDeclarator[init.callee.name=/^(memo|forwardRef)$/])",
-    "Property[method=true]",
-    ":matches(Property, PropertyDefinition)[value.type=/^(ArrowFunctionExpression|FunctionExpression)$/]",
+    "ExportNamedDeclaration[declaration.type=VariableDeclaration]",
+    "VariableDeclaration:not(ExportNamedDeclaration > VariableDeclaration):has(VariableDeclarator:matches([init.type=/^(ArrowFunctionExpression|FunctionExpression)$/], [init.callee.name=/^(memo|forwardRef)$/]))",
+    ":matches(Property[method=true], :matches(Property, PropertyDefinition)[value.type=/^(ArrowFunctionExpression|FunctionExpression)$/])",
   ],
 };
 

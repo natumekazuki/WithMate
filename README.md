@@ -110,7 +110,7 @@ macOS向けの実buildにはmacOS環境またはmacOS CI runnerが必要です�
 
 ## 開発への参加
 
-開発用lintにはNode.js 22.22.2以降の22系、または24.15.0以降が必要です。毎回のコミット前に検査するには、[Git hookの有効化](docs/runbooks/development-workflow.md#git-hookの有効化)を参照してください。依存関係のインストールでは既存hookを変更しません。
+開発用lintにはNode.js 22.18.0以降の22系、または24.11.0以降が必要です。毎回のコミット前に検査するには、[Git hookの有効化](docs/runbooks/development-workflow.md#git-hookの有効化)を参照してください。依存関係のインストールでは既存hookを変更しません。
 
 コード変更・検証・Git操作は[Development Workflow](docs/runbooks/development-workflow.md)に従ってください。課題・不具合・レビュー残件・作業計画はGitHub Issue／PR、対応予定はGitHub Milestoneで管理します。[課題の対応予定と完了運用](docs/runbooks/development-workflow.md#課題の対応予定とmilestone)を参照してください。
 

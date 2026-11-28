@@ -46,7 +46,7 @@
   },
   "scripts/build/prepare-native-dependencies.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 5
+      "count": 4
     }
   },
   "scripts/build/stage-provider-binaries.ts": {
@@ -326,7 +326,7 @@
   },
   "src-electron/files/file-root-git-changes-service.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 136
+      "count": 138
     }
   },
   "src-electron/files/file-root-git-parsers.ts": {
@@ -351,7 +351,7 @@
   },
   "src-electron/files/html-preview-resources.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 10
+      "count": 8
     }
   },
   "src-electron/files/html-preview-service.ts": {
@@ -451,7 +451,7 @@
   },
   "src-electron/glossary/glossary-application-service.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 91
+      "count": 92
     }
   },
   "src-electron/glossary/glossary-proactive-turn.ts": {
@@ -516,7 +516,7 @@
   },
   "src-electron/ipc/register-main-ipc.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 3
+      "count": 2
     }
   },
   "src-electron/ipc/session-crew.ts": {
@@ -611,7 +611,7 @@
   },
   "src-electron/local-pr/local-pr-preload.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 10
+      "count": 9
     }
   },
   "src-electron/local-pr/local-pr-service.ts": {
@@ -636,7 +636,7 @@
   },
   "src-electron/main.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 715
+      "count": 713
     }
   },
   "src-electron/mate/mate-instruction-projection.ts": {
@@ -681,7 +681,7 @@
   },
   "src-electron/platform/agent-runtime/runtime-api.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 17
+      "count": 16
     }
   },
   "src-electron/platform/agent-runtime/runtime-client.ts": {
@@ -696,7 +696,7 @@
   },
   "src-electron/platform/agent-runtime/runtime-turn-admission.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 5
+      "count": 6
     }
   },
   "src-electron/platform/draft-flush-coordinator.ts": {
@@ -746,7 +746,7 @@
   },
   "src-electron/platform/runtime-discovery/runtime-discovery-registry.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 60
+      "count": 59
     }
   },
   "src-electron/platform/runtime-path-security.ts": {
@@ -766,7 +766,7 @@
   },
   "src-electron/preload/auxiliary-api.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 37
+      "count": 19
     }
   },
   "src-electron/preload/coordination-api.ts": {
@@ -786,12 +786,12 @@
   },
   "src-electron/preload/navigation-api.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 54
+      "count": 28
     }
   },
   "src-electron/preload/observability-api.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 11
+      "count": 7
     }
   },
   "src-electron/preload/preload-api.ts": {
@@ -801,7 +801,7 @@
   },
   "src-electron/preload/profile-api.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 49
+      "count": 26
     }
   },
   "src-electron/preload/renderer-error-logging.ts": {
@@ -811,7 +811,7 @@
   },
   "src-electron/preload/session-api.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 156
+      "count": 80
     }
   },
   "src-electron/preload/session-execution-api.ts": {
@@ -821,12 +821,12 @@
   },
   "src-electron/preload/subscription-api.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 51
+      "count": 29
     }
   },
   "src-electron/preload/template-picker-api.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 36
+      "count": 19
     }
   },
   "src-electron/preload/terminal-api.ts": {
@@ -856,7 +856,7 @@
   },
   "src-electron/providers/claude/claude-approval-reviewer.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 11
+      "count": 9
     }
   },
   "src-electron/providers/claude/claude-quota-telemetry.ts": {
@@ -866,7 +866,7 @@
   },
   "src-electron/providers/codex/app-server-transport.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 43
+      "count": 42
     }
   },
   "src-electron/providers/codex/codex-adapter.ts": {
@@ -981,7 +981,7 @@
   },
   "src-electron/providers/owned-process.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 27
+      "count": 26
     }
   },
   "src-electron/providers/prompt-token-estimate.ts": {
@@ -1016,7 +1016,7 @@
   },
   "src-electron/providers/provider-progress.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 7
+      "count": 8
     }
   },
   "src-electron/providers/provider-prompt.ts": {
@@ -1051,7 +1051,7 @@
   },
   "src-electron/providers/windows-job-object.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 24
+      "count": 19
     }
   },
   "src-electron/session/create-session-request.ts": {
@@ -1206,7 +1206,7 @@
   },
   "src-electron/session/session-storage-command-adapter.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 8
+      "count": 6
     }
   },
   "src-electron/session/session-storage-errors.ts": {
@@ -1256,7 +1256,7 @@
   },
   "src-electron/session/session-turn-queue-service.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 58
+      "count": 57
     }
   },
   "src-electron/session/session-turn-queue-storage-v6.ts": {
@@ -1326,7 +1326,7 @@
   },
   "src-electron/storage/app-database-bootstrap-worker.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 21
+      "count": 18
     }
   },
   "src-electron/storage/app-database-diagnostics.ts": {
@@ -1441,7 +1441,7 @@
   },
   "src-electron/storage/persistent-store-owner-guard.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 6
+      "count": 5
     }
   },
   "src-electron/storage/sent-instruction-card-read.ts": {
@@ -1531,7 +1531,7 @@
   },
   "src-electron/terminal/utility-terminal-pty.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 35
+      "count": 27
     }
   },
   "src-electron/windows/main-window-composition.ts": {
@@ -1906,7 +1906,7 @@
   },
   "src-shared/session/session-management-contract.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 16
+      "count": 14
     }
   },
   "src-shared/session/session-metadata.ts": {
@@ -2041,7 +2041,7 @@
   },
   "src-shared/text/codex-file-references.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 15
+      "count": 13
     }
   },
   "src-shared/text/find-text-matches.ts": {
@@ -2056,7 +2056,7 @@
   },
   "src-shared/text/provider-response-markdown.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 3
+      "count": 2
     }
   },
   "src-shared/time-state.ts": {
@@ -2256,7 +2256,7 @@
   },
   "src/chat/chat-window-adapter.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 44
+      "count": 43
     }
   },
   "src/chat/chat-window-mode.ts": {
@@ -2281,7 +2281,7 @@
   },
   "src/chat/composer-draft-handlers.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 19
+      "count": 13
     }
   },
   "src/chat/composer-paste-handlers.ts": {
@@ -2421,7 +2421,7 @@
   },
   "src/chat/conversation/session-chat-conversation-feature.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 4
+      "count": 3
     }
   },
   "src/chat/conversation/session-content-find-bar.tsx": {
@@ -2481,12 +2481,12 @@
   },
   "src/chat/conversation/use-queued-turn-edit.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 15
+      "count": 12
     }
   },
   "src/chat/conversation/use-sent-deliveries.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 17
+      "count": 16
     }
   },
   "src/chat/conversation/use-session-turn-queue.ts": {
@@ -2521,7 +2521,7 @@
   },
   "src/chat/runtime/failed-turn-retry-context.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 7
+      "count": 6
     }
   },
   "src/chat/runtime/live-request-surface.tsx": {
@@ -2541,7 +2541,7 @@
   },
   "src/chat/runtime/question-answer-editor.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 12
+      "count": 11
     }
   },
   "src/chat/runtime/run-main-session-turn-operation.ts": {
@@ -2761,7 +2761,7 @@
   },
   "src/chat/use-auxiliary-workspace.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 67
+      "count": 57
     }
   },
   "src/chat/use-composer-preview-resolution.ts": {
@@ -2811,7 +2811,7 @@
   },
   "src/coordination/use-coordination-identities.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 3
+      "count": 2
     }
   },
   "src/coordination/use-coordination-monitor.ts": {
@@ -2861,7 +2861,7 @@
   },
   "src/file-explorer/PdfFilePreview.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 11
+      "count": 10
     }
   },
   "src/file-explorer/SessionFileExplorerPane.tsx": {
@@ -2906,7 +2906,7 @@
   },
   "src/file-explorer/session-files-feature.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 4
+      "count": 3
     }
   },
   "src/file-explorer/structured-text-preview.ts": {
@@ -2936,7 +2936,7 @@
   },
   "src/glossary/MessageGlossaryAnnotations.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 16
+      "count": 15
     }
   },
   "src/glossary/SessionGlossaryPane.tsx": {
@@ -3136,7 +3136,7 @@
   },
   "src/home/home-session-summary-refresh.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 14
+      "count": 11
     }
   },
   "src/home/home-session-window-restore.ts": {
@@ -3191,7 +3191,7 @@
   },
   "src/launch/directory-path-validation.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 11
+      "count": 10
     }
   },
   "src/launch/launch-dialog-shell.tsx": {
@@ -3276,7 +3276,7 @@
   },
   "src/pdf-reader/pdf-reader-engine.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 21
+      "count": 19
     }
   },
   "src/prompt-templates/PromptTemplateWorkspace.tsx": {
@@ -3291,7 +3291,7 @@
   },
   "src/provider-usage/provider-quota.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 7
+      "count": 5
     }
   },
   "src/provider-usage/use-provider-quota.ts": {
@@ -3346,7 +3346,7 @@
   },
   "src/settings/home-settings-content-props.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 3
+      "count": 2
     }
   },
   "src/settings/model-catalog-subscription.ts": {
@@ -3526,12 +3526,12 @@
   },
   "src/ui/markdown/MessageRichText.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 15
+      "count": 14
     }
   },
   "src/ui/markdown/image-resource-loader.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 10
+      "count": 9
     }
   },
   "src/ui/markdown/image-resource-source.ts": {
@@ -3546,7 +3546,7 @@
   },
   "src/ui/markdown/markdown-code.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 19
+      "count": 17
     }
   },
   "src/ui/markdown/markdown-components.tsx": {
@@ -3561,7 +3561,7 @@
   },
   "src/ui/markdown/markdown-images.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 8
+      "count": 6
     }
   },
   "src/ui/markdown/markdown-katex-projection.ts": {
@@ -3571,7 +3571,7 @@
   },
   "src/ui/markdown/markdown-links.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 17
+      "count": 16
     }
   },
   "src/ui/markdown/markdown-parse-projection.ts": {
@@ -3586,12 +3586,12 @@
   },
   "src/ui/markdown/markdown-plugins.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 7
+      "count": 6
     }
   },
   "src/ui/markdown/markdown-source-ranges.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 9
+      "count": 7
     }
   },
   "src/ui/markdown/mermaid-images.ts": {
@@ -3631,17 +3631,17 @@
   },
   "tests/cli/session-enqueue-settings.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 128
+      "count": 110
     }
   },
   "tests/cli/session-operating-policy.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 24
+      "count": 21
     }
   },
   "tests/cli/session-parent-steer.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 103
+      "count": 86
     }
   },
   "tests/cli/withmate-glossary-cli-mcp.test.ts": {
@@ -3656,7 +3656,7 @@
   },
   "tests/fixtures/terminal-activity-pty.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 30
+      "count": 23
     }
   },
   "tests/integration/app-settings-subscription.test.ts": {
@@ -3666,7 +3666,7 @@
   },
   "tests/integration/composer-window.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 33
+      "count": 29
     }
   },
   "tests/integration/coordination-ipc.test.ts": {
@@ -3691,62 +3691,62 @@
   },
   "tests/integration/home-crew.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 153
+      "count": 129
     }
   },
   "tests/integration/local-pr-agent-runtime.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 5
+      "count": 4
     }
   },
   "tests/integration/main-ipc-registration.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 387
+      "count": 372
     }
   },
   "tests/integration/managed-http-mcp-host.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 12
+      "count": 11
     }
   },
   "tests/integration/open-path.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 124
+      "count": 109
     }
   },
   "tests/integration/pasted-files.integration.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 28
+      "count": 26
     }
   },
   "tests/integration/preload-api.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 36
+      "count": 28
     }
   },
   "tests/integration/runtime-extension-concurrency.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 11
+      "count": 10
     }
   },
   "tests/integration/session-cancel-running-state.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 24
+      "count": 20
     }
   },
   "tests/integration/session-failed-turn-presentation.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 23
+      "count": 19
     }
   },
   "tests/integration/session-failed-turn-retry.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 28
+      "count": 23
     }
   },
   "tests/integration/session-file-preview-navigation.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 54
+      "count": 46
     }
   },
   "tests/integration/session-instructions-agent-runtime.test.ts": {
@@ -3756,17 +3756,17 @@
   },
   "tests/integration/session-model-discovery.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 28
+      "count": 24
     }
   },
   "tests/integration/session-progressive-loading.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 22
+      "count": 18
     }
   },
   "tests/integration/session-recovery-actions.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 25
+      "count": 21
     }
   },
   "tests/integration/session-role-ipc.test.ts": {
@@ -3776,27 +3776,27 @@
   },
   "tests/integration/session-send-projection.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 64
+      "count": 49
     }
   },
   "tests/integration/session-settings-retry.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 22
+      "count": 18
     }
   },
   "tests/integration/session-window-boundaries.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 33
+      "count": 26
     }
   },
   "tests/integration/session-window-queue-edit.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 43
+      "count": 33
     }
   },
   "tests/integration/session-window-steering.integration.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 32
+      "count": 26
     }
   },
   "tests/integration/settings-ui.test.ts": {
@@ -3826,7 +3826,7 @@
   },
   "tests/main/agent-runtime-discovery.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 17
+      "count": 16
     }
   },
   "tests/main/app-database-bootstrap-worker.test.ts": {
@@ -3851,12 +3851,12 @@
   },
   "tests/main/app-lifecycle-deps.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 15
+      "count": 10
     }
   },
   "tests/main/app-lifecycle-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 163
+      "count": 113
     }
   },
   "tests/main/app-log-service.test.ts": {
@@ -3866,12 +3866,12 @@
   },
   "tests/main/app-login-item.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 11
+      "count": 8
     }
   },
   "tests/main/app-quit-composition.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 41
+      "count": 30
     }
   },
   "tests/main/app-settings-storage.test.ts": {
@@ -3886,7 +3886,7 @@
   },
   "tests/main/aux-window-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 210
+      "count": 120
     }
   },
   "tests/main/auxiliary-custom-agent-operation.test.ts": {
@@ -3901,7 +3901,7 @@
   },
   "tests/main/auxiliary-live-run-parents.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 35
+      "count": 34
     }
   },
   "tests/main/auxiliary-provider-runtime-lifecycle.test.ts": {
@@ -3921,12 +3921,12 @@
   },
   "tests/main/auxiliary-session-storage.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 128
+      "count": 127
     }
   },
   "tests/main/character-authoring-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 98
+      "count": 82
     }
   },
   "tests/main/character-storage.test.ts": {
@@ -3941,12 +3941,12 @@
   },
   "tests/main/claude-adapter.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 73
+      "count": 69
     }
   },
   "tests/main/claude-approval-reviewer.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 21
+      "count": 15
     }
   },
   "tests/main/claude-quota-telemetry.test.ts": {
@@ -3956,7 +3956,7 @@
   },
   "tests/main/codex-adapter.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 148
+      "count": 141
     }
   },
   "tests/main/codex-app-server-interactions.test.ts": {
@@ -3966,7 +3966,7 @@
   },
   "tests/main/codex-app-server-transport.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 24
+      "count": 21
     }
   },
   "tests/main/codex-projection.test.ts": {
@@ -4011,27 +4011,27 @@
   },
   "tests/main/coordination-storage-v7.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 57
+      "count": 50
     }
   },
   "tests/main/coordination-turn-input.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 87
+      "count": 78
     }
   },
   "tests/main/copilot-adapter.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 245
+      "count": 227
     }
   },
   "tests/main/copilot-approval-runtime.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 54
+      "count": 43
     }
   },
   "tests/main/copilot-cancel-lifecycle.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 71
+      "count": 65
     }
   },
   "tests/main/crew-files.test.ts": {
@@ -4071,7 +4071,7 @@
   },
   "tests/main/database-v1-to-v2-migration.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 34
+      "count": 28
     }
   },
   "tests/main/database-v2-to-v3-migration.test.ts": {
@@ -4086,7 +4086,7 @@
   },
   "tests/main/database-v4-to-v6-migration.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 12
+      "count": 11
     }
   },
   "tests/main/draft-flush-coordinator.test.ts": {
@@ -4111,7 +4111,7 @@
   },
   "tests/main/glossary-application-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 64
+      "count": 63
     }
   },
   "tests/main/glossary-runtime-service.test.ts": {
@@ -4131,12 +4131,12 @@
   },
   "tests/main/html-preview-mount-ipc.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 27
+      "count": 24
     }
   },
   "tests/main/html-preview-permissions.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 30
+      "count": 25
     }
   },
   "tests/main/html-preview-policy.test.ts": {
@@ -4151,7 +4151,7 @@
   },
   "tests/main/html-preview-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 55
+      "count": 47
     }
   },
   "tests/main/identity-bound-directory-listing.test.ts": {
@@ -4186,22 +4186,22 @@
   },
   "tests/main/local-pr-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 29
+      "count": 27
     }
   },
   "tests/main/main-bootstrap-deps.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 157
+      "count": 142
     }
   },
   "tests/main/main-bootstrap-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 11
+      "count": 6
     }
   },
   "tests/main/main-broadcast-facade.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 23
+      "count": 18
     }
   },
   "tests/main/main-infrastructure-registry.test.ts": {
@@ -4211,47 +4211,47 @@
   },
   "tests/main/main-ipc-deps.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 190
+      "count": 138
     }
   },
   "tests/main/main-log-composition.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 6
+      "count": 4
     }
   },
   "tests/main/main-observability-facade.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 63
+      "count": 45
     }
   },
   "tests/main/main-provider-facade.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 29
+      "count": 21
     }
   },
   "tests/main/main-query-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 94
+      "count": 81
     }
   },
   "tests/main/main-session-command-facade.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 476
+      "count": 427
     }
   },
   "tests/main/main-session-persistence-facade.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 13
+      "count": 9
     }
   },
   "tests/main/main-session-turn-queue-facade.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 33
+      "count": 31
     }
   },
   "tests/main/main-window-facade.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 29
+      "count": 19
     }
   },
   "tests/main/managed-glossary-skill-service.test.ts": {
@@ -4271,7 +4271,7 @@
   },
   "tests/main/markdown-link-context-menu-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 16
+      "count": 14
     }
   },
   "tests/main/mate-instruction-projection.test.ts": {
@@ -4331,7 +4331,7 @@
   },
   "tests/main/opencode-adapter.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 79
+      "count": 73
     }
   },
   "tests/main/opencode-environment.test.ts": {
@@ -4351,7 +4351,7 @@
   },
   "tests/main/opencode-transport.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 16
+      "count": 14
     }
   },
   "tests/main/pasted-session-files.test.ts": {
@@ -4366,7 +4366,7 @@
   },
   "tests/main/persistent-store-lifecycle-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 369
+      "count": 274
     }
   },
   "tests/main/persistent-store-owner-guard.test.ts": {
@@ -4446,7 +4446,7 @@
   },
   "tests/main/provider-support.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 28
+      "count": 22
     }
   },
   "tests/main/provider-token-usage.test.ts": {
@@ -4496,12 +4496,12 @@
   },
   "tests/main/session-delayed-delivery.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 36
+      "count": 31
     }
   },
   "tests/main/session-delete-postcommit.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 47
+      "count": 43
     }
   },
   "tests/main/session-directory-worker.test.ts": {
@@ -4516,52 +4516,52 @@
   },
   "tests/main/session-execution-options-runtime.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 83
+      "count": 59
     }
   },
   "tests/main/session-execution-read.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 92
+      "count": 89
     }
   },
   "tests/main/session-file-explorer-context.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 12
+      "count": 11
     }
   },
   "tests/main/session-file-explorer-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 147
+      "count": 106
     }
   },
   "tests/main/session-file-object-copy-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 48
+      "count": 31
     }
   },
   "tests/main/session-file-pins.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 24
+      "count": 20
     }
   },
   "tests/main/session-file-preview-context-menu.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 13
+      "count": 9
     }
   },
   "tests/main/session-file-preview-image-copy-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 32
+      "count": 30
     }
   },
   "tests/main/session-file-preview-windows.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 48
+      "count": 34
     }
   },
   "tests/main/session-file-tree-context-menu-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 26
+      "count": 23
     }
   },
   "tests/main/session-files.test.ts": {
@@ -4586,12 +4586,12 @@
   },
   "tests/main/session-html-preview-reader.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 12
+      "count": 9
     }
   },
   "tests/main/session-image-loading.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 10
+      "count": 7
     }
   },
   "tests/main/session-incarnation-migration.test.ts": {
@@ -4606,7 +4606,7 @@
   },
   "tests/main/session-launch-selection-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 35
+      "count": 34
     }
   },
   "tests/main/session-lifecycle-files.test.ts": {
@@ -4621,7 +4621,7 @@
   },
   "tests/main/session-management-application.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 49
+      "count": 37
     }
   },
   "tests/main/session-management-runtime.test.ts": {
@@ -4631,7 +4631,7 @@
   },
   "tests/main/session-management-saved-reads.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 26
+      "count": 25
     }
   },
   "tests/main/session-metadata.test.ts": {
@@ -4641,12 +4641,12 @@
   },
   "tests/main/session-monitor-context-menu-ipc.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 19
+      "count": 16
     }
   },
   "tests/main/session-monitor-context-menu-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 79
+      "count": 58
     }
   },
   "tests/main/session-monitor-query.test.ts": {
@@ -4661,12 +4661,12 @@
   },
   "tests/main/session-pdf-loading.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 6
+      "count": 4
     }
   },
   "tests/main/session-persistence-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 684
+      "count": 449
     }
   },
   "tests/main/session-provider-id-sql.test.ts": {
@@ -4691,7 +4691,7 @@
   },
   "tests/main/session-running-turn-start-persistence.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 34
+      "count": 32
     }
   },
   "tests/main/session-running-turn-start-runtime.test.ts": {
@@ -4706,22 +4706,22 @@
   },
   "tests/main/session-runtime-fixture.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 12
+      "count": 9
     }
   },
   "tests/main/session-runtime-metadata-worker.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 7
+      "count": 6
     }
   },
   "tests/main/session-runtime-parallel.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 39
+      "count": 34
     }
   },
   "tests/main/session-runtime-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 1644
+      "count": 1061
     }
   },
   "tests/main/session-runtime-storage.test.ts": {
@@ -4766,12 +4766,12 @@
   },
   "tests/main/session-turn-admission.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 79
+      "count": 74
     }
   },
   "tests/main/session-turn-notification-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 126
+      "count": 113
     }
   },
   "tests/main/session-turn-queue-edit-ipc.test.ts": {
@@ -4781,12 +4781,12 @@
   },
   "tests/main/session-turn-queue-edit.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 56
+      "count": 52
     }
   },
   "tests/main/session-turn-queue-runtime.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 198
+      "count": 163
     }
   },
   "tests/main/session-turn-queue-service.test.ts": {
@@ -4801,7 +4801,7 @@
   },
   "tests/main/session-turn-queue-target-storage.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 18
+      "count": 17
     }
   },
   "tests/main/session-turn-service.test.ts": {
@@ -4826,17 +4826,17 @@
   },
   "tests/main/session-window-bridge.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 463
+      "count": 329
     }
   },
   "tests/main/session-window-restore-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 173
+      "count": 133
     }
   },
   "tests/main/settings-catalog-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 455
+      "count": 332
     }
   },
   "tests/main/shared-session-directories.test.ts": {
@@ -4881,7 +4881,7 @@
   },
   "tests/main/terminal-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 79
+      "count": 64
     }
   },
   "tests/main/text-blob-store.test.ts": {
@@ -4901,7 +4901,7 @@
   },
   "tests/main/visual-check-launcher.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 15
+      "count": 13
     }
   },
   "tests/main/window-broadcast-service.test.ts": {
@@ -4911,12 +4911,12 @@
   },
   "tests/main/window-dialog-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 6
+      "count": 4
     }
   },
   "tests/main/window-entry-loader.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 9
+      "count": 7
     }
   },
   "tests/main/window-placement.test.ts": {
@@ -4926,12 +4926,12 @@
   },
   "tests/main/windows-file-drop-clipboard-writer.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 31
+      "count": 30
     }
   },
   "tests/main/withmate-approval-review.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 38
+      "count": 36
     }
   },
   "tests/main/workspace-diff-policy.test.ts": {
@@ -4941,7 +4941,7 @@
   },
   "tests/main/workspace-directory-validation-service.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 14
+      "count": 11
     }
   },
   "tests/renderer/a11y.test.ts": {
@@ -4961,7 +4961,7 @@
   },
   "tests/renderer/app-glossary-search-revision.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 37
+      "count": 35
     }
   },
   "tests/renderer/assistant-file-reference-links.test.tsx": {
@@ -4971,7 +4971,7 @@
   },
   "tests/renderer/auxiliary-fresh-draft.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 27
+      "count": 23
     }
   },
   "tests/renderer/auxiliary-launch-reconciliation.test.ts": {
@@ -4986,7 +4986,7 @@
   },
   "tests/renderer/auxiliary-operation-owners.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 72
+      "count": 68
     }
   },
   "tests/renderer/auxiliary-session-message-projection.test.ts": {
@@ -5001,7 +5001,7 @@
   },
   "tests/renderer/auxiliary-workspace.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 142
+      "count": 138
     }
   },
   "tests/renderer/boot-app.test.tsx": {
@@ -5021,7 +5021,7 @@
   },
   "tests/renderer/character-editor-app.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 97
+      "count": 60
     }
   },
   "tests/renderer/character-editor-state.test.ts": {
@@ -5041,7 +5041,7 @@
   },
   "tests/renderer/chat-layout-preference.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 11
+      "count": 7
     }
   },
   "tests/renderer/chat-session-modals.test.tsx": {
@@ -5061,7 +5061,7 @@
   },
   "tests/renderer/chat-window.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 318
+      "count": 245
     }
   },
   "tests/renderer/composer-attachment-menu.test.tsx": {
@@ -5081,7 +5081,7 @@
   },
   "tests/renderer/composer-draft-handlers.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 32
+      "count": 27
     }
   },
   "tests/renderer/composer-image-reference.test.ts": {
@@ -5101,17 +5101,17 @@
   },
   "tests/renderer/composer-preview-resolution.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 5
+      "count": 4
     }
   },
   "tests/renderer/composer-preview-stale-errors.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 8
+      "count": 6
     }
   },
   "tests/renderer/composer-textarea-focus.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 12
+      "count": 8
     }
   },
   "tests/renderer/conversation-attention.test.ts": {
@@ -5121,7 +5121,7 @@
   },
   "tests/renderer/conversation-message-column.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 375
+      "count": 358
     }
   },
   "tests/renderer/conversation-query-pages.test.tsx": {
@@ -5131,7 +5131,7 @@
   },
   "tests/renderer/conversation-response-handoff.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 25
+      "count": 22
     }
   },
   "tests/renderer/conversation-runtime-projection.test.ts": {
@@ -5161,12 +5161,12 @@
   },
   "tests/renderer/coordination-pane.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 60
+      "count": 52
     }
   },
   "tests/renderer/crew-deletion-dialog.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 18
+      "count": 12
     }
   },
   "tests/renderer/custom-agent-picker.test.tsx": {
@@ -5201,12 +5201,12 @@
   },
   "tests/renderer/file-preview-window-title.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 61
+      "count": 37
     }
   },
   "tests/renderer/file-root-changes-group.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 21
+      "count": 19
     }
   },
   "tests/renderer/file-root-git-history-filter.test.tsx": {
@@ -5216,7 +5216,7 @@
   },
   "tests/renderer/file-root-git-history-pane.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 157
+      "count": 153
     }
   },
   "tests/renderer/home-app.test.tsx": {
@@ -5231,12 +5231,12 @@
   },
   "tests/renderer/home-components.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 131
+      "count": 129
     }
   },
   "tests/renderer/home-crew.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 32
+      "count": 31
     }
   },
   "tests/renderer/home-dashboard.test.tsx": {
@@ -5306,7 +5306,7 @@
   },
   "tests/renderer/home-monitor-splitter.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 107
+      "count": 90
     }
   },
   "tests/renderer/home-monitor-style.test.ts": {
@@ -5356,7 +5356,7 @@
   },
   "tests/renderer/home-session-window-restore-recovery.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 43
+      "count": 35
     }
   },
   "tests/renderer/home-session-window-restore.test.ts": {
@@ -5386,12 +5386,12 @@
   },
   "tests/renderer/html-preview.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 20
+      "count": 12
     }
   },
   "tests/renderer/image-resource-loader.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 22
+      "count": 14
     }
   },
   "tests/renderer/image-viewport-wheel.test.tsx": {
@@ -5426,12 +5426,12 @@
   },
   "tests/renderer/live-request-surface.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 107
+      "count": 79
     }
   },
   "tests/renderer/local-pr-window.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 15
+      "count": 12
     }
   },
   "tests/renderer/main-execution-options-selection.test.ts": {
@@ -5496,7 +5496,7 @@
   },
   "tests/renderer/message-rich-text.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 111
+      "count": 109
     }
   },
   "tests/renderer/message-text-actions.test.ts": {
@@ -5531,7 +5531,7 @@
   },
   "tests/renderer/paged-message-navigator.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 42
+      "count": 28
     }
   },
   "tests/renderer/pasted-file-replacement.test.tsx": {
@@ -5566,7 +5566,7 @@
   },
   "tests/renderer/renderer-withmate-api.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 5
+      "count": 4
     }
   },
   "tests/renderer/reply-location.test.ts": {
@@ -5591,17 +5591,17 @@
   },
   "tests/renderer/session-app-render.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 3
+      "count": 2
     }
   },
   "tests/renderer/session-chat-layout-hooks.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 51
+      "count": 50
     }
   },
   "tests/renderer/session-chat-projection.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 70
+      "count": 66
     }
   },
   "tests/renderer/session-composer-feedback.test.ts": {
@@ -5616,7 +5616,7 @@
   },
   "tests/renderer/session-composer-paths.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 37
+      "count": 29
     }
   },
   "tests/renderer/session-composer-selection.test.ts": {
@@ -5646,17 +5646,17 @@
   },
   "tests/renderer/session-file-explorer-pane.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 115
+      "count": 72
     }
   },
   "tests/renderer/session-file-pins.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 45
+      "count": 36
     }
   },
   "tests/renderer/session-file-preview-image-lifecycle.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 289
+      "count": 186
     }
   },
   "tests/renderer/session-file-preview-pdf.test.tsx": {
@@ -5666,12 +5666,12 @@
   },
   "tests/renderer/session-folder-cleanup.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 34
+      "count": 22
     }
   },
   "tests/renderer/session-glossary-pane.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 16
+      "count": 10
     }
   },
   "tests/renderer/session-instructions-control.test.tsx": {
@@ -5686,7 +5686,7 @@
   },
   "tests/renderer/session-message-bookmark-operation.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 19
+      "count": 17
     }
   },
   "tests/renderer/session-message-collapse.test.ts": {
@@ -5696,12 +5696,12 @@
   },
   "tests/renderer/session-message-column.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 482
+      "count": 368
     }
   },
   "tests/renderer/session-message-navigator.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 5
+      "count": 4
     }
   },
   "tests/renderer/session-origin-presentation.test.tsx": {
@@ -5721,17 +5721,17 @@
   },
   "tests/renderer/session-role-change.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 15
+      "count": 11
     }
   },
   "tests/renderer/session-run-actions.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 15
+      "count": 14
     }
   },
   "tests/renderer/session-shell-handlers.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 261
+      "count": 257
     }
   },
   "tests/renderer/session-state.test.ts": {
@@ -5741,7 +5741,7 @@
   },
   "tests/renderer/session-steer-origin.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 13
+      "count": 12
     }
   },
   "tests/renderer/session-submit-coordinator.test.ts": {
@@ -5766,7 +5766,7 @@
   },
   "tests/renderer/session-terminal.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 96
+      "count": 73
     }
   },
   "tests/renderer/session-title-update.test.tsx": {
@@ -5776,17 +5776,17 @@
   },
   "tests/renderer/session-turn-queue-reorder.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 28
+      "count": 20
     }
   },
   "tests/renderer/session-turn-queue-subscription.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 31
+      "count": 28
     }
   },
   "tests/renderer/session-turn-queue.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 129
+      "count": 102
     }
   },
   "tests/renderer/session-ui-projection.test.ts": {
@@ -5846,7 +5846,7 @@
   },
   "tests/renderer/use-home-session-summary-refresh.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 19
+      "count": 18
     }
   },
   "tests/renderer/use-message-view-transition.test.tsx": {
@@ -5876,7 +5876,7 @@
   },
   "tests/renderer/workspace-changes-pane.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 54
+      "count": 48
     }
   },
   "tests/shared/additional-directory-state.test.ts": {
@@ -5906,7 +5906,7 @@
   },
   "tests/shared/auxiliary-skill-prompt-operation.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 12
+      "count": 11
     }
   },
   "tests/shared/character-definition-format.test.ts": {
@@ -5986,12 +5986,12 @@
   },
   "tests/shared/prompt-template-workspace.test.tsx": {
     "jsdoc/require-jsdoc": {
-      "count": 46
+      "count": 44
     }
   },
   "tests/shared/provider-payload-limits.test.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 15
+      "count": 11
     }
   },
   "tests/shared/rendered-text-search.test.ts": {
@@ -6026,7 +6026,7 @@
   },
   "tests/support/intersection-observer.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 10
+      "count": 9
     }
   },
   "tests/support/read-stylesheet.ts": {
@@ -6036,7 +6036,7 @@
   },
   "vite.pdf-reader.config.ts": {
     "jsdoc/require-jsdoc": {
-      "count": 2
+      "count": 1
     }
   }
 }

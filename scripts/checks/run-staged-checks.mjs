@@ -27,6 +27,8 @@ if (!git(["diff", "--cached", "--name-only", "-z", "--", ":(exclude,glob)**/*.md
     const env = { ...process.env };
     for (const key of git(["rev-parse", "--local-env-vars"]).trim().split(/\s+/)) delete env[key];
     delete env.NODE_TEST_CONTEXT;
+    delete env.TEST_SHARD_INDEX;
+    delete env.TEST_SHARD_TOTAL;
     const options = { cwd: snapshot, env, stdio: "inherit" };
     // lint は CI と同じ npm コマンド、テスト選択は Git の pathspec と Node の runner を使う。
     execFileSync(process.execPath, [process.env.npm_execpath, "run", "lint"], options);
