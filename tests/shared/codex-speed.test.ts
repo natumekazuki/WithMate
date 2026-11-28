@@ -9,6 +9,7 @@ import {
 } from "../../src-shared/settings/codex-speed.js";
 import { buildRuntimeSelectionOptions } from "../../src/settings/runtime-selection-options.js";
 
+/** 保存された Speed、Codex の実行値、選択 UI の対応がプロバイダー別に整合することを確認する。 */
 describe("Codex speed runtime option", () => {
   // @test-value v2
   // kind = "invariant"
@@ -20,6 +21,7 @@ describe("Codex speed runtime option", () => {
   // scope = "codex-speed"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 未設定と未知の Speed を Standard として扱い、Codex のサービス階層に変換できることと、対応するプロバイダーだけに Speed 候補があることを確認する。 */
   it("normalizer・service tier写像・provider別optionsを一貫して返す", () => {
     assert.equal(DEFAULT_CODEX_SPEED, "standard");
     assert.equal(normalizeCodexSpeed(undefined), "standard");
@@ -48,6 +50,7 @@ describe("Codex speed runtime option", () => {
   // scope = "runtime-selection-options"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 共有選択データでは Codex と Claude に Standard／Fast が並び、非対応の Copilot に候補が出ないことを確認する。 */
   it("shared runtime selectionではCodexとClaudeのSpeed optionsを公開する", () => {
     const common = {
       providerCatalog: null,
@@ -58,14 +61,26 @@ describe("Codex speed runtime option", () => {
       selectedCodexSpeed: "fast" as const,
     };
 
-    assert.deepEqual(buildRuntimeSelectionOptions({ ...common, providerId: "copilot" }).speedSelectOptions, []);
-    assert.deepEqual(buildRuntimeSelectionOptions({ ...common, providerId: "claude" }).speedSelectOptions, [
-      { value: "standard", label: "Standard" },
-      { value: "fast", label: "Fast" },
-    ]);
-    assert.deepEqual(buildRuntimeSelectionOptions({ ...common, providerId: "codex" }).speedSelectOptions, [
-      { value: "standard", label: "Standard" },
-      { value: "fast", label: "Fast" },
-    ]);
+    assert.deepEqual(
+      buildRuntimeSelectionOptions({ ...common, providerId: "copilot" })
+        .speedSelectOptions,
+      [],
+    );
+    assert.deepEqual(
+      buildRuntimeSelectionOptions({ ...common, providerId: "claude" })
+        .speedSelectOptions,
+      [
+        { value: "standard", label: "Standard" },
+        { value: "fast", label: "Fast" },
+      ],
+    );
+    assert.deepEqual(
+      buildRuntimeSelectionOptions({ ...common, providerId: "codex" })
+        .speedSelectOptions,
+      [
+        { value: "standard", label: "Standard" },
+        { value: "fast", label: "Fast" },
+      ],
+    );
   });
 });

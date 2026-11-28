@@ -1,14 +1,26 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  coerceModelSelection, getProviderCatalog, getReasoningEffortOptionsForModel,
-  resolveModelChangeSelection, resolveModelSelection, type ModelCatalogProvider,
+  coerceModelSelection,
+  getProviderCatalog,
+  getReasoningEffortOptionsForModel,
+  resolveModelChangeSelection,
+  resolveModelSelection,
+  type ModelCatalogProvider,
 } from "../../src-shared/settings/model-catalog.js";
 
 const provider: ModelCatalogProvider = {
-  id: "opencode", label: "OpenCode", defaultModelId: "sdk/model", defaultReasoningEffort: "adaptive",
+  id: "opencode",
+  label: "OpenCode",
+  defaultModelId: "sdk/model",
+  defaultReasoningEffort: "adaptive",
   models: [
-    { id: "sdk/model", label: "SDK Model", reasoningEfforts: ["adaptive", "high"], defaultReasoningEffort: "adaptive" },
+    {
+      id: "sdk/model",
+      label: "SDK Model",
+      reasoningEfforts: ["adaptive", "high"],
+      defaultReasoningEffort: "adaptive",
+    },
     { id: "sdk/plain", label: "Plain Model", reasoningEfforts: [] },
   ],
 };
@@ -25,17 +37,26 @@ const provider: ModelCatalogProvider = {
 // impact = "利用者の保存済み実行設定がrefreshによって別modelへ変わる"
 // distinction = "型検査ではprovider間fallbackと保存済み選択の値変更を検出できない"
 // @end-test-value
+/** プロバイダーを完全一致で探し、検出一覧にない保存済みモデルと深度を再解決時に既定値へ置き換えないことを確認する。 */
 test("SDK一覧にない保存済み選択は維持しproviderを混同しない", () => {
   assert.equal(getProviderCatalog([provider], "codex"), null);
   assert.equal(getProviderCatalog([provider], "opencode"), provider);
-  assert.deepEqual(getReasoningEffortOptionsForModel(provider, "retired/model"), []);
+  assert.deepEqual(
+    getReasoningEffortOptionsForModel(provider, "retired/model"),
+    [],
+  );
   for (const resolve of [coerceModelSelection, resolveModelSelection]) {
     assert.deepEqual(resolve(provider, "retired/model", "native-depth"), {
-      requestedModel: "retired/model", resolvedModel: "retired/model",
-      requestedReasoningEffort: "native-depth", resolvedReasoningEffort: "native-depth",
+      requestedModel: "retired/model",
+      resolvedModel: "retired/model",
+      requestedReasoningEffort: "native-depth",
+      resolvedReasoningEffort: "native-depth",
     });
   }
-  assert.throws(() => resolveModelSelection(provider, "", ""), /model must be selected/);
+  assert.throws(
+    () => resolveModelSelection(provider, "", ""),
+    /model must be selected/,
+  );
 });
 
 // @test-value v2
@@ -50,9 +71,25 @@ test("SDK一覧にない保存済み選択は維持しproviderを混同しない
 // impact = "model切替直後にSDKが受け付けない実行オプションを生成する"
 // distinction = "型とschemaはSDKのmodelごとのdepth集合と既定値の選択を保証しない"
 // @end-test-value
+/** 明示的にモデルを切り替えるとき、対応深度は保持し、非対応深度には移行先の既定値または深度なしを使い、未知のモデルは拒否する。 */
 test("明示model切替はそのmodelのSDK depth契約を採用する", () => {
-  assert.equal(resolveModelChangeSelection(provider, "sdk/model", "high").resolvedReasoningEffort, "high");
-  assert.equal(resolveModelChangeSelection(provider, "sdk/model", "other").resolvedReasoningEffort, "adaptive");
-  assert.equal(resolveModelChangeSelection(provider, "sdk/plain", "high").resolvedReasoningEffort, "");
-  assert.throws(() => resolveModelChangeSelection(provider, "unknown", "high"), /not in the discovered model list/);
+  assert.equal(
+    resolveModelChangeSelection(provider, "sdk/model", "high")
+      .resolvedReasoningEffort,
+    "high",
+  );
+  assert.equal(
+    resolveModelChangeSelection(provider, "sdk/model", "other")
+      .resolvedReasoningEffort,
+    "adaptive",
+  );
+  assert.equal(
+    resolveModelChangeSelection(provider, "sdk/plain", "high")
+      .resolvedReasoningEffort,
+    "",
+  );
+  assert.throws(
+    () => resolveModelChangeSelection(provider, "unknown", "high"),
+    /not in the discovered model list/,
+  );
 });

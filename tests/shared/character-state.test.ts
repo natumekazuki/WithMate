@@ -6,7 +6,10 @@ import {
   type CharacterProfile,
 } from "../../src-shared/character/character-state.js";
 
-function createCharacter(partial?: Partial<CharacterProfile>): CharacterProfile {
+/** 一部の値だけを上書きできる Character profile を、比較用の既定テーマ入りで作る。 */
+function createCharacter(
+  partial?: Partial<CharacterProfile>,
+): CharacterProfile {
   return {
     id: "char-1",
     name: "Mia",
@@ -23,6 +26,7 @@ function createCharacter(partial?: Partial<CharacterProfile>): CharacterProfile 
   };
 }
 
+/** 表示用 profile を複製した後の値と参照の分離を確認する。 */
 describe("character-state", () => {
   // @test-value v2
   // kind = "contract"
@@ -36,6 +40,7 @@ describe("character-state", () => {
   // impact = "character表示値またはテーマが別sessionの操作で汚染される"
   // distinction = "profileの値保持とthemeColorsの参照分離を同時に確認する"
   // @end-test-value
+  /** 複製後も各値は同じだが、元の profile やテーマ色のオブジェクトを共有しないことを確認する。 */
   it("cloneCharacterProfiles は profile を保持して themeColors を deep clone する", () => {
     const source = [createCharacter()];
     const cloned = cloneCharacterProfiles(source);

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createMessageSearchProjection, getMessageSearchMatchSourceRange, iterateMessageSearchMatches, messageSearchSourceRangesCorrespond } from "../../src-shared/session/message-find.js";
+import {
+  createMessageSearchProjection,
+  getMessageSearchMatchSourceRange,
+  iterateMessageSearchMatches,
+  messageSearchSourceRangesCorrespond,
+} from "../../src-shared/session/message-find.js";
 
 // @test-value v2
 // kind = "contract"
@@ -14,15 +19,36 @@ import { createMessageSearchProjection, getMessageSearchMatchSourceRange, iterat
 // impact = "検索件数と次候補移動が重複し、リンク先の一致を見落とす"
 // distinction = "型検査とDOM投影testでは原文と表示の出現対応を検証しない。小さい文字列fixtureで順序と範囲を直接検証する"
 // @end-test-value
+/** プレビューは表示に対応する三つの出現を重ねて数えず、リンク先の原文固有の一致もその位置を失わずに返す。 */
 test("表示と原文の同一出現だけを統合する", () => {
   const text = "**needle** [needle](C:/needle/sample.md) needle";
   const projection = createMessageSearchProjection(text);
-  const matches = [...iterateMessageSearchMatches(projection, "needle", "preview")];
-  assert.deepEqual(matches.map((match) => match.kind), ["rendered", "rendered", "rendered", "source"]);
-  assert.deepEqual(matches.slice(0, 3).map((match) => match.renderedOccurrenceIndex), [0, 1, 2]);
+  const matches = [
+    ...iterateMessageSearchMatches(projection, "needle", "preview"),
+  ];
+  assert.deepEqual(
+    matches.map((match) => match.kind),
+    ["rendered", "rendered", "rendered", "source"],
+  );
+  assert.deepEqual(
+    matches.slice(0, 3).map((match) => match.renderedOccurrenceIndex),
+    [0, 1, 2],
+  );
   assert.equal(matches[3].startOffset, text.indexOf("needle/sample"));
-  assert.deepEqual([...iterateMessageSearchMatches(projection, "sample.md", "preview")], [{ kind: "source", startOffset: text.indexOf("sample.md"), endOffset: text.indexOf("sample.md") + 9 }]);
-  assert.equal([...iterateMessageSearchMatches(projection, "needle", "source")].length, 4);
+  assert.deepEqual(
+    [...iterateMessageSearchMatches(projection, "sample.md", "preview")],
+    [
+      {
+        kind: "source",
+        startOffset: text.indexOf("sample.md"),
+        endOffset: text.indexOf("sample.md") + 9,
+      },
+    ],
+  );
+  assert.equal(
+    [...iterateMessageSearchMatches(projection, "needle", "source")].length,
+    4,
+  );
 });
 
 // @test-value v2
@@ -37,6 +63,7 @@ test("表示と原文の同一出現だけを統合する", () => {
 // impact = "一般的な引用・コード・脚注を検索すると件数と対象箇所がずれる"
 // distinction = "rendererとの文字列一致testは原文位置を観測しない。parser変換の境界だけを小さい表で検証する"
 // @end-test-value
+/** 引用・コード・脚注・属性などで構造が変わる Markdown でも表示と原文を対応付け、実体参照の別の原文一致は残す。 */
 test("変換されたMarkdownの元出現を対応付ける", () => {
   for (const [text, query, kinds] of [
     ["> alpha\n> needle", "needle", ["rendered"]],
@@ -58,7 +85,11 @@ test("変換されたMarkdownの元出現を対応付ける", () => {
     ["---\nkey: 'needle needle'\n---", "needle", ["rendered", "rendered"]],
     ["---\nkey: 'C:\\needle'\n---", "needle", ["rendered"]],
     ["---\r\nkey: [needle]\r\n---", "needle", ["rendered"]],
-    ["needle[^b]\n\n[^a]: needle\n[^b]: needle", "needle", ["rendered", "rendered", "source"]],
+    [
+      "needle[^b]\n\n[^a]: needle\n[^b]: needle",
+      "needle",
+      ["rendered", "rendered", "source"],
+    ],
     ["![needle](needle.png)", "needle", ["source", "source"]],
     ["```mermaid\nneedle\n```", "needle", ["source"]],
     ["$needle$", "needle", ["rendered"]],
@@ -67,19 +98,62 @@ test("変換されたMarkdownの元出現を対応付ける", () => {
     ["```Math\nneedle\n```", "needle", ["rendered"]],
     ["needle<br>needle", "needle", ["rendered", "rendered"]],
     ["needle<br>needle", "br", ["source"]],
-    ['needle<br class="needle">needle', "needle", ["rendered", "rendered", "rendered"]],
-    ['visualize{"title":"needle.html","path":"C:/needle.html"}', "needle", ["rendered", "source"]],
-    ['visualize{"path":"file:///work/needle%20test.html"}', "needle", ["rendered"]],
-    [String.raw`:codex-file-citation{path="/work/a\q\"needle.md"}`, "needle", ["rendered"]],
-    [String.raw`:codex-file-citation{path="/work/a\q\"needle.md"}`, String.raw`\q`, ["rendered"]],
-    [String.raw`:codex-file-citation{path="/work/a\q\"needle.md"}`, '"', ["rendered", "source", "source"]],
-    [String.raw`:codex-file-citation{path="C:\\work\\a\q\"needle.md"}`, "needle", ["rendered"]],
-    [String.raw`:codex-file-citation{path="/work/a\\needle.md"}`, String.raw`\\`, ["rendered"]],
+    [
+      'needle<br class="needle">needle',
+      "needle",
+      ["rendered", "rendered", "rendered"],
+    ],
+    [
+      'visualize{"title":"needle.html","path":"C:/needle.html"}',
+      "needle",
+      ["rendered", "source"],
+    ],
+    [
+      'visualize{"path":"file:///work/needle%20test.html"}',
+      "needle",
+      ["rendered"],
+    ],
+    [
+      String.raw`:codex-file-citation{path="/work/a\q\"needle.md"}`,
+      "needle",
+      ["rendered"],
+    ],
+    [
+      String.raw`:codex-file-citation{path="/work/a\q\"needle.md"}`,
+      String.raw`\q`,
+      ["rendered"],
+    ],
+    [
+      String.raw`:codex-file-citation{path="/work/a\q\"needle.md"}`,
+      '"',
+      ["rendered", "source", "source"],
+    ],
+    [
+      String.raw`:codex-file-citation{path="C:\\work\\a\q\"needle.md"}`,
+      "needle",
+      ["rendered"],
+    ],
+    [
+      String.raw`:codex-file-citation{path="/work/a\\needle.md"}`,
+      String.raw`\\`,
+      ["rendered"],
+    ],
   ] as const) {
-    const matches = [...iterateMessageSearchMatches(createMessageSearchProjection(text, "codex"), query, "preview")];
-    assert.deepEqual(matches.map((match) => match.kind), kinds, text);
+    const matches = [
+      ...iterateMessageSearchMatches(
+        createMessageSearchProjection(text, "codex"),
+        query,
+        "preview",
+      ),
+    ];
+    assert.deepEqual(
+      matches.map((match) => match.kind),
+      kinds,
+      text,
+    );
     if (text === "&amp;amp;") assert.equal(matches[1].startOffset, 1);
-    if (text.includes('"title"')) assert.equal(matches[1].startOffset, text.indexOf("needle"));
+    if (text.includes('"title"'))
+      assert.equal(matches[1].startOffset, text.indexOf("needle"));
   }
 });
 
@@ -95,6 +169,7 @@ test("変換されたMarkdownの元出現を対応付ける", () => {
 // impact = "表示切替で同じmessage内の別出現が選ばれる"
 // distinction = "既存の件数testは選択維持に使う範囲を観測しない。小さいparser fixtureで変換境界を検証する"
 // @end-test-value
+/** 原文へ連続して対応する一致と、生成文字や離れた区間をまたぐ一致を区別する。原文範囲の包含は同一出現とみなし、一部が重なるだけの範囲は区別する。 */
 test("検索結果の原文範囲は連続対応できる出現だけを返す", () => {
   for (const [text, query, expected] of [
     ["**needle** needle", "needle", ["needle", "needle"]],
@@ -103,26 +178,57 @@ test("検索結果の原文範囲は連続対応できる出現だけを返す",
     ["a**b**", "ab", [undefined]],
     ["first<br>second", "firstsecond", [undefined]],
     ["main[^a][^b]\n\n[^a]: needle\n[^b]: body", "needle b", [undefined]],
-    ["needle[^b]\n\n[^a]: needle\n[^b]: needle", "needle", ["needle", "needle", "needle"]],
+    [
+      "needle[^b]\n\n[^a]: needle\n[^b]: needle",
+      "needle",
+      ["needle", "needle", "needle"],
+    ],
   ] as const) {
     const projection = createMessageSearchProjection(text);
-    const matches = [...iterateMessageSearchMatches(projection, query, "preview")];
-    assert.deepEqual(matches.map((match) => {
-      const range = getMessageSearchMatchSourceRange(projection, match);
-      return range && text.slice(range.startOffset, range.endOffset);
-    }), expected, text);
+    const matches = [
+      ...iterateMessageSearchMatches(projection, query, "preview"),
+    ];
+    assert.deepEqual(
+      matches.map((match) => {
+        const range = getMessageSearchMatchSourceRange(projection, match);
+        return range && text.slice(range.startOffset, range.endOffset);
+      }),
+      expected,
+      text,
+    );
     if (text === "**needle** needle") {
-      assert.deepEqual(matches.map((match) => getMessageSearchMatchSourceRange(projection, match)), [
-        { startOffset: 2, endOffset: 8 }, { startOffset: 11, endOffset: 17 },
-      ]);
+      assert.deepEqual(
+        matches.map((match) =>
+          getMessageSearchMatchSourceRange(projection, match),
+        ),
+        [
+          { startOffset: 2, endOffset: 8 },
+          { startOffset: 11, endOffset: 17 },
+        ],
+      );
     }
     if (text.startsWith("needle[^b]")) {
-      assert.deepEqual(matches.map((match) => getMessageSearchMatchSourceRange(projection, match)?.startOffset), [0, text.lastIndexOf("needle"), text.indexOf("needle", 1)]);
+      assert.deepEqual(
+        matches.map(
+          (match) =>
+            getMessageSearchMatchSourceRange(projection, match)?.startOffset,
+        ),
+        [0, text.lastIndexOf("needle"), text.indexOf("needle", 1)],
+      );
     }
   }
-  const projection = createMessageSearchProjection("[label](needle)", undefined, "source");
-  const match = [...iterateMessageSearchMatches(projection, "needle", "source")][0];
-  assert.deepEqual(getMessageSearchMatchSourceRange(projection, match), { startOffset: 8, endOffset: 14 });
+  const projection = createMessageSearchProjection(
+    "[label](needle)",
+    undefined,
+    "source",
+  );
+  const match = [
+    ...iterateMessageSearchMatches(projection, "needle", "source"),
+  ][0];
+  assert.deepEqual(getMessageSearchMatchSourceRange(projection, match), {
+    startOffset: 8,
+    endOffset: 14,
+  });
   const tokenRange = { startOffset: 10, endOffset: 15 };
   for (const [range, expected] of [
     [{ startOffset: 10, endOffset: 15 }, true],
@@ -132,7 +238,13 @@ test("検索結果の原文範囲は連続対応できる出現だけを返す",
     [{ startOffset: 14, endOffset: 16 }, false],
     [{ startOffset: 15, endOffset: 16 }, false],
   ] as const) {
-    assert.equal(messageSearchSourceRangesCorrespond(tokenRange, range), expected);
-    assert.equal(messageSearchSourceRangesCorrespond(range, tokenRange), expected);
+    assert.equal(
+      messageSearchSourceRangesCorrespond(tokenRange, range),
+      expected,
+    );
+    assert.equal(
+      messageSearchSourceRangesCorrespond(range, tokenRange),
+      expected,
+    );
   }
 });

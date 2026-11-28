@@ -7,14 +7,18 @@ import type {
 } from "../../src-shared/window/app-log-types.js";
 import { sanitizeRendererLogInput } from "./renderer-log-input.js";
 
+/** Main の診断イベントから共通のアプリログへ渡す入力。 */
 type LogInput = AppLogInput;
 
+/** Electron とプロセスの診断イベントをアプリログに接続し、renderer 入力を保存前に検証する。 */
 export class MainLogComposition {
+  /** アプリログの出力先と、未知の例外値をログ用に変換する関数を受け取る。 */
   public constructor(
     private readonly writeLog: (input: LogInput) => void,
     private readonly errorToLogError: (error: unknown) => AppLogError,
   ) {}
 
+  /** Electron のダンプ先を優先し、取得できなければ userData 配下の Crashpad を使う。 */
   public resolveCrashDumpsPath(): string {
     try {
       return app.getPath("crashDumps");
@@ -22,6 +26,7 @@ export class MainLogComposition {
       return path.join(app.getPath("userData"), "Crashpad");
     }
   }
+  /** ダンプを送信しない設定でクラッシュ報告を開始し、成否と診断用の保存先を記録する。 */
   public startCrashReporter(crashDumpsPath: string): void {
     try {
       crashReporter.start({ uploadToServer: false });
@@ -43,6 +48,7 @@ export class MainLogComposition {
       });
     }
   }
+  /** Main の未捕捉例外・未処理の拒否と、Electron 子プロセスの終了を記録する。 */
   public registerProcessLogHandlers(): void {
     process.on("uncaughtExceptionMonitor", (error) =>
       this.writeLog({
@@ -81,7 +87,9 @@ export class MainLogComposition {
       }),
     );
   }
+  /** ウィンドウの存続、応答状態、renderer の終了とナビゲーションを windowId で照合できるよう記録する。 */
   public attachWindowLogHandlers = (window: BrowserWindow): void => {
+    /** このウィンドウの各イベントで組み立てた診断情報を共通の出力先に渡す。 */
     const write = (input: LogInput) => this.writeLog(input);
     write({
       level: "info",
@@ -161,6 +169,7 @@ export class MainLogComposition {
       },
     );
   };
+  /** IPC の失敗をチャンネル、所要時間、与えられた要求 ID と共に記録する。 */
   public writeIpcErrorLog = (input: {
     channel: string;
     durationMs: number;
@@ -181,6 +190,7 @@ export class MainLogComposition {
       },
       error: this.errorToLogError(input.error),
     });
+  /** 不正な renderer ログを破棄し、検証済みの内容と Main 側で特定した windowId を記録する。 */
   public writeRendererLog = (
     input: RendererLogInput,
     windowId?: number,

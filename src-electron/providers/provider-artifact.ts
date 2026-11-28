@@ -1,12 +1,32 @@
-import type { MessageOperation, ProviderUsage, ChangedFile, DiffRow, RunCheck } from "../../src-shared/session/runtime-state.js";
-import type { MessageArtifact, Session } from "../../src-shared/session/session-state.js";
+import type {
+  MessageOperation,
+  ProviderUsage,
+  ChangedFile,
+  DiffRow,
+  RunCheck,
+} from "../../src-shared/session/runtime-state.js";
+import type {
+  MessageArtifact,
+  Session,
+} from "../../src-shared/session/session-state.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import { reasoningEffortLabel, type ModelCatalogProvider, type ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
-import type { SnapshotCaptureStats, WorkspaceSnapshot } from "../platform/snapshot-ignore.js";
+import {
+  reasoningEffortLabel,
+  type ModelCatalogProvider,
+  type ResolvedModelSelection,
+} from "../../src-shared/settings/model-catalog.js";
+import type {
+  SnapshotCaptureStats,
+  WorkspaceSnapshot,
+} from "../platform/snapshot-ignore.js";
 
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 
-export function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
+/** 差分の種別と対象パスからアクティビティで使う一行の要約を組み立てる。 */
+export function summarizeChangedFile(
+  kind: ChangedFile["kind"],
+  filePath: string,
+): string {
   switch (kind) {
     case "add":
       return `${filePath} created`;
@@ -17,6 +37,7 @@ export function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string
   }
 }
 
+/** 空または未取得の内容をゼロ行と扱い、内容があれば CRLF・LF の両方で分割する。 */
 function toLines(content: string | null): string[] {
   if (!content) {
     return [];
@@ -25,12 +46,23 @@ function toLines(content: string | null): string[] {
   return content.split(/\r?\n/);
 }
 
+/** 変更行を対応付ける前の操作列。共通行は両側、追加と削除は該当する側だけの行番号を持つ。 */
 type RawDiffOp =
-  | { kind: "context"; leftNumber: number; rightNumber: number; leftText: string; rightText: string }
+  | {
+      kind: "context";
+      leftNumber: number;
+      rightNumber: number;
+      leftText: string;
+      rightText: string;
+    }
   | { kind: "delete"; leftNumber: number; leftText: string }
   | { kind: "add"; rightNumber: number; rightText: string };
 
-function buildFallbackDiffRows(beforeLines: string[], afterLines: string[]): DiffRow[] {
+/** 差分行列の上限を超えたときは、行の再整列をせず同じ位置同士を比較する。 */
+function buildFallbackDiffRows(
+  beforeLines: string[],
+  afterLines: string[],
+): DiffRow[] {
   const rows: DiffRow[] = [];
   const maxLength = Math.max(beforeLines.length, afterLines.length);
 
@@ -79,7 +111,11 @@ function buildFallbackDiffRows(beforeLines: string[], afterLines: string[]): Dif
   return rows;
 }
 
-export function buildDiffRows(beforeContent: string | null, afterContent: string | null): DiffRow[] {
+/** 共通行を基準に前後の内容を整列し、同じ変更区間の削除と追加を変更行にまとめる。巨大な入力は位置比較に切り替える。 */
+export function buildDiffRows(
+  beforeContent: string | null,
+  afterContent: string | null,
+): DiffRow[] {
   const beforeLines = toLines(beforeContent);
   const afterLines = toLines(afterContent);
 
@@ -176,13 +212,22 @@ export function buildDiffRows(beforeContent: string | null, afterContent: string
 
     const block: RawDiffOp[] = [];
     let cursor = index;
-    while (cursor < operations.length && operations[cursor].kind !== "context") {
+    while (
+      cursor < operations.length &&
+      operations[cursor].kind !== "context"
+    ) {
       block.push(operations[cursor]);
       cursor += 1;
     }
 
-    const deletes = block.filter((entry): entry is Extract<RawDiffOp, { kind: "delete" }> => entry.kind === "delete");
-    const adds = block.filter((entry): entry is Extract<RawDiffOp, { kind: "add" }> => entry.kind === "add");
+    const deletes = block.filter(
+      (entry): entry is Extract<RawDiffOp, { kind: "delete" }> =>
+        entry.kind === "delete",
+    );
+    const adds = block.filter(
+      (entry): entry is Extract<RawDiffOp, { kind: "add" }> =>
+        entry.kind === "add",
+    );
     const pairedCount = Math.min(deletes.length, adds.length);
 
     for (let pairIndex = 0; pairIndex < pairedCount; pairIndex += 1) {
@@ -195,7 +240,11 @@ export function buildDiffRows(beforeContent: string | null, afterContent: string
       });
     }
 
-    for (let deleteIndex = pairedCount; deleteIndex < deletes.length; deleteIndex += 1) {
+    for (
+      let deleteIndex = pairedCount;
+      deleteIndex < deletes.length;
+      deleteIndex += 1
+    ) {
       rows.push({
         kind: "delete",
         leftNumber: deletes[deleteIndex].leftNumber,
@@ -217,7 +266,11 @@ export function buildDiffRows(beforeContent: string | null, afterContent: string
   return rows;
 }
 
-function inferChangedFileKind(beforeContent: string | null, afterContent: string | null): ChangedFile["kind"] | null {
+/** 両側の内容の有無と一致から追加・削除・編集を区別し、差がなければ null を返す。 */
+function inferChangedFileKind(
+  beforeContent: string | null,
+  afterContent: string | null,
+): ChangedFile["kind"] | null {
   if (beforeContent === null && afterContent !== null) {
     return "add";
   }
@@ -226,22 +279,36 @@ function inferChangedFileKind(beforeContent: string | null, afterContent: string
     return "delete";
   }
 
-  if (beforeContent !== null && afterContent !== null && beforeContent !== afterContent) {
+  if (
+    beforeContent !== null &&
+    afterContent !== null &&
+    beforeContent !== afterContent
+  ) {
     return "edit";
   }
 
   return null;
 }
 
-function compareSnapshotChanges(beforeSnapshot: WorkspaceSnapshot, afterSnapshot: WorkspaceSnapshot): Array<{
+/** どちらかのスナップショットに含まれる全パスを調べ、変更があるものだけをパス順で返す。 */
+function compareSnapshotChanges(
+  beforeSnapshot: WorkspaceSnapshot,
+  afterSnapshot: WorkspaceSnapshot,
+): Array<{
   path: string;
   kind: ChangedFile["kind"];
 }> {
-  const paths = new Set<string>([...beforeSnapshot.keys(), ...afterSnapshot.keys()]);
+  const paths = new Set<string>([
+    ...beforeSnapshot.keys(),
+    ...afterSnapshot.keys(),
+  ]);
   const changes: Array<{ path: string; kind: ChangedFile["kind"] }> = [];
 
   for (const filePath of paths) {
-    const kind = inferChangedFileKind(beforeSnapshot.get(filePath) ?? null, afterSnapshot.get(filePath) ?? null);
+    const kind = inferChangedFileKind(
+      beforeSnapshot.get(filePath) ?? null,
+      afterSnapshot.get(filePath) ?? null,
+    );
     if (!kind) {
       continue;
     }
@@ -252,6 +319,7 @@ function compareSnapshotChanges(beforeSnapshot: WorkspaceSnapshot, afterSnapshot
   return changes.sort((left, right) => left.path.localeCompare(right.path));
 }
 
+/** スナップショットの除外件数と到達した上限だけを警告に列挙する。該当がなければ空文字列を返す。 */
 function summarizeSnapshotWarning(stats: SnapshotCaptureStats): string {
   const warnings: string[] = [];
   if (stats.skippedBinaryOrOversizeFiles > 0) {
@@ -270,9 +338,13 @@ function summarizeSnapshotWarning(stats: SnapshotCaptureStats): string {
   return warnings.join(", ");
 }
 
-function buildChangedFilesFromSnapshots(beforeSnapshot: WorkspaceSnapshot, afterSnapshot: WorkspaceSnapshot): ChangedFile[] {
-  return compareSnapshotChanges(beforeSnapshot, afterSnapshot)
-    .map(({ path, kind }) => {
+/** 変更されたパスに要約と行差分を添える。追加の変更前、削除の変更後は内容がないものとして扱う。 */
+function buildChangedFilesFromSnapshots(
+  beforeSnapshot: WorkspaceSnapshot,
+  afterSnapshot: WorkspaceSnapshot,
+): ChangedFile[] {
+  return compareSnapshotChanges(beforeSnapshot, afterSnapshot).map(
+    ({ path, kind }) => {
       const beforeContent = beforeSnapshot.get(path) ?? null;
       const afterContent = afterSnapshot.get(path) ?? null;
 
@@ -280,15 +352,30 @@ function buildChangedFilesFromSnapshots(beforeSnapshot: WorkspaceSnapshot, after
         kind,
         path,
         summary: summarizeChangedFile(kind, path),
-        diffRows: buildDiffRows(kind === "add" ? null : beforeContent, kind === "delete" ? null : afterContent),
+        diffRows: buildDiffRows(
+          kind === "add" ? null : beforeContent,
+          kind === "delete" ? null : afterContent,
+        ),
       };
-    });
+    },
+  );
 }
 
-function buildActivitySummary(operations: MessageOperation[], changedFiles: ChangedFile[]): string[] {
+/** メッセージと不明な操作を除いて先頭最大 6 件を要約し、対象操作がなければファイル変更から補う。 */
+function buildActivitySummary(
+  operations: MessageOperation[],
+  changedFiles: ChangedFile[],
+): string[] {
   const summary = operations
-    .filter((operation) => operation.type !== "agent_message" && operation.type !== "unknown")
-    .map((operation) => (operation.type === "command_execution" ? `command: ${operation.summary}` : operation.summary));
+    .filter(
+      (operation) =>
+        operation.type !== "agent_message" && operation.type !== "unknown",
+    )
+    .map((operation) =>
+      operation.type === "command_execution"
+        ? `command: ${operation.summary}`
+        : operation.summary,
+    );
 
   if (summary.length > 0) {
     return summary.slice(0, 6);
@@ -297,6 +384,7 @@ function buildActivitySummary(operations: MessageOperation[], changedFiles: Chan
   return changedFiles.map((file) => file.summary).slice(0, 6);
 }
 
+/** 選択済み実行設定を記録し、取得できたスレッド・トークン使用量とスナップショット取得時の警告を添える。 */
 function buildRunChecks(
   executionOptions: SessionExecutionOptions,
   usage: ProviderUsage | null,
@@ -310,7 +398,10 @@ function buildRunChecks(
     { label: "provider", value: providerCatalog.label },
     { label: "approval", value: executionOptions.approvalMode },
     { label: "model", value: selection.resolvedModel },
-    { label: "reasoning", value: reasoningEffortLabel(selection.resolvedReasoningEffort) },
+    {
+      label: "reasoning",
+      value: reasoningEffortLabel(selection.resolvedReasoningEffort),
+    },
   ];
 
   if (threadId) {
@@ -318,7 +409,10 @@ function buildRunChecks(
   }
 
   if (usage) {
-    checks.push({ label: "tokens", value: `${usage.inputTokens}/${usage.outputTokens}` });
+    checks.push({
+      label: "tokens",
+      value: `${usage.inputTokens}/${usage.outputTokens}`,
+    });
   }
 
   const beforeSnapshotWarning = summarizeSnapshotWarning(beforeSnapshotStats);
@@ -334,6 +428,7 @@ function buildRunChecks(
   return checks;
 }
 
+/** 操作の時系列、ワークスペース差分、実行条件の記録を Session 名付きのメッセージ成果物にまとめる。 */
 export function buildArtifactFromOperations(input: {
   session: Session;
   executionOptions: SessionExecutionOptions;
@@ -347,7 +442,10 @@ export function buildArtifactFromOperations(input: {
   providerCatalog: ModelCatalogProvider;
   selection: ResolvedModelSelection;
 }): MessageArtifact | undefined {
-  const changedFiles = buildChangedFilesFromSnapshots(input.beforeSnapshot, input.afterSnapshot);
+  const changedFiles = buildChangedFilesFromSnapshots(
+    input.beforeSnapshot,
+    input.afterSnapshot,
+  );
   const operationTimeline = input.operations;
   const runChecks = buildRunChecks(
     input.executionOptions,
@@ -360,7 +458,11 @@ export function buildArtifactFromOperations(input: {
   );
   const activitySummary = buildActivitySummary(operationTimeline, changedFiles);
 
-  if (changedFiles.length === 0 && operationTimeline.length === 0 && runChecks.length === 0) {
+  if (
+    changedFiles.length === 0 &&
+    operationTimeline.length === 0 &&
+    runChecks.length === 0
+  ) {
     return undefined;
   }
 

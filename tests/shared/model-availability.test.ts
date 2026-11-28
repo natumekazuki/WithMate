@@ -20,23 +20,48 @@ import {
 // impact = "利用者が無効化した配信元やmodelへ実行を送る"
 // distinction = "SDKやUIに依存せず新規IDを含む判定の継続契約を検証する"
 // @end-test-value
+/** OpenCode の配信元の無効化が新規モデルにも適用され、配信元を再有効化しても個別の無効指定は残ることを確認する。 */
 it("配信元OFFを優先し個別OFFと未設定modelの有効状態を保持する", () => {
   const settings = normalizeModelAvailability({
-    opencode: { disabledServiceIds: ["openai"], disabledModelIds: ["openai/model/nested"] },
+    opencode: {
+      disabledServiceIds: ["openai"],
+      disabledModelIds: ["openai/model/nested"],
+    },
     codex: { disabledServiceIds: ["openai"], disabledModelIds: ["specific"] },
   });
   assert.equal(getModelServiceId("opencode", "openai/model/nested"), "openai");
   assert.equal(getModelServiceId("codex", "openai/model"), null);
   assert.equal(getModelServiceId("opencode", "model"), null);
-  assert.equal(getModelDisabledReason(settings, "opencode", "openai/model/nested"), "service");
-  assert.equal(getModelDisabledReason(settings, "opencode", "openai/new-model"), "service");
-  assert.throws(() => assertModelEnabled(settings, "opencode", "openai/new-model"), /disabled by service/);
+  assert.equal(
+    getModelDisabledReason(settings, "opencode", "openai/model/nested"),
+    "service",
+  );
+  assert.equal(
+    getModelDisabledReason(settings, "opencode", "openai/new-model"),
+    "service",
+  );
+  assert.throws(
+    () => assertModelEnabled(settings, "opencode", "openai/new-model"),
+    /disabled by service/,
+  );
   settings.opencode.disabledServiceIds = [];
-  assert.equal(getModelDisabledReason(settings, "opencode", "openai/model/nested"), "model");
-  assert.throws(() => assertModelEnabled(settings, "opencode", "openai/model/nested"), /disabled by model/);
-  assert.doesNotThrow(() => assertModelEnabled(settings, "opencode", "openai/new-model"));
-  assert.doesNotThrow(() => assertModelEnabled(settings, "codex", "openai/model"));
-  assert.doesNotThrow(() => assertModelEnabled(settings, "unknown", "unlisted-model"));
+  assert.equal(
+    getModelDisabledReason(settings, "opencode", "openai/model/nested"),
+    "model",
+  );
+  assert.throws(
+    () => assertModelEnabled(settings, "opencode", "openai/model/nested"),
+    /disabled by model/,
+  );
+  assert.doesNotThrow(() =>
+    assertModelEnabled(settings, "opencode", "openai/new-model"),
+  );
+  assert.doesNotThrow(() =>
+    assertModelEnabled(settings, "codex", "openai/model"),
+  );
+  assert.doesNotThrow(() =>
+    assertModelEnabled(settings, "unknown", "unlisted-model"),
+  );
   assert.equal(getModelDisabledReason(settings, "codex", "specific"), "model");
 });
 
@@ -52,16 +77,32 @@ it("配信元OFFを優先し個別OFFと未設定modelの有効状態を保持�
 // impact = "設定保存や読込によって利用者の無効化指定を失う"
 // distinction = "型だけでは保護できないJSONやIPC由来の入力を検証する"
 // @end-test-value
+/** 未指定だけを空設定として扱い、不正な明示値では例外を返す。未知の配信元・モデルの指定は独立した配列として保持する。 */
 it("未設定だけを補い不正値を拒否し未知のIDを保持する", () => {
   assert.deepEqual(normalizeModelAvailability(undefined), {});
-  const unknown = { future: { disabledServiceIds: ["future-service"], disabledModelIds: ["future/model"] } };
+  const unknown = {
+    future: {
+      disabledServiceIds: ["future-service"],
+      disabledModelIds: ["future/model"],
+    },
+  };
   const normalized = normalizeModelAvailability(unknown);
   assert.deepEqual(normalized, unknown);
   normalized.future.disabledModelIds.push("other");
   assert.deepEqual(unknown.future.disabledModelIds, ["future/model"]);
-  for (const value of [null, [], false, "", { opencode: null }, { opencode: {} },
+  for (const value of [
+    null,
+    [],
+    false,
+    "",
+    { opencode: null },
+    { opencode: {} },
     { opencode: { disabledServiceIds: [], disabledModelIds: [42] } },
-    { opencode: { disabledServiceIds: [" "], disabledModelIds: [] } }]) {
-    assert.throws(() => normalizeModelAvailability(value), /Model availability/);
+    { opencode: { disabledServiceIds: [" "], disabledModelIds: [] } },
+  ]) {
+    assert.throws(
+      () => normalizeModelAvailability(value),
+      /Model availability/,
+    );
   }
 });

@@ -9,6 +9,7 @@ import {
   stringifyBoundedProviderValue,
 } from "../../src-electron/session/provider-payload-limits.js";
 
+/** プロバイダーの生イベントと詳細の出力を、元データ全体を展開せずに予算内へ収める。 */
 describe("provider payload limits", () => {
   // @test-value v2
   // kind = "invariant"
@@ -22,13 +23,25 @@ describe("provider payload limits", () => {
   // impact = "診断rawの出力肥大化、省略数の誤表示、最終生成時の元payload再読取りを防ぐ。内部保持量は直接観測しない"
   // distinction = "単一巨大item testと型検査では確認できない複数itemの出力総予算・順序・省略数と元payloadの再読取りを固定入力で検証する"
   // @end-test-value
+  /** 追記時に保存した先頭イベント・省略情報だけで、出力を再生成しても元オブジェクトには触れない。 */
   it("incremental rawはpayloadを再走査せず順序と省略数を維持する", () => {
     const collector = new BoundedProviderRawItems(2048);
     let reads = 0;
     for (let index = 0; index < 10_000; index += 1) {
-      const data = { get content() { reads += 1; return "あ😀\"\n".repeat(64); } };
+      const data = {
+        /** 追記時の読取回数を記録し、絵文字・引用符・改行を含む打ち切り対象を返す。 */
+        get content() {
+          reads += 1;
+          return 'あ😀"\n'.repeat(64);
+        },
+      };
       collector.append({ type: `event-${index}`, data });
-      Object.defineProperty(data, "content", { get() { throw new Error("retained source was revisited"); } });
+      Object.defineProperty(data, "content", {
+        /** 追記後に元の値を再び読んだ場合は、その場でテストを失敗させる。 */
+        get() {
+          throw new Error("retained source was revisited");
+        },
+      });
     }
     const readsAfterAppend = reads;
     assert.ok(readsAfterAppend > 0);
@@ -37,17 +50,26 @@ describe("provider payload limits", () => {
     assert.equal(reads, readsAfterAppend);
     assert.ok(json.length <= 2048);
     const parsed = JSON.parse(json);
-    assert.deepEqual(parsed.slice(0, -1).map((item: { type: string }) => item.type),
-      Array.from({ length: 7 }, (_, index) => `event-${index}`));
-    assert.equal(parsed[0].data.content, "あ😀\"\n".repeat(64));
+    assert.deepEqual(
+      parsed.slice(0, -1).map((item: { type: string }) => item.type),
+      Array.from({ length: 7 }, (_, index) => `event-${index}`),
+    );
+    assert.equal(parsed[0].data.content, 'あ😀"\n'.repeat(64));
     assert.equal(parsed[1].data.content.truncated, true);
     assert.equal(parsed[1].data.content.originalLength, 320);
-    assert.equal(parsed[1].data.withmateTruncated.type, "withmate.value_truncated");
+    assert.equal(
+      parsed[1].data.withmateTruncated.type,
+      "withmate.value_truncated",
+    );
     assert.deepEqual(parsed[2].data.withmateTruncated, {
-      type: "withmate.value_truncated", truncated: true, reason: "provider raw item budget exceeded", maxLength: 0,
+      type: "withmate.value_truncated",
+      truncated: true,
+      reason: "provider raw item budget exceeded",
+      maxLength: 0,
     });
     assert.deepEqual(parsed.at(-1), {
-      type: "withmate.raw_items_truncated", data: { omittedItems: 9993, maxLength: 2048 },
+      type: "withmate.raw_items_truncated",
+      data: { omittedItems: 9993, maxLength: 2048 },
     });
   });
 
@@ -63,12 +85,16 @@ describe("provider payload limits", () => {
   // impact = "背景診断の過大な返却JSONと、省略件数の誤表示による診断情報の誤認を防ぐ"
   // distinction = "単一itemや小さいcustom予算のtestでは多数itemを集めた後の既定予算と省略件数の整合を検証しない"
   // @end-test-value
+  /** 大きいイベントを繰り返し追記しても総予算を超えず、末尾のマーカーが省略した実件数を示す。 */
   it("raw traceのappend ownerを総予算で制限し打切り件数を保存する", () => {
     const trace = new BoundedProviderRawItems();
     const eventCount = 128;
     const payload = "x".repeat(64 * 1024);
     for (let index = 0; index < eventCount; index += 1) {
-      trace.append({ type: "tool.execution_complete", data: { index, payload } });
+      trace.append({
+        type: "tool.execution_complete",
+        data: { index, payload },
+      });
     }
 
     const json = trace.stringify();
@@ -82,7 +108,6 @@ describe("provider payload limits", () => {
     assert.equal(marker.data.maxLength, PROVIDER_RAW_ITEMS_JSON_LIMIT);
   });
 
-
   // @test-value v2
   // kind = "contract"
   // claim = "巨大なprovider診断値を指定予算内で省略し末尾の原文を保持しない"
@@ -95,6 +120,7 @@ describe("provider payload limits", () => {
   // impact = "巨大なprovider出力による不要な保持を抑え取得済みpreviewを維持する"
   // distinction = "型検査では巨大・custom serialization payloadの実予算を確認できない"
   // @end-test-value
+  /** 生イベント全体の JSON 化を避けつつ、種類を残し、内側の巨大配列を省略マーカー付きで打ち切る。 */
   it("raw item 全体を stringify する前に item 内の巨大配列を予算で打ち切る", () => {
     const chunks = Array.from({ length: 20_000 }, (_, index) => ({
       type: "output_text",
@@ -107,6 +133,7 @@ describe("provider payload limits", () => {
           content: chunks,
         },
       },
+      /** 元のイベント全体を直接 JSON 化した経路を、例外で検出する。 */
       toJSON() {
         throw new Error("raw item should not be stringified directly");
       },
@@ -133,25 +160,30 @@ describe("provider payload limits", () => {
   // impact = "巨大なprovider出力による不要な保持を抑え取得済みpreviewを維持する"
   // distinction = "型検査では巨大・custom serialization payloadの実予算を確認できない"
   // @end-test-value
+  /** 生イベントを保存前に絞る段階で、全要素の map を避け、出力に省略マーカーを残す。 */
   it("raw item の pre-clone でも巨大配列を map せず予算で打ち切る", () => {
     const chunks = Array.from({ length: 20_000 }, (_, index) => ({
       type: "output_text",
       text: `chunk-${index}-${"x".repeat(128)}`,
     }));
     Object.defineProperty(chunks, "map", {
+      /** 元配列を丸ごと map する経路を、例外で検出する。 */
       value() {
         throw new Error("raw item array should not be fully mapped");
       },
     });
 
-    const item = boundProviderRawItem({
-      type: "mcp_tool_call",
-      data: {
-        result: {
-          content: chunks,
+    const item = boundProviderRawItem(
+      {
+        type: "mcp_tool_call",
+        data: {
+          result: {
+            content: chunks,
+          },
         },
       },
-    }, 4096);
+      4096,
+    );
     const json = JSON.stringify(item);
 
     assert.equal(json.length <= 4096, true);
@@ -171,6 +203,7 @@ describe("provider payload limits", () => {
   // impact = "巨大なprovider出力による不要な保持を抑え取得済みpreviewを維持する"
   // distinction = "型検査では巨大・custom serialization payloadの実予算を確認できない"
   // @end-test-value
+  /** 詳細の出力にも個別の予算を適用し、元の構造データ全体を直列化せず省略が分かる形にする。 */
   it("details 用 stringify も巨大 object を直接 stringify しない", () => {
     const chunks = Array.from({ length: 20_000 }, (_, index) => ({
       type: "output_text",
@@ -178,6 +211,7 @@ describe("provider payload limits", () => {
     }));
     const value = {
       structured_content: chunks,
+      /** 詳細の組み立てで、元のオブジェクトを直接 JSON 化した場合に失敗させる。 */
       toJSON() {
         throw new Error("details value should not be stringified directly");
       },

@@ -9,24 +9,40 @@ import {
   isProviderInstructionProfileSectionKey,
 } from "../../src-shared/mate/mate-profile-sections.js";
 
+/** 実行時セクションの列挙順と本文上の役割を確認し、メモが直接指示として扱われない境界を固定する。 */
 test("Mate Profile section rules は runtime section の責務と投影境界を固定する", () => {
   assert.deepEqual(
     MATE_PROFILE_SECTION_RULES.map((rule) => rule.sectionKey),
     ["core", "bond", "work_style", "notes"],
   );
-  assert.equal(getMateProfileSectionRule("core").role.includes("自己定義"), true);
+  assert.equal(
+    getMateProfileSectionRule("core").role.includes("自己定義"),
+    true,
+  );
   assert.equal(getMateProfileSectionRule("bond").role.includes("関係性"), true);
-  assert.equal(getMateProfileSectionRule("work_style").role.includes("作業時"), true);
-  assert.equal(getMateProfileSectionRule("notes").role.includes("直接指示として扱わない"), true);
+  assert.equal(
+    getMateProfileSectionRule("work_style").role.includes("作業時"),
+    true,
+  );
+  assert.equal(
+    getMateProfileSectionRule("notes").role.includes("直接指示として扱わない"),
+    true,
+  );
 });
 
+/** プロバイダーへの指示に含めるキーが core・bond・work_style に限られ、メモや project_digest は含まれないことを確認する。 */
 test("provider instruction は notes を含めない", () => {
-  assert.deepEqual(PROVIDER_INSTRUCTION_PROFILE_SECTION_KEYS, ["core", "bond", "work_style"]);
+  assert.deepEqual(PROVIDER_INSTRUCTION_PROFILE_SECTION_KEYS, [
+    "core",
+    "bond",
+    "work_style",
+  ]);
 
   assert.equal(isProviderInstructionProfileSectionKey("notes"), false);
   assert.equal(isProviderInstructionProfileSectionKey("project_digest"), false);
 });
 
+/** 既知の core と notes は実行時 profile の項目として扱い、project_digest や未知のキーを混ぜないことを確認する。 */
 test("runtime section 判定は project_digest や未知 section を profile section として扱わない", () => {
   assert.equal(isMateProfileRuntimeSectionKey("core"), true);
   assert.equal(isMateProfileRuntimeSectionKey("notes"), true);

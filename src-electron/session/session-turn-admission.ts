@@ -2,6 +2,7 @@ import type { RunProviderRuntimeOperationExclusive } from "../providers/provider
 
 // reserve は開始中の状態とコントローラーを登録するだけ。
 // 検証に失敗した場合、呼び出し元はプロバイダーの準備を始める前に予約を解放する。
+/** 排他区間で Turn を予約し、プロバイダーを読み取った後に現在性と利用可否を再確認して予約を返す。 */
 export async function admitSessionTurn<T>(input: {
   runExclusive: RunProviderRuntimeOperationExclusive;
   assertCurrent: () => void;

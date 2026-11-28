@@ -2,7 +2,15 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { ButtonContent } from "../ui/button-content.js";
 
-export function CharacterEditorReadError({ subject, summary, details, notice, onRetry, retryBusy = false }: {
+/** 読み取り失敗を通知し、再試行と、必要なときに開く診断の詳細を分けて提示する。 */
+export function CharacterEditorReadError({
+  subject,
+  summary,
+  details,
+  notice,
+  onRetry,
+  retryBusy = false,
+}: {
   subject: string;
   summary: string;
   details: string;
@@ -15,6 +23,7 @@ export function CharacterEditorReadError({ subject, summary, details, notice, on
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
 
+  /** 詳細を閉じ、詳細を開いたボタンへフォーカスを戻す。 */
   const closeAndRestoreFocus = () => {
     panelRef.current?.hidePopover();
     triggerRef.current?.focus();
@@ -22,6 +31,7 @@ export function CharacterEditorReadError({ subject, summary, details, notice, on
 
   useEffect(() => {
     if (!open) return;
+    /** 詳細を表示している間の Escape を処理し、閉じた後のフォーカスを復元する。 */
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
@@ -34,7 +44,9 @@ export function CharacterEditorReadError({ subject, summary, details, notice, on
 
   return (
     <div className="character-editor-read-error">
-      <span className={notice ? undefined : "visually-hidden"} role="alert">{notice ?? summary}</span>
+      <span className={notice ? undefined : "visually-hidden"} role="alert">
+        {notice ?? summary}
+      </span>
       <div className="character-editor-read-error-actions">
         <button
           ref={triggerRef}
@@ -47,13 +59,30 @@ export function CharacterEditorReadError({ subject, summary, details, notice, on
           aria-controls={`${id}-details`}
           popoverTarget={`${id}-details`}
         >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true" focusable="false">
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            aria-hidden="true"
+            focusable="false"
+          >
             <circle cx="12" cy="12" r="9" />
             <path d="M12 7v6m0 3v1" />
           </svg>
         </button>
-        <button className="launch-toggle compact" type="button" disabled={retryBusy} aria-busy={retryBusy || undefined} onClick={onRetry}>
-          <ButtonContent busy={retryBusy} busyLabel={`Retrying ${subject}`}>Retry</ButtonContent>
+        <button
+          className="launch-toggle compact"
+          type="button"
+          disabled={retryBusy}
+          aria-busy={retryBusy || undefined}
+          onClick={onRetry}
+        >
+          <ButtonContent busy={retryBusy} busyLabel={`Retrying ${subject}`}>
+            Retry
+          </ButtonContent>
         </button>
       </div>
       <div
@@ -70,8 +99,23 @@ export function CharacterEditorReadError({ subject, summary, details, notice, on
           if (showing) panelRef.current?.focus();
         }}
       >
-        <button className="launch-toggle compact character-editor-error-close" type="button" aria-label="Close Error Details" title="Close Error Details" onClick={closeAndRestoreFocus}>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true" focusable="false">
+        <button
+          className="launch-toggle compact character-editor-error-close"
+          type="button"
+          aria-label="Close Error Details"
+          title="Close Error Details"
+          onClick={closeAndRestoreFocus}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            aria-hidden="true"
+            focusable="false"
+          >
             <path d="m6 6 12 12M18 6 6 18" />
           </svg>
         </button>

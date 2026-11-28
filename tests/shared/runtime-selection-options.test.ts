@@ -29,6 +29,7 @@ const providerCatalog: ModelCatalogProvider = {
 // scope = "runtime-selection-options"
 // lifecycle = "permanent"
 // @end-test-value
+/** Copilot では Sandbox 候補を出さず、一覧にない保存モデルのラベルと、深度を省略する Default を保持する。 */
 test("buildRuntimeSelectionOptions は Copilot の sandbox / model / reasoning / fallback を構築する", () => {
   const options = buildRuntimeSelectionOptions({
     providerId: "copilot",
@@ -41,7 +42,11 @@ test("buildRuntimeSelectionOptions は Copilot の sandbox / model / reasoning /
   });
 
   assert.deepEqual(options.sandboxChoiceOptions, []);
-  assert.deepEqual(options.modelSelectOptions[0], { value: "legacy-model", label: "legacy-model", model: null });
+  assert.deepEqual(options.modelSelectOptions[0], {
+    value: "legacy-model",
+    label: "legacy-model",
+    model: null,
+  });
   assert.equal(options.selectedModelFallbackLabel, "legacy-model");
   assert.deepEqual(options.reasoningSelectOptions, [
     { value: "", label: "Default" },
@@ -60,6 +65,7 @@ test("buildRuntimeSelectionOptions は Copilot の sandbox / model / reasoning /
 // scope = "runtime-selection-options non-Codex sandbox"
 // lifecycle = "permanent"
 // @end-test-value
+/** Codex 以外でも、Sandbox 候補を空にしたまま一覧上の選択モデルと指定順の深度候補を返せることを確認する。 */
 test("buildRuntimeSelectionOptions は Copilot 以外で sandbox 選択肢が空でも保持できる", () => {
   const options = buildRuntimeSelectionOptions({
     providerId: "openai",
@@ -72,7 +78,9 @@ test("buildRuntimeSelectionOptions は Copilot 以外で sandbox 選択肢が空
   });
 
   assert.deepEqual(options.sandboxChoiceOptions, []);
-  assert.deepEqual(options.modelSelectOptions, [{ value: "model-a", label: "Model A", model: providerCatalog.models[0] }]);
+  assert.deepEqual(options.modelSelectOptions, [
+    { value: "model-a", label: "Model A", model: providerCatalog.models[0] },
+  ]);
   assert.equal(options.selectedModelFallbackLabel, "Model A");
   assert.deepEqual(options.reasoningSelectOptions, [
     { value: "", label: "Default" },

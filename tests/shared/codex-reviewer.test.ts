@@ -20,26 +20,42 @@ import { buildSessionWithApprovalMode } from "../../src/settings/runtime-option-
 // scope = "codex-reviewer"
 // lifecycle = "permanent"
 // @end-test-value
+/** 未知値・未設定が User に落ちることと、保存値から SDK 値への写像、プロバイダーと承認方針に応じた候補を確認する。 */
 test("Reviewerを正規化してSDK値とprovider別選択肢へ写像する", () => {
   assert.equal(normalizeCodexReviewer("auto-review"), "auto-review");
   assert.equal(normalizeCodexReviewer("unexpected"), "user");
   assert.equal(normalizeCodexReviewer(undefined), "user");
   assert.equal(mapCodexReviewerToApprovalsReviewer("user"), "user");
-  assert.equal(mapCodexReviewerToApprovalsReviewer("auto-review"), "auto_review");
+  assert.equal(
+    mapCodexReviewerToApprovalsReviewer("auto-review"),
+    "auto_review",
+  );
   const choices = [
     { value: "user", label: "User" },
     { value: "auto-review", label: "Auto Review" },
   ];
-  assert.deepEqual(getApprovalReviewerOptionsForProvider("codex", "untrusted"), choices);
-  assert.deepEqual(getApprovalReviewerOptionsForProvider("claude", "on-request"), choices);
-  assert.deepEqual(getApprovalReviewerOptionsForProvider("claude", "never"), choices);
+  assert.deepEqual(
+    getApprovalReviewerOptionsForProvider("codex", "untrusted"),
+    choices,
+  );
+  assert.deepEqual(
+    getApprovalReviewerOptionsForProvider("claude", "on-request"),
+    choices,
+  );
+  assert.deepEqual(
+    getApprovalReviewerOptionsForProvider("claude", "never"),
+    choices,
+  );
   for (const mode of ["accept-edits", "dont-ask", "plan"] as const) {
     assert.deepEqual(getApprovalReviewerOptionsForProvider("claude", mode), [
       { value: "user", label: "User" },
       { value: "auto-review", label: "Auto Review", disabled: true },
     ]);
   }
-  assert.deepEqual(getApprovalReviewerOptionsForProvider("copilot", "on-request"), []);
+  assert.deepEqual(
+    getApprovalReviewerOptionsForProvider("copilot", "on-request"),
+    [],
+  );
 });
 
 // @test-value v1
@@ -50,20 +66,34 @@ test("Reviewerを正規化してSDK値とprovider別選択肢へ写像する", (
 // scope = "codex-reviewer-control-state"
 // lifecycle = "permanent"
 // @end-test-value
+/** 承認を never に変えても保存済みの Auto Review は残り、承認を求めるモードでは Reviewer の操作を再び有効にする。 */
 test("neverではReviewer変更を無効化し保存値をinteractive復帰後も保持する", () => {
-  const session = { approvalMode: "on-request" as const, codexReviewer: "auto-review" as const };
-  const neverSession = buildSessionWithApprovalMode(session, "never", "2026-09-04T00:00:00.000Z");
+  const session = {
+    approvalMode: "on-request" as const,
+    codexReviewer: "auto-review" as const,
+  };
+  const neverSession = buildSessionWithApprovalMode(
+    session,
+    "never",
+    "2026-09-04T00:00:00.000Z",
+  );
   assert.equal(neverSession?.codexReviewer, "auto-review");
-  assert.equal(isCodexReviewerControlDisabled({
-    approvalMode: "never",
-    isRunning: false,
-    composerBlocked: false,
-  }), true);
-  assert.equal(isCodexReviewerControlDisabled({
-    approvalMode: "on-request",
-    isRunning: false,
-    composerBlocked: false,
-  }), false);
+  assert.equal(
+    isCodexReviewerControlDisabled({
+      approvalMode: "never",
+      isRunning: false,
+      composerBlocked: false,
+    }),
+    true,
+  );
+  assert.equal(
+    isCodexReviewerControlDisabled({
+      approvalMode: "on-request",
+      isRunning: false,
+      composerBlocked: false,
+    }),
+    false,
+  );
 });
 
 // @test-value v1
@@ -74,17 +104,36 @@ test("neverではReviewer変更を無効化し保存値をinteractive復帰後�
 // scope = "codex-reviewer-update"
 // lifecycle = "permanent"
 // @end-test-value
+/** 保存済み方針が never の間は受け取った Reviewer を無視し、承認を求める場合だけ選択値を正規化して採用する。 */
 test("保存済みApprovalがneverの間はReviewer更新を現在値へ固定する", () => {
-  assert.equal(resolveCodexReviewerUpdate({
-    approvalMode: "never",
-    codexReviewer: "auto-review",
-  }, "user"), "auto-review");
-  assert.equal(resolveCodexReviewerUpdate({
-    approvalMode: "on-request",
-    codexReviewer: "auto-review",
-  }, "user"), "user");
-  assert.equal(resolveCodexReviewerUpdate({
-    approvalMode: "on-request",
-    codexReviewer: "auto-review",
-  }, "unexpected"), "user");
+  assert.equal(
+    resolveCodexReviewerUpdate(
+      {
+        approvalMode: "never",
+        codexReviewer: "auto-review",
+      },
+      "user",
+    ),
+    "auto-review",
+  );
+  assert.equal(
+    resolveCodexReviewerUpdate(
+      {
+        approvalMode: "on-request",
+        codexReviewer: "auto-review",
+      },
+      "user",
+    ),
+    "user",
+  );
+  assert.equal(
+    resolveCodexReviewerUpdate(
+      {
+        approvalMode: "on-request",
+        codexReviewer: "auto-review",
+      },
+      "unexpected",
+    ),
+    "user",
+  );
 });

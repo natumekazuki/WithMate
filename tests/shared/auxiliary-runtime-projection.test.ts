@@ -5,16 +5,15 @@ import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 
-import {
-  useMainAuxiliaryRuntimeSession,
-} from "../../src/chat/auxiliary/auxiliary-render-projections.js";
-import {
-  buildMainAuxiliaryRuntimeSession,
-} from "../../src/chat/auxiliary/auxiliary-runtime-projection.js";
+import { useMainAuxiliaryRuntimeSession } from "../../src/chat/auxiliary/auxiliary-render-projections.js";
+import { buildMainAuxiliaryRuntimeSession } from "../../src/chat/auxiliary/auxiliary-runtime-projection.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 
-function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
+/** 実行中の Auxiliary と独立した会話内容を作り、対象ケースが必要とする値だけを上書きできるようにする。 */
+function createAuxiliarySession(
+  overrides: Partial<AuxiliarySession> = {},
+): AuxiliarySession {
   return {
     id: "auxiliary-1",
     parentSessionId: "parent-1",
@@ -39,6 +38,7 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
   };
 }
 
+/** Auxiliary と区別できる会話・実行設定・Character のスナップショットを持つ親 Session を作る。 */
 function createSession(): Session {
   return {
     id: "session-1",
@@ -64,7 +64,8 @@ function createSession(): Session {
       description: "Auxiliary projection character snapshot",
       iconFilePath: "",
       theme: { main: "#000", sub: "#fff" },
-      definitionMarkdown: "# Character\n\nAuxiliary projection keeps this prompt.",
+      definitionMarkdown:
+        "# Character\n\nAuxiliary projection keeps this prompt.",
       definitionSha256: "character-sha",
       definitionByteSize: 51,
       snapshotAt: "2026-01-01T00:00:00.000Z",
@@ -96,9 +97,18 @@ function createSession(): Session {
 // impact = "Auxiliaryで過去page移動が拒否されるかMainの履歴件数を表示する"
 // distinction = "既存projection testは全文配列でmessageCountを持たず、ownerと総数の混線を検出しない"
 // @end-test-value
+/** ページ化された Auxiliary を表示しても、親の履歴件数や最新ユーザーメッセージを引き継がず、Auxiliary 自身の識別情報とページ範囲を使う。 */
 test("Auxiliaryのpaged projectionは自身の履歴数とownerを使用する", () => {
-  const parent = { ...createSession(), incarnationId: "parent-incarnation", messageCount: 1000, latestUserMessage: { role: "user" as const, text: "main request" } };
-  const auxiliary = createAuxiliarySession({ messageCount: 200, messages: [{ role: "assistant", text: "auxiliary", historyIndex: 199 }] });
+  const parent = {
+    ...createSession(),
+    incarnationId: "parent-incarnation",
+    messageCount: 1000,
+    latestUserMessage: { role: "user" as const, text: "main request" },
+  };
+  const auxiliary = createAuxiliarySession({
+    messageCount: 200,
+    messages: [{ role: "assistant", text: "auxiliary", historyIndex: 199 }],
+  });
   const projection = buildMainAuxiliaryRuntimeSession(parent, auxiliary);
   assert.equal(projection.id, auxiliary.id);
   assert.equal(projection.incarnationId, auxiliary.createdAt);
@@ -117,33 +127,59 @@ test("Auxiliaryのpaged projectionは自身の履歴数とownerを使用する",
 // scope = "auxiliary-runtime-projection"
 // lifecycle = "permanent"
 // @end-test-value
+/** 下書きや表示アンカーだけの更新では投影参照を維持し、メッセージやモデルが変われば投影を更新することを確認する。 */
 test("Auxiliary runtime projection は draft-only 更新で参照を維持する", async () => {
-  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
-    .IS_REACT_ACT_ENVIRONMENT;
+  const previousActEnvironment = (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
-  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true });
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    pretendToBeVisual: true,
+  });
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "Node", {
+    configurable: true,
+    value: dom.window.Node,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
 
-  const root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+  const root = createRoot(
+    dom.window.document.getElementById("root") as HTMLElement,
+  );
   const mainSession = createSession();
   let latestProjection: {
     mainRuntime: Session | null;
   } | null = null;
 
-  function ProjectionProbe({ activeSession }: { activeSession: AuxiliarySession }) {
+  /** 描画されるべき投影を実際のフックから取得し、DOM を増やさずアサーションから参照できるようにする。 */
+  function ProjectionProbe({
+    activeSession,
+  }: {
+    activeSession: AuxiliarySession;
+  }) {
     latestProjection = {
       mainRuntime: useMainAuxiliaryRuntimeSession(mainSession, activeSession),
     };
     return null;
   }
 
+  /** 指定された Auxiliary で React の再描画を完了させ、その描画でフックが返した投影を取得する。 */
   const renderProjection = async (activeSession: AuxiliarySession) => {
     await act(async () => {
       root.render(React.createElement(ProjectionProbe, { activeSession }));
@@ -166,13 +202,17 @@ test("Auxiliary runtime projection は draft-only 更新で参照を維持する
     const transcriptChanged = await renderProjection({
       ...initialSession,
       composerDraft: "typing",
-      messages: [...initialSession.messages, { role: "user", text: "next message" }],
+      messages: [
+        ...initialSession.messages,
+        { role: "user", text: "next message" },
+      ],
     });
     assert.notEqual(transcriptChanged.mainRuntime, draftOnly.mainRuntime);
 
     const runtimeChanged = await renderProjection({
       ...initialSession,
-      messages: transcriptChanged.mainRuntime?.messages ?? initialSession.messages,
+      messages:
+        transcriptChanged.mainRuntime?.messages ?? initialSession.messages,
       model: "gpt-next",
     });
     assert.notEqual(runtimeChanged.mainRuntime, transcriptChanged.mainRuntime);
@@ -189,15 +229,27 @@ test("Auxiliary runtime projection は draft-only 更新で参照を維持する
       root.unmount();
     });
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-      previousActEnvironment;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
+    Object.defineProperty(globalThis, "Node", {
+      configurable: true,
+      value: previousNode,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
   }
 });
-
 
 // @test-value v2
 // kind = "invariant"
@@ -209,6 +261,7 @@ test("Auxiliary runtime projection は draft-only 更新で参照を維持する
 // scope = "auxiliary-runtime-projection"
 // lifecycle = "permanent"
 // @end-test-value
+/** Auxiliary 側に Character の保存スナップショットがあるとき、表示名・アイコン・テーマが親の情報に戻らないことを確認する。 */
 test("Auxiliary runtime projectionはCharacter snapshotの表示情報を保持する", () => {
   const parent = createSession();
   const auxiliary = createAuxiliarySession();
@@ -242,8 +295,12 @@ test("Auxiliary runtime projectionはCharacter snapshotの表示情報を保持�
 // scope = "Main Auxiliary runtime projection"
 // lifecycle = "permanent"
 // @end-test-value
+/** Auxiliary の実行・会話情報と親のタイトル・共有ディレクトリを組み合わせ、親のストリームは表示に引き継がない。 */
 test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff fields", () => {
-  const parent = { ...createSession(), allowedAdditionalDirectories: ["C:/shared-main"] };
+  const parent = {
+    ...createSession(),
+    allowedAdditionalDirectories: ["C:/shared-main"],
+  };
   const auxiliary = createAuxiliarySession();
 
   const projection = buildMainAuxiliaryRuntimeSession(parent, auxiliary);
@@ -256,7 +313,10 @@ test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff 
   assert.deepEqual(projection.allowedAdditionalDirectories, ["C:/shared-main"]);
   assert.equal(projection.status, "running");
   assert.equal(projection.taskTitle, parent.taskTitle);
-  assert.deepEqual(projection.characterRuntimeSnapshot, parent.characterRuntimeSnapshot);
+  assert.deepEqual(
+    projection.characterRuntimeSnapshot,
+    parent.characterRuntimeSnapshot,
+  );
   assert.deepEqual(projection.stream, []);
 });
 
@@ -270,6 +330,7 @@ test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff 
 // scope = "Main Auxiliary runtime projection status"
 // lifecycle = "permanent"
 // @end-test-value
+/** Auxiliary の idle と error の実行状態はそのまま保持し、どちらも表示上は実行中ではない状態にする。 */
 test("buildAuxiliaryRuntimeSessionProjection main maps non-running auxiliary to idle status", () => {
   for (const runState of ["idle", "error"] as const) {
     const parent = createSession();

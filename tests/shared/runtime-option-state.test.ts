@@ -30,6 +30,7 @@ const providerCatalog = {
   ],
 } satisfies ModelCatalogProvider;
 
+/** 承認の選択が変われば、Session の識別情報を維持しつつ新しい方針と指定時刻を反映する。 */
 test("buildSessionWithApprovalMode は approval mode と updatedAt を反映する", () => {
   const session = {
     id: "session-1",
@@ -52,6 +53,7 @@ test("buildSessionWithApprovalMode は approval mode と updatedAt を反映す�
   });
 });
 
+/** 現在と同じ承認方針は更新不要を表す null を返し、時刻だけの変更を作らない。 */
 test("buildSessionWithApprovalMode は同じ approval mode なら no-op を返す", () => {
   const session = {
     id: "session-1",
@@ -60,11 +62,16 @@ test("buildSessionWithApprovalMode は同じ approval mode なら no-op を返�
   };
 
   assert.equal(
-    buildSessionWithApprovalMode(session, "on-request", "2026-06-07T01:00:00.000Z"),
+    buildSessionWithApprovalMode(
+      session,
+      "on-request",
+      "2026-06-07T01:00:00.000Z",
+    ),
     null,
   );
 });
 
+/** Codex の Sandbox を read-only に変えた場合、元の Session に新しいモードと時刻を反映する。 */
 test("buildSessionWithCodexSandboxMode は sandbox mode と updatedAt を反映する", () => {
   const session = {
     id: "session-1",
@@ -87,6 +94,7 @@ test("buildSessionWithCodexSandboxMode は sandbox mode と updatedAt を反映�
   });
 });
 
+/** 選択済み Sandbox を選び直しただけなら、変更後のレコードを生成しない。 */
 test("buildSessionWithCodexSandboxMode は同じ sandbox mode なら no-op を返す", () => {
   const session = {
     id: "session-1",
@@ -114,6 +122,7 @@ test("buildSessionWithCodexSandboxMode は同じ sandbox mode なら no-op を�
 // scope = "model-change-patch"
 // lifecycle = "permanent"
 // @end-test-value
+/** 移行先モデルで high を使えない場合に、選択したモデルとその既定の minimal を時刻とともに反映する。 */
 test("buildSessionWithModelChange は model catalog selection を session patch に反映する", () => {
   const session = {
     id: "session-1",
@@ -146,6 +155,7 @@ test("buildSessionWithModelChange は model catalog selection を session patch 
 // scope = "depth-change-patch"
 // lifecycle = "permanent"
 // @end-test-value
+/** GPT Fast を維持して、選択した minimal と更新時刻を反映する。 */
 test("buildSessionWithReasoningEffort は reasoning effort selection を session patch に反映する", () => {
   const session = {
     id: "session-1",
@@ -179,6 +189,7 @@ test("buildSessionWithReasoningEffort は reasoning effort selection を session
 // scope = "same-selection-patch"
 // lifecycle = "permanent"
 // @end-test-value
+/** モデルと深度の更新は承認とは異なり、同じ選択でも指定時刻付きの Session を返すことを確認する。 */
 test("model / reasoning effort helper は同じ選択でも既存どおり patch を返す", () => {
   const session = {
     id: "session-1",
@@ -228,6 +239,7 @@ test("model / reasoning effort helper は同じ選択でも既存どおり patch
 // impact = "表示中の候補を確定できないかSDK固有のDepthを利用できなくなる"
 // distinction = "rendererの明示変更helper経由で共有モデル契約の保存への伝播を確認する"
 // @end-test-value
+/** モデル変更は一覧外でも指定候補の定義を使い、深度変更は SDK 固有の値を汎用値へ置き換えない。 */
 test("model helperは選択候補の定義を使いreasoning helperはSDK固有値を保持する", () => {
   const session = {
     id: "session-1",
@@ -239,44 +251,57 @@ test("model helperは選択候補の定義を使いreasoning helperはSDK固有�
   assert.deepEqual(
     buildSessionWithModelChange(
       session,
-      { id: "displayed-model", label: "Displayed", reasoningEfforts: ["sdk-depth"], defaultReasoningEffort: "sdk-depth" },
+      {
+        id: "displayed-model",
+        label: "Displayed",
+        reasoningEfforts: ["sdk-depth"],
+        defaultReasoningEffort: "sdk-depth",
+      },
       "2026-06-07T01:00:00.000Z",
     ),
-    { ...session, model: "displayed-model", reasoningEffort: "sdk-depth", updatedAt: "2026-06-07T01:00:00.000Z" },
+    {
+      ...session,
+      model: "displayed-model",
+      reasoningEffort: "sdk-depth",
+      updatedAt: "2026-06-07T01:00:00.000Z",
+    },
   );
-  assert.equal(buildSessionWithReasoningEffort(
-    session, providerCatalog, "xhigh", "2026-06-07T01:00:00.000Z",
-  ).reasoningEffort, "xhigh");
+  assert.equal(
+    buildSessionWithReasoningEffort(
+      session,
+      providerCatalog,
+      "xhigh",
+      "2026-06-07T01:00:00.000Z",
+    ).reasoningEffort,
+    "xhigh",
+  );
 });
 
+/** 現在値が候補にある限り、候補順や既定値にかかわらず現在の選択を保つ。 */
 test("resolveRuntimeOptionValue は selected value が option にあれば維持する", () => {
   assert.equal(
     resolveRuntimeOptionValue(
       "on-request",
-      [
-        { value: "never" },
-        { value: "on-request" },
-      ],
+      [{ value: "never" }, { value: "on-request" }],
       "untrusted",
     ),
     "on-request",
   );
 });
 
+/** 現在値が候補にないときは、指定された既定値より候補一覧の先頭を優先する。 */
 test("resolveRuntimeOptionValue は selected value が option にない場合に先頭 option へ fallback する", () => {
   assert.equal(
     resolveRuntimeOptionValue(
       "danger-full-access",
-      [
-        { value: "read-only" },
-        { value: "workspace-write" },
-      ],
+      [{ value: "read-only" }, { value: "workspace-write" }],
       "workspace-write",
     ),
     "read-only",
   );
 });
 
+/** 候補が一件もないときは、現在の選択ではなく指定された代替値を返す。 */
 test("resolveRuntimeOptionValue は option が空なら fallback value を返す", () => {
   assert.equal(resolveRuntimeOptionValue("custom", [], "fallback"), "fallback");
 });

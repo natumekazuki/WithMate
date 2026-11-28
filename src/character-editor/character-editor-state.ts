@@ -27,8 +27,10 @@ export {
   buildDefaultCharacterNotes,
 } from "../../src-shared/character/character-definition-template.js";
 
+/** プロフィール、定義・ノートの本文、実行時のプレビューを切り替えるタブ。 */
 export type CharacterEditorTab = "profile" | "definition" | "notes" | "preview";
 
+/** 保存前のプロフィールと本文。新規作成と既存 ID の編集を別のモードで扱う。 */
 export type CharacterEditorDraft = {
   characterId: string | null;
   mode: "create" | "edit";
@@ -41,13 +43,17 @@ export type CharacterEditorDraft = {
   notesMarkdown: string;
 };
 
+/** 本文ごとの検証指摘と、保存を止める指摘の合算。 */
 export type CharacterEditorValidationSummary = {
   definitionIssues: CharacterDefinitionValidationIssue[];
   notesIssues: CharacterDefinitionValidationIssue[];
   blockingIssues: CharacterDefinitionValidationIssue[];
 };
 
-export function createNewCharacterEditorDraft(name = "New Character"): CharacterEditorDraft {
+/** 保存先 ID を持たない有効な新規下書きを、既定テーマと本文テンプレートで初期化する。 */
+export function createNewCharacterEditorDraft(
+  name = "New Character",
+): CharacterEditorDraft {
   return {
     characterId: null,
     mode: "create",
@@ -61,8 +67,13 @@ export function createNewCharacterEditorDraft(name = "New Character"): Character
   };
 }
 
-export function createCharacterEditorDraftFromDetail(detail: CharacterDetail): CharacterEditorDraft {
-  const metadata = resolveCharacterDefinitionMetadata(detail.definitionMarkdown);
+/** 保存済みの状態を編集用に写し、定義を解析できる場合はその名前と説明をカタログ値より優先する。 */
+export function createCharacterEditorDraftFromDetail(
+  detail: CharacterDetail,
+): CharacterEditorDraft {
+  const metadata = resolveCharacterDefinitionMetadata(
+    detail.definitionMarkdown,
+  );
   return {
     characterId: detail.id,
     mode: "edit",
@@ -76,6 +87,7 @@ export function createCharacterEditorDraftFromDetail(detail: CharacterDetail): C
   };
 }
 
+/** 妥当な定義の frontmatter から名前と説明を取り出し、解析不能なら null を返す。 */
 export function resolveCharacterDefinitionMetadata(
   definitionMarkdown: string,
 ): { name: string; description: string } | null {
@@ -90,6 +102,7 @@ export function resolveCharacterDefinitionMetadata(
   };
 }
 
+/** 新規・比較元不明・別 ID は未保存とみなし、同じ ID なら保存値との差を調べる。 */
 export function isCharacterEditorDraftDirty(
   draft: CharacterEditorDraft,
   persistedDetail: CharacterDetail | null,
@@ -101,33 +114,42 @@ export function isCharacterEditorDraftDirty(
     return true;
   }
 
-  return draft.name !== persistedDetail.name
-    || draft.description !== persistedDetail.description
-    || draft.iconFilePath !== persistedDetail.iconFilePath
-    || draft.state !== persistedDetail.state
-    || draft.theme.main !== persistedDetail.theme.main
-    || draft.theme.sub !== persistedDetail.theme.sub
-    || draft.definitionMarkdown !== persistedDetail.definitionMarkdown
-    || draft.notesMarkdown !== persistedDetail.notesMarkdown;
+  return (
+    draft.name !== persistedDetail.name ||
+    draft.description !== persistedDetail.description ||
+    draft.iconFilePath !== persistedDetail.iconFilePath ||
+    draft.state !== persistedDetail.state ||
+    draft.theme.main !== persistedDetail.theme.main ||
+    draft.theme.sub !== persistedDetail.theme.sub ||
+    draft.definitionMarkdown !== persistedDetail.definitionMarkdown ||
+    draft.notesMarkdown !== persistedDetail.notesMarkdown
+  );
 }
 
-function areCharacterThemesEqual(left: CharacterTheme, right: CharacterTheme): boolean {
+/** オブジェクトの参照ではなく、主色と副色の保存値で等価性を判定する。 */
+function areCharacterThemesEqual(
+  left: CharacterTheme,
+  right: CharacterTheme,
+): boolean {
   return left.main === right.main && left.sub === right.sub;
 }
 
+/** 保存や再読み込みの途中に編集が進んだかを調べるため、ID・モードを含め下書き全体を比較する。 */
 export function areCharacterEditorDraftsEqual(
   left: CharacterEditorDraft,
   right: CharacterEditorDraft,
 ): boolean {
-  return left.characterId === right.characterId
-    && left.mode === right.mode
-    && left.state === right.state
-    && left.name === right.name
-    && left.description === right.description
-    && left.iconFilePath === right.iconFilePath
-    && areCharacterThemesEqual(left.theme, right.theme)
-    && left.definitionMarkdown === right.definitionMarkdown
-    && left.notesMarkdown === right.notesMarkdown;
+  return (
+    left.characterId === right.characterId &&
+    left.mode === right.mode &&
+    left.state === right.state &&
+    left.name === right.name &&
+    left.description === right.description &&
+    left.iconFilePath === right.iconFilePath &&
+    areCharacterThemesEqual(left.theme, right.theme) &&
+    left.definitionMarkdown === right.definitionMarkdown &&
+    left.notesMarkdown === right.notesMarkdown
+  );
 }
 
 /**
@@ -159,6 +181,7 @@ export function reconcileCharacterEditorDraftAfterSave(
   };
 }
 
+/** 未保存かつ保存中でない下書きに対し、破棄が未確認の場合だけ閉じる操作を止める。 */
 export function shouldBlockCharacterEditorBeforeUnload(args: {
   dirty: boolean;
   saving: boolean;
@@ -167,19 +190,24 @@ export function shouldBlockCharacterEditorBeforeUnload(args: {
   return args.dirty && !args.saving && !args.confirmedClose;
 }
 
+/** 保存済みアイコンと同じ参照は許可し、新規・置換する参照だけ登録条件に照らして案内を返す。 */
 export function getCharacterIconDraftValidationMessage(
   draftIconFilePath: string,
   persistedIconFilePath: string | null | undefined,
 ): string | null {
   if (
-    persistedIconFilePath !== null
-    && persistedIconFilePath !== undefined
-    && areCharacterIconPathReferencesEquivalent(draftIconFilePath, persistedIconFilePath)
+    persistedIconFilePath !== null &&
+    persistedIconFilePath !== undefined &&
+    areCharacterIconPathReferencesEquivalent(
+      draftIconFilePath,
+      persistedIconFilePath,
+    )
   ) {
     return null;
   }
 
-  const validationMessage = validateCharacterIconRegistrationPath(draftIconFilePath);
+  const validationMessage =
+    validateCharacterIconRegistrationPath(draftIconFilePath);
   if (!validationMessage) {
     return null;
   }
@@ -194,20 +222,26 @@ export function getCharacterIconDraftValidationMessage(
   return validationMessage;
 }
 
-export function normalizeThemeColorDraft(value: string, fallback: string): string {
+/** 前後の空白を除いた6桁の16進カラーを小文字にし、それ以外なら以前の値を使う。 */
+export function normalizeThemeColorDraft(
+  value: string,
+  fallback: string,
+): string {
   const trimmed = value.trim();
   return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed.toLowerCase() : fallback;
 }
 
+/** 下書きの差分と妥当な色を適用し、名前の変更で本文を作り直すのは未編集の新規定義だけに限る。 */
 export function updateCharacterEditorDraft(
   current: CharacterEditorDraft,
   patch: Partial<CharacterEditorDraft>,
 ): CharacterEditorDraft {
   const shouldRegenerateDefinition =
-    patch.name !== undefined
-    && patch.definitionMarkdown === undefined
-    && current.mode === "create"
-    && current.definitionMarkdown === buildDefaultCharacterDefinition(current.name);
+    patch.name !== undefined &&
+    patch.definitionMarkdown === undefined &&
+    current.mode === "create" &&
+    current.definitionMarkdown ===
+      buildDefaultCharacterDefinition(current.name);
   const nextTheme = patch.theme
     ? {
         main: normalizeThemeColorDraft(patch.theme.main, current.theme.main),
@@ -221,11 +255,14 @@ export function updateCharacterEditorDraft(
     theme: nextTheme,
     definitionMarkdown: shouldRegenerateDefinition
       ? buildDefaultCharacterDefinition(patch.name ?? current.name)
-      : patch.definitionMarkdown ?? current.definitionMarkdown,
+      : (patch.definitionMarkdown ?? current.definitionMarkdown),
   };
 }
 
-export function buildCreateCharacterInputFromDraft(draft: CharacterEditorDraft): CreateCharacterInput {
+/** 新規作成 API の入力へ変換し、解析できる定義の frontmatter を名前と説明の正本にする。 */
+export function buildCreateCharacterInputFromDraft(
+  draft: CharacterEditorDraft,
+): CreateCharacterInput {
   const metadata = resolveCharacterDefinitionMetadata(draft.definitionMarkdown);
   return {
     name: metadata?.name || draft.name,
@@ -237,6 +274,7 @@ export function buildCreateCharacterInputFromDraft(draft: CharacterEditorDraft):
   };
 }
 
+/** 定義本文を下書きで置き換え、渡された名前・説明だけをプロフィールにも反映する。 */
 export function replaceCharacterDefinitionDraft(
   current: CharacterEditorDraft,
   definitionMarkdown: string,
@@ -249,10 +287,13 @@ export function replaceCharacterDefinitionDraft(
   });
 }
 
+/** 定義とノートをそれぞれ検証し、タブごとの指摘と保存前に解決すべき全件を返す。 */
 export function buildCharacterEditorValidationSummary(
   draft: CharacterEditorDraft,
 ): CharacterEditorValidationSummary {
-  const definitionIssues = validateCharacterDefinitionMarkdown(draft.definitionMarkdown);
+  const definitionIssues = validateCharacterDefinitionMarkdown(
+    draft.definitionMarkdown,
+  );
   const notesIssues = validateCharacterNotesMarkdown(draft.notesMarkdown);
 
   return {
@@ -262,7 +303,11 @@ export function buildCharacterEditorValidationSummary(
   };
 }
 
-export function formatCharacterEditorError(error: unknown, fallback: string): string {
+/** Error の場合はそのメッセージを使い、それ以外は操作に応じた代替文言を使う。 */
+export function formatCharacterEditorError(
+  error: unknown,
+  fallback: string,
+): string {
   if (!(error instanceof Error)) {
     return fallback;
   }
